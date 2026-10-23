@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$PetWork = (Join-Path $env:USERPROFILE 'pet-work'),
   [string]$RepoRoot = '',
   [string]$ReleaseUrl = '',

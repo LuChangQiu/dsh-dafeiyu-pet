@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
   [string]$Profile = (Join-Path $env:USERPROFILE '.dsh\profiles\web'),
   [string]$PetWork = (Join-Path $env:USERPROFILE 'pet-work')

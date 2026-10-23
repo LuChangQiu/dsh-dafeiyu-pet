@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Version = '1.1.5-dsh.1',
   [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
   [string]$OutDir = '',

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   安装 dsh-pet-bridge-ui（大肥鱼联动设置面板）到 DSH web profile。

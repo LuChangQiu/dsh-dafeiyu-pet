@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   回滚 dsh-pet-bridge-ui：从 cordis.patch.yml 移除本插件追加块 + 删除 node_modules 包。
