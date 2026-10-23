@@ -183,7 +183,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v30'
+export const name = 'dsh-pet-bridge-v32'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -202,7 +202,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v30] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v32] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -848,8 +848,9 @@ export function apply(ctx, rawConfig) {
     pushStatusToPet()
     if (st !== 'thinking' && st !== 'tool') log('info', 'state', { state: st, tool: statusState.tool })
   }
+  let statusTimer = null
   if (cfg.statusChannel?.enabled) {
-    setInterval(() => {
+    statusTimer = setInterval(() => {
       statusState.heartbeatAt = new Date().toISOString()
       if (!petOnline && statusState.state !== 'disconnected') {
         statusState.state = 'disconnected'
@@ -884,8 +885,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.30.0',
-        petVersion: 'v1.1.5+patch-v30',
+        version: '0.32.0',
+        petVersion: 'v1.1.5+patch-v32',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -904,7 +905,9 @@ export function apply(ctx, rawConfig) {
           bootstrapped: attributionBootstrapped
         },
         currentSessionId: currentSessionId ? String(currentSessionId).slice(0, 16) : null,
-        activeSessionCount: sessionsPayload().filter((x) => !x.current && x.state !== 'idle').length,
+        userActiveCount: sessionsPayload().filter((x) => x.role === 'user').length,
+        backgroundCount: sessionsPayload().filter((x) => x.role !== 'user').length,
+        activeSessionCount: sessionsPayload().filter((x) => x.role === 'user').length,
         sessions: sessionsPayload(),
         skins: (() => {
           try {
@@ -1052,10 +1055,12 @@ export function apply(ctx, rawConfig) {
             .split(/[\\/]/)
             .pop()
         : 'workspace'
+      const rawTitle = String(session.title || hdr.title || '').trim()
+      const shortId = id.replace(/[^A-Za-z0-9]/g, '').slice(-8) || id.slice(-8)
       rec = {
         sessionId: id,
         workspace: cwd,
-        title: base + '#' + id.slice(-8),
+        title: rawTitle || base + ' · #' + shortId,
         role: roleOf(hdr),
         lastUserMessageAt: 0,
         state: 'idle',
@@ -1105,6 +1110,23 @@ export function apply(ctx, rawConfig) {
         activeAt = Date.now()
         attributionBootstrapped = true
         currentSessionId = j.sessionId
+        if (!sessionRegistry.get(String(j.sessionId))) {
+          const sid = String(j.sessionId)
+          sessionRegistry.set(sid, {
+            sessionId: sid,
+            workspace: String(j.cwd || ''),
+            title: 'workspace · #' + sid.slice(-8),
+            role: 'user',
+            lastUserMessageAt: Date.now(),
+            state: 'idle',
+            tool: null,
+            step: null,
+            lastSeenAt: Date.now()
+          })
+        } else {
+          const rr = sessionRegistry.get(String(j.sessionId))
+          if (!rr.lastUserMessageAt) rr.lastUserMessageAt = Date.now()
+        }
         log('info', 'attribution bootstrap', { session: String(j.sessionId).slice(0, 16), from: 'last-known' })
       }
     } catch {}
@@ -1761,6 +1783,9 @@ export function apply(ctx, rawConfig) {
 
   const dispose = () => {
     try {
+      if (statusTimer) clearInterval(statusTimer)
+    } catch {}
+    try {
       clearInterval(timer)
     } catch {}
     try {
@@ -1776,7 +1801,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v30', {
+  log('info', 'loaded v32', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
@@ -1810,3 +1835,4 @@ export function apply(ctx, rawConfig) {
     logLevel: cfg.logLevel
   })
 }
+
