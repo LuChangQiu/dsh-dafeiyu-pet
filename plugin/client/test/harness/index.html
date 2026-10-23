@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>大肥鱼联动设置面板 · harness 预览</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #16171b; color: #e7e8ea;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  .shell { display: flex; height: 100vh; min-height: 100vh; }
+  .nav { width: 250px; flex: 0 0 250px; border-right: 1px solid #2a2c32; padding: 18px 12px;
+    display: flex; flex-direction: column; gap: 2px; background: #191a1f; }
+  .nav-title { font-size: 12px; opacity: .45; padding: 0 10px 10px; letter-spacing: .04em; }
+  .nav-item { font-size: 13px; padding: 7px 10px; border-radius: 6px; opacity: .72; }
+  .nav-item.active { background: rgba(90,150,255,.16); color: #cfe0ff; opacity: 1; }
+  .main { flex: 1 1 auto; overflow: auto; padding: 26px 30px 60px; }
+  .main-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; }
+  .main-title { font-size: 15px; font-weight: 600; }
+  .main-sub { font-size: 12px; opacity: .45; }
+  .harness-note { font-size: 11px; opacity: .45; margin-top: 28px; border-top: 1px dashed #2f3138; padding-top: 10px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav">
+    <div class="nav-title">设置</div>
+    <div class="nav-item">通用</div>
+    <div class="nav-item">模型</div>
+    <div class="nav-item">子智能体</div>
+    <div class="nav-item">MCP / 工具</div>
+    <div class="nav-item">插件</div>
+    <div class="nav-item active">大肥鱼联动</div>
+    <div class="nav-item">外观</div>
+    <div class="nav-item">关于</div>
+  </aside>
+  <main class="main">
+    <div class="main-head">
+      <span class="main-title">大肥鱼联动</span>
+      <span class="main-sub">设置 · 大肥鱼 × DSH 联动</span>
+    </div>
+    <div id="panel"></div>
+    <div class="harness-note">
+      Harness 预览：与 DSH 设置页同款深色样式上下文；组件代码 = lib/client.js（未改动），
+      数据 = 真实环境的只读快照（state.get / logs.get），传输层用 mock 替代同源 POST。
+      真实 DSH 页面里由 host 路由 /pet-bridge-ui 提供同样的 data。
+    </div>
+  </main>
+</div>
+
+<script src="react.production.min.js"></script>
+<script src="react-dom.production.min.js"></script>
+<script src="fixture.js"></script>
+<script>
+// ───────── mock 传输层：模拟 host 半边 /pet-bridge-ui 的 wire 信封 ─────────
+(function () {
+  const fixture = JSON.parse(JSON.stringify(window.__FIXTURE__))
+  window.__MOCK_CALLS__ = []
+  const ok = (result) => ({ ok: true, status: 200, json: async () => ({ type: 'server-response', rpcId: 'mock', result }) })
+  const err = (code, message) => ok({ ok: false, error: { code, message } })
+
+  // 示例截图（避免在交付物里出现真实桌面内容）
+  const sampleShot = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="#243b55"/><stop offset="1" stop-color="#141e30"/></linearGradient></defs>' +
+    '<rect width="640" height="360" fill="url(#g)"/>' +
+    '<text x="320" y="170" fill="#9fb8d9" font-size="18" text-anchor="middle" font-family="sans-serif">示例截图</text>' +
+    '<text x="320" y="200" fill="#5f7fa8" font-size="13" text-anchor="middle" font-family="sans-serif" opacity="0.6">真实环境为当前桌面抓屏（含桌宠）</text>' +
+    '</svg>')))
+
+  function applyPayload(payload) {
+    const st = fixture.state
+    if (payload.enabled !== undefined) {
+      st.saved = Object.assign({}, st.saved, { enabled: payload.enabled })
+      if (!payload.pet) st.config.enabled = payload.enabled
+      if (payload.enabled === false) st.pending = ['enabled']
+    }
+    if (payload.activity !== undefined) {
+      st.saved = Object.assign({}, st.saved, { activity: payload.activity })
+      st.config.activity = payload.activity
+      st.pending = []
+    }
+    if (payload.quietHours !== undefined) {
+      st.saved = Object.assign({}, st.saved, { quietHours: payload.quietHours })
+      st.config.quietHours = payload.quietHours
+      st.quiet.ranges = payload.quietHours
+    }
+    if (payload.budgetPerDayYuan !== undefined) {
+      st.saved = Object.assign({}, st.saved, { budgetPerDayYuan: payload.budgetPerDayYuan })
+      st.today.budgetPerDayYuan = payload.budgetPerDayYuan
+    }
+    if (payload.pet) {
+      st.saved = Object.assign({}, st.saved, { pet: Object.assign({}, st.saved && st.saved.pet, payload.pet) })
+      st.petSettings = Object.assign({}, st.petSettings, payload.pet)
+      st.pending = (st.pending || []).filter((k) => !String(k).startsWith('pet.') || ['bubbleMs', 'city', 'musicLink', 'soundOn'].indexOf(String(k).slice(4)) < 0)
+      if (payload.pet.city !== undefined) st.pending.push('pet.city')
+      if (payload.pet.musicLink !== undefined) st.pending.push('pet.musicLink')
+      if (payload.pet.soundOn !== undefined) st.pending.push('pet.soundOn')
+      if (payload.pet.bubbleMs !== undefined) st.pending.push('pet.bubbleMs')
+    }
+    st.now = new Date().toISOString()
+  }
+
+  window.fetch = async function (url, opts) {
+    const endpoint = String(url).replace('/pet-bridge-ui/', '')
+    let payload = null
+    try { payload = JSON.parse(opts.body).payload } catch (e) { payload = null }
+    window.__MOCK_CALLS__.push({ endpoint, payload })
+    await new Promise((r) => setTimeout(r, 120))
+    if (endpoint === 'state.get') return ok({ ok: true, data: fixture.state })
+    if (endpoint === 'config.set') {
+      applyPayload(payload || {})
+      return ok({ ok: true, data: {
+        saved: true, applied: { activity: 'immediate' },
+        note: 'activity 写 activity.txt 即时生效；大小/透明度/模式/语录频率/穿透/锁定 已管道即时下发；其余由联动插件 watcher 应用',
+        state: fixture.state } })
+    }
+    if (endpoint === 'config.reset') {
+      const nat = fixture.state.petSettingsNative || {}
+      fixture.state.config.enabled = true
+      fixture.state.config.activity = 'normal'
+      fixture.state.config.quietHours = ['23:30-08:00']
+      fixture.state.config.budgetPerDayYuan = 1.0
+      fixture.state.petSettings = { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', bubbleMs: 6000, city: nat.city || '', musicLink: true, soundOn: true, passthrough: false, locked: false }
+      fixture.state.saved = null
+      fixture.state.pending = []
+      return ok({ ok: true, data: { reset: true, note: '已恢复面板默认值并即时下发可管道项；城市/音乐/音效/气泡时长待联动插件应用', state: fixture.state } })
+    }
+    if (endpoint === 'logs.get') return ok({ ok: true, data: fixture.logs })
+    if (endpoint === 'action.request') {
+      const name = payload && payload.name
+      fixture.state.lastAction = { name: name, status: 'queued', at: new Date().toISOString() }
+      return ok({ ok: true, data: { queued: true, request: { id: 'act-mock', name: name }, note: '联动插件 ≤20s 轮询消费' } })
+    }
+    if (endpoint === 'test.say') return ok({ ok: true, data: { sent: true, line: (payload && payload.text) || '测试一下：我在这儿呢。' } })
+    if (endpoint === 'test.jump') return ok({ ok: true, data: { sent: true, action: 'jump' } })
+    if (endpoint === 'test.screenshot') return ok({ ok: true, data: { ok: true, file: 'E:\\\\project\\\\AI提效\\\\tool\\\\pet-integration-src\\\\pet-work\\\\evidence\\\\ui-shot-demo.jpg', bytes: 248300, at: new Date().toISOString(), dataUrl: sampleShot } })
+    return err('unknown-endpoint', '未知端点：' + endpoint)
+  }
+
+  window.__ModuleLoader__ = { load: function (def) { window.__FACTORY__ = def.factory } }
+})();
+</script>
+<script src="client.js"></script>
+<script>
+(function () {
+  const React = window.React
+  const ReactDOM = window.ReactDOM
+  const factory = window.__FACTORY__
+  if (!factory) { document.getElementById('panel').textContent = 'client.js 未注册工厂'; return }
+  const mod = factory(function (name) {
+    if (name === 'react') return React
+    throw new Error('harness 未提供的模块：' + name)
+  })
+  let Panel = null
+  const ctx = {
+    slots: {
+      inject: function (type, cb) { cb() },
+      register: function (spec, Component) { Panel = Component; return function () {} },
+    },
+  }
+  mod.apply(ctx)
+  if (!Panel) { document.getElementById('panel').textContent = '面板未注册'; return }
+  ReactDOM.createRoot(document.getElementById('panel')).render(React.createElement(Panel))
+  window.__PANEL_READY__ = true
+})();
+</script>
+</body>
+</html>

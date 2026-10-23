@@ -1,0 +1,5 @@
+本仓库包含：
+1) 上游 大肥鱼桌宠（RYANFFY/deepseek-dafeiyu-pet）MIT 代码与素材 —— 保留上游 LICENSE；素材仅限个人使用，不随本仓库代码再授权。
+2) 本 fork 新增的 DSH 联动补丁与脚本 —— 同样以 MIT 发布（见 LICENSE）。
+3) DSH 插件 server/client 依赖 PySide6（LGPLv3，运行时依赖，不修改其源码）；分发二进制时须遵守 LGPL 相应义务。
+4) 所有用户配置/密钥不进入本仓库；DSH 凭据仅在本机使用。

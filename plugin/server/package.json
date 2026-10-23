@@ -1,0 +1,10 @@
+{
+  "name": "dsh-pet-bridge-v18",
+  "version": "0.18.0",
+  "private": true,
+  "description": "P3: DSH session events -> dafeiyu pet protocol v2 (say/act/cmd/walk/peek/mute), P0 lines pool, receipts, rituals.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": { ".": "./lib/index.js", "./package.json": "./package.json" },
+  "engines": { "node": ">=22.19" }
+}

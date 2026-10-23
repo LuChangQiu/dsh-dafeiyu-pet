@@ -1,0 +1,70 @@
+# ── 大肥鱼 × DSH 联动（v10：配置真源 + 原生UI移除 + 生命周期 + ui-action）─────
+- insert:
+    - id: pet-bridge-v18
+      name: 'dsh-pet-bridge-v18'
+      config:
+        dryRun: false
+        logLevel: info
+        logFile: '{{PET_WORK}}\evidence\pet-bridge-main.log'
+        logMaxBytes: 5242880
+        stateFile: '{{PET_WORK}}\state.json'
+        uiConfigFile: '{{PET_WORK}}\ui-config.json'
+        balancePush: { enabled: true, everyNTurns: 5, startup: true }
+        uiActionFile: '{{PET_WORK}}\ui-action.json'
+        lifecycle: { autoStart: true, startScript: '{{PET_WORK}}\tools\start-pet.ps1', bootstrapScript: '{{PET_WORK}}\tools\bootstrap-pet.ps1', releaseZipUrl: '', bootstrapStateFile: '{{PET_WORK}}\bootstrap-status.json' }
+        petSettings: { size: 0.36, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false }
+        poolsDir: '{{DSH_HOME}}\im\deliverables\pet-integration\implement\lines\pools'
+        receiptFile: '{{PET_WORK}}\pet\daily_receipt.txt'
+        historyFile: '{{PET_WORK}}\pet\pet-lines-history.json'
+        testHookFile: ''
+        onlyCwd: ''
+        skipSubagent: true
+        minGapMs: 17000
+        dualLayer: true
+        dualDelayMs: 700
+        chance: { turnStart: 0.66, turnEnd: 0.66, approval: 1, report: 1, dual: 0.66 }
+        cooldownMs: { turnStart: 60000, turnEnd: 45000, approval: 15000, report: 0 }
+        report: { enabled: true, everyNTurns: 5, minIntervalMs: 300000, minTools: 2, minDurationMs: 15000 }
+        activity: 'normal'
+        activityFile: '{{PET_WORK}}\activity.txt'
+        actions: { enabled: true, turnStartSpinChance: 0.2, toolEveryMs: 12000, longTaskMs: 90000, longTaskStepMs: 30000 }
+        idleSkit: { enabled: true, eventGapMs: 300000, minMs: 360000, maxMs: 540000 }
+        attribution: { enabled: true, onlyActive: true, activeTtlMs: 1800000, bootstrapLastKnown: true, stateFile: '{{PET_WORK}}\attribution.json' }
+        bubble: { normalMs: 5000, innerMs: 3000, reportMs: 10000, approvalMs: 8000, nightMs: 6000, queueGapMs: 300, innerDelayMinMs: 1200, innerDelayMaxMs: 1800, coalesceWindowMs: 2000, maxQueue: 8 }
+        llm:
+          enabled: true
+          provider: 'deepseek-official'
+          model: 'deepseek-flash'
+          timeoutMs: 3000
+          maxTokens: 200
+          temperature: 0.9
+          maxCallsPerDay: 300
+          budgetPerDayYuan: 1.0
+          costPer1kTokensYuan: 0.0015
+          maxChars: 40
+          pregen: true
+          pregenTtlMs: 600000
+          approvalUseLlm: false
+          includeRecentText: false
+        morning: { enabled: true, hour: 8, minute: 0 }
+        sleep: { enabled: true, hour: 23, minute: 30 }
+        ritualWalk: true
+# ── 大肥鱼 × DSH 联动：管理界面（Web 设置面板） —— 由独立插件 dsh-pet-bridge-ui 提供（host 路由 /pet-bridge-ui + 设置页入口）
+# 只读状态聚合 + sidecar 配置写（ui-config.json）；不改 pet-bridge-v7 逻辑。
+# 安装/回滚：dsh-pet-bridge-ui\scripts\{install,rollback}.ps1
+- insert:
+    - id: pet-bridge-ui
+      name: 'dsh-pet-bridge-ui'
+      config:
+        channel: '/pet-bridge-ui'
+        logFile: '{{PET_WORK}}\evidence\pet-bridge-main.log'
+        activityFile: '{{PET_WORK}}\activity.txt'
+        stateFile: '{{PET_WORK}}\state.json'
+        uiConfigFile: '{{PET_WORK}}\ui-config.json'
+        evidenceDir: '{{PET_WORK}}\evidence'
+        heartbeatFile: '{{PET_WORK}}\evidence\ui-route-mounted.json'
+        petConfigFile: '{{PET_WORK}}\pet\config.json'
+        actionFile: '{{PET_WORK}}\ui-action.json'
+        defaultBudgetPerDayYuan: 1.0
+        defaultModel: 'deepseek-flash'
+        defaultProvider: 'deepseek-official'

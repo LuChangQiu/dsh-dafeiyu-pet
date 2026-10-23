@@ -1,0 +1,521 @@
+/**
+ * dsh-pet-bridge-ui — Node 侧 smoke 测试（不启动 DSH、不连真实桌宠）
+ *
+ * 覆盖：
+ *   1. 日志解析（say 行 / loaded 行 / 今日 calls+cost）
+ *   2. 免打扰时段解析与判定
+ *   3. wire 协议路由（mock webServer）：ping / state.get / config.set / 鉴权栅栏 / 非法信封
+ *   4. ui-config.json 写入格式 + activity.txt 热切写入（临时目录）
+ *   5. client.js 能被当作 bundle 解析（语法 + __ModuleLoader__ 契约）
+ *
+ * 运行：node test/smoke.mjs
+ */
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { Readable } from 'node:stream'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const libDir = path.join(here, '..', 'lib')
+
+const index = await import(pathToFileURL(path.join(libDir, 'index.js')).href)
+const {
+  parseBridgeLog, parseQuietRanges, isInQuietHours, buildHandler, DEFAULTS,
+  petSettingsToCmds, normalizePetSettings, buildBubbleConfig, PET_CONFIG_FIELDS,
+} = index.__test
+const { mountWebRoute } = await import(pathToFileURL(path.join(libDir, 'web-route.js')).href)
+
+let passed = 0
+function test(name, fn) {
+  try {
+    fn()
+    passed += 1
+    console.log(`  ✓ ${name}`)
+  } catch (error) {
+    console.error(`  ✗ ${name}\n    ${error?.stack ?? error}`)
+    process.exitCode = 1
+  }
+}
+async function testAsync(name, fn) {
+  try {
+    await fn()
+    passed += 1
+    console.log(`  ✓ ${name}`)
+  } catch (error) {
+    console.error(`  ✗ ${name}\n    ${error?.stack ?? error}`)
+    process.exitCode = 1
+  }
+}
+
+// ───────────────────────── 1. 日志解析 ─────────────────────────
+console.log('\n[1] 日志解析')
+
+const SAMPLE_LOG = [
+  '[2026-10-23T05:45:03.230Z] [info] llm call {"kind":"turnStart","latencyMs":1013,"tokens":372,"callsToday":11,"costToday":0.0062}',
+  '[2026-10-23T05:45:03.232Z] [info] say {"kind":"turnStart","style":"normal","source":"llm","line":"开工吧，我照旧蹲旁边——干饭帮不上，占位还行。","latencyMs":1013,"tokens":372,"callsToday":11,"costToday":0.0062}',
+  '[2026-10-23T05:45:04.068Z] [info] inner {"kind":"turnStart","line":"（今天要顺顺利利的呀。）"}',
+  '[2026-10-23T05:46:44.663Z] [info] long task: walk two steps {"session":"session-54d9","step":1}',
+  '[2026-10-23T05:47:00.000Z] [info] loaded v7 {"dryRun":false,"llm":"deepseek-official/deepseek-flash","llmLimits":{"maxTokens":200,"timeoutMs":3000,"maxCallsPerDay":300,"budgetPerDayYuan":1},"quietHours":["23:30-08:00"],"activity":"normal"}',
+  '[2026-10-23T06:00:00.000Z] [info] say {"kind":"turnEnd","source":"llm","line":"这轮收工，我尾巴都蹲僵了。","callsToday":12,"costToday":0.0068}',
+].join('\n')
+
+test('say 行解析出最近记录（旧→新）且只保留 limit 条', () => {
+  const r = parseBridgeLog(SAMPLE_LOG, 10)
+  assert.equal(r.recentSay.length, 2)
+  assert.equal(r.recentSay[0].kind, 'turnStart')
+  assert.equal(r.recentSay[1].kind, 'turnEnd')
+  assert.match(r.recentSay[1].line, /收工/)
+  assert.equal(r.lastSayAt, '2026-10-23T06:00:00.000Z')
+})
+
+test('loaded v7 行解析出生效配置', () => {
+  const r = parseBridgeLog(SAMPLE_LOG, 10)
+  assert.equal(r.loaded.llm, 'deepseek-official/deepseek-flash')
+  assert.equal(r.loaded.llmLimits.budgetPerDayYuan, 1)
+  assert.deepEqual(r.loaded.quietHours, ['23:30-08:00'])
+})
+
+test('空日志不抛错', () => {
+  const r = parseBridgeLog('', 10)
+  assert.deepEqual(r.recentSay, [])
+  assert.equal(r.loaded, null)
+})
+
+// ───────────────────────── 2. 免打扰 ─────────────────────────
+console.log('\n[2] 免打扰时段')
+
+test('解析多段与跨午夜', () => {
+  const ranges = parseQuietRanges(['23:30-08:00', '12:00-13:00', 'bad', '25:00-26:00'])
+  assert.equal(ranges.length, 2)
+  assert.equal(ranges[0].start, 23 * 60 + 30)
+  assert.equal(ranges[0].end, 8 * 60)
+})
+
+test('跨午夜判定', () => {
+  const ranges = parseQuietRanges(['23:30-08:00'])
+  assert.equal(isInQuietHours(ranges, new Date(2026, 9, 23, 23, 45)), true)
+  assert.equal(isInQuietHours(ranges, new Date(2026, 9, 23, 3, 0)), true)
+  assert.equal(isInQuietHours(ranges, new Date(2026, 9, 23, 8, 0)), false)
+  assert.equal(isInQuietHours(ranges, new Date(2026, 9, 23, 14, 0)), false)
+})
+
+// ───────────────────────── 3. wire 协议路由 ─────────────────────────
+console.log('\n[3] wire 协议路由（mock webServer）')
+
+function makeReq({ method = 'POST', url = '/pet-bridge-ui/ping', body, headers = {} } = {}) {
+  const payload = body === undefined ? '' : JSON.stringify(body)
+  const req = Readable.from(payload ? [Buffer.from(payload)] : [])
+  req.method = method
+  req.url = url
+  req.headers = Object.assign(
+    { host: '127.0.0.1:3080', 'content-type': 'application/json' },
+    headers,
+  )
+  return req
+}
+
+function makeRes() {
+  const res = {
+    status: null,
+    headers: null,
+    body: '',
+    writeHead(status, headers) {
+      res.status = status
+      res.headers = headers
+    },
+    end(chunk) {
+      res.body = chunk === undefined ? '' : String(chunk)
+    },
+  }
+  return res
+}
+
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pbu-test-'))
+const tmpCfg = {
+  ...DEFAULTS,
+  uiConfigFile: path.join(tmpDir, 'ui-config.json'),
+  activityFile: path.join(tmpDir, 'activity.txt'),
+  stateFile: path.join(tmpDir, 'state.json'),
+  logFile: path.join(tmpDir, 'pet-bridge-main.log'),
+  evidenceDir: tmpDir,
+  // ⚠️ 隔离：actionFile / petConfigFile / heartbeatFile 必须指向临时目录，
+  //    否则测试会写生产 sidecar（曾误触生产 ui-action 队列，勿再犯）。
+  actionFile: path.join(tmpDir, 'ui-action.json'),
+  petConfigFile: path.join(tmpDir, 'pet-config.json'),
+  heartbeatFile: path.join(tmpDir, 'heartbeat.json'),
+  pipe: '\\\\.\\pipe\\pbu-test-definitely-missing',
+  pipeProbeTimeoutMs: 200,
+  processProbeTtlMs: 60000,
+}
+fs.writeFileSync(tmpCfg.logFile, SAMPLE_LOG, 'utf8')
+fs.writeFileSync(tmpCfg.activityFile, 'normal', 'utf8')
+fs.writeFileSync(tmpCfg.petConfigFile, JSON.stringify({
+  mode: 'still', size: 0.54, opacity: 0.9, line_freq: '话多', layer: 'normal',
+  bubble_style: 'dark', skin: '大肥鱼', volume: 0.5, quiet_minutes: 10,
+  city: '唐山', music_link: false, sound_on: false, passthrough: true, locked: true,
+  topmost: false, snap_on: false,
+}), 'utf8')
+
+const noopLog = { info() {}, warn() {} }
+const handler = buildHandler(tmpCfg, noopLog)
+
+function mount(routePath = '/pet-bridge-ui', connection) {
+  const routes = []
+  const webServer = {
+    register(route) {
+      routes.push(route)
+      return () => {
+        const i = routes.indexOf(route)
+        if (i >= 0) routes.splice(i, 1)
+      }
+    },
+  }
+  const dispose = mountWebRoute({
+    webServer,
+    connection,
+    channel: routePath,
+    handler,
+    log: noopLog,
+  })
+  return { routes, dispose }
+}
+
+async function invoke(routes, req, res) {
+  const matched = routes.filter((r) => {
+    const p = new URL(req.url, 'http://127.0.0.1').pathname
+    return r.kind === 'prefix' ? p.startsWith(r.path) : p === r.path
+  })
+  assert.ok(matched.length > 0, 'route not registered')
+  await matched[0].handler(req, res)
+  return res
+}
+
+await testAsync('ping 返回 server-response 信封', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(routes, makeReq({ body: { rpcId: 'r1', method: 'ping' } }), makeRes())
+  assert.equal(res.status, 200)
+  const body = JSON.parse(res.body)
+  assert.equal(body.type, 'server-response')
+  assert.equal(body.rpcId, 'r1')
+  assert.equal(body.result.ok, true)
+  assert.equal(body.result.data.pong, true)
+  dispose()
+})
+
+await testAsync('state.get 返回聚合状态（日志回退路径）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r2', method: 'state.get' } }), makeRes())
+  assert.equal(res.status, 200)
+  const data = JSON.parse(res.body).result.data
+  assert.equal(data.host.online, true)
+  assert.equal(typeof data.host.pid, 'number')
+  assert.equal(data.pipe.online, false)
+  assert.equal(data.config.activity, 'normal')
+  assert.equal(data.config.model, 'deepseek-flash')
+  assert.equal(data.config.quietHours[0], '23:30-08:00')
+  assert.equal(data.recentSay.length, 2)
+  assert.equal(data.today.calls >= 0, true)
+  assert.ok(data.files.logFile.endsWith('pet-bridge-main.log'))
+  dispose()
+})
+
+await testAsync('config.set 写 ui-config.json + activity.txt（activity 即时生效）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/config.set',
+      body: { rpcId: 'r3', method: 'config.set', payload: { activity: 'lively', enabled: true, quietHours: ['23:30-08:00', '12:00-13:00'], budgetPerDayYuan: 0.5 } },
+    }),
+    makeRes(),
+  )
+  assert.equal(res.status, 200)
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.applied.activity, 'immediate')
+  const saved = JSON.parse(fs.readFileSync(tmpCfg.uiConfigFile, 'utf8'))
+  assert.equal(saved.activity, 'lively')
+  assert.equal(saved.llm.budgetPerDayYuan, 0.5)
+  assert.deepEqual(saved.quietHours, ['23:30-08:00', '12:00-13:00'])
+  assert.equal(fs.readFileSync(tmpCfg.activityFile, 'utf8'), 'lively')
+  dispose()
+})
+
+await testAsync('config.set 拒绝非法时段 / 非法 activity', async () => {
+  const { routes, dispose } = mount()
+  for (const payload of [
+    { quietHours: ['25:99-26:00'] },
+    { activity: 'hyper' },
+    { enabled: 'yes' },
+  ]) {
+    const res = await invoke(
+      routes,
+      makeReq({ url: '/pet-bridge-ui/config.set', body: { rpcId: 'r4', method: 'config.set', payload } }),
+      makeRes(),
+    )
+    const result = JSON.parse(res.body).result
+    assert.equal(result.ok, false, JSON.stringify(payload))
+    assert.equal(result.error.code, 'invalid-argument')
+  }
+  dispose()
+})
+
+await testAsync('鉴权栅栏：requestRejection 返回 403 时拒绝', async () => {
+  const { routes, dispose } = mount('/pet-bridge-ui', { requestRejection: () => 403 })
+  const res = await invoke(routes, makeReq({ body: { rpcId: 'r5', method: 'ping' } }), makeRes())
+  assert.equal(res.status, 403)
+  assert.equal(res.body, 'forbidden')
+  dispose()
+})
+
+await testAsync('无 connection 时 loopback 同源放行、非 POST 405、非 JSON 415', async () => {
+  const { routes, dispose } = mount()
+  const ok = await invoke(routes, makeReq({ body: { rpcId: 'r6', method: 'ping' } }), makeRes())
+  assert.equal(ok.status, 200)
+
+  const notPost = await invoke(routes, makeReq({ method: 'GET', body: undefined }), makeRes())
+  assert.equal(notPost.status, 405)
+
+  const badType = await invoke(
+    routes,
+    makeReq({ body: { rpcId: 'r7', method: 'ping' }, headers: { 'content-type': 'text/plain' } }),
+    makeRes(),
+  )
+  assert.equal(badType.status, 415)
+  dispose()
+})
+
+await testAsync('method 与 endpoint 不一致 → ok:false', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r8', method: 'config.set' } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'bad-request')
+  dispose()
+})
+
+await testAsync('测试动作用不存在管道 → pipe-unavailable（不抛异常）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/test.jump', body: { rpcId: 'r9', method: 'test.jump' } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'pipe-unavailable')
+  dispose()
+})
+
+// ───────────────────────── 3.5 桌宠设置 / 应急 ─────────────────────────
+console.log('\n[3.5] 桌宠设置与应急通道')
+
+test('petSettingsToCmds 生成 cmd:config 批量行且只带白名单字段', () => {
+  const cmds = petSettingsToCmds({
+    size: 0.9, opacity: 0.8, mode: 'still', lineFreq: '话多',
+    passthrough: true, locked: true, topmost: false, snap: true,
+    layer: 'bottom', bubbleStyle: 'dark', skin: '大肥鱼', soundOn: false,
+    volume: 0.5, musicLink: false, city: '汕头', quietMinutes: 15,
+    bubbleMs: 7000, hacked: 'x', __proto__x: 1,
+  })
+  assert.equal(cmds.length, 1)
+  assert.ok(cmds[0].startsWith('cmd:config:'))
+  const payload = JSON.parse(cmds[0].slice('cmd:config:'.length))
+  assert.equal(payload.size, 0.9)
+  assert.equal(payload.mode, 'still')
+  assert.equal(payload.lineFreq, '话多')
+  assert.equal(payload.city, '汕头')
+  assert.equal(payload.quietMinutes, 15)
+  assert.equal(payload.hacked, undefined)
+  assert.deepEqual(Object.keys(payload).sort(), PET_CONFIG_FIELDS.filter((k) => payload[k] !== undefined).sort())
+})
+
+test('petSettingsToCmds 空对象返回空数组', () => {
+  assert.deepEqual(petSettingsToCmds({}), [])
+  assert.deepEqual(petSettingsToCmds(null), [])
+})
+
+test('normalizePetSettings 校验新字段并拒绝非法值', () => {
+  const good = normalizePetSettings({
+    size: 0.72, opacity: 1, volume: 0.9, mode: 'wander', lineFreq: '正常',
+    layer: 'top', bubbleStyle: 'auto', skin: '大肥鱼', quietMinutes: 30,
+    topmost: true, snap: true, passthrough: false, locked: false, city: '汕头',
+  })
+  assert.equal(good.error, undefined)
+  assert.equal(good.value.size, 0.72)
+  assert.equal(good.value.volume, 0.9)
+  assert.equal(good.value.quietMinutes, 30)
+
+  for (const bad of [
+    { size: 0.1 }, { opacity: 0.1 }, { volume: 1.5 }, { mode: 'run' },
+    { lineFreq: '超多' }, { layer: 'middle' }, { bubbleStyle: 'rainbow' },
+    { skin: '' }, { quietMinutes: 999 }, { topmost: 'yes' }, { city: 'x'.repeat(21) },
+  ]) {
+    const r = normalizePetSettings(bad)
+    assert.ok(r.error, '应拒绝 ' + JSON.stringify(bad))
+  }
+})
+
+test('buildBubbleConfig 按 bubbleMs 派生各气泡节奏', () => {
+  const b = buildBubbleConfig(5000)
+  assert.equal(b.normalMs, 5000)
+  assert.equal(b.innerMs, 3000)
+  assert.equal(b.reportMs, 10000)
+  assert.equal(b.approvalMs, 8000)
+  assert.equal(b.nightMs, 6000)
+  const b2 = buildBubbleConfig(8000)
+  assert.equal(b2.innerMs, 4800)
+})
+
+await testAsync('config.set pet → 写 ui-config.pet + bubble（管道不可用时仍保存）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/config.set',
+      body: {
+        rpcId: 'r-pet', method: 'config.set',
+        payload: { pet: { size: 0.9, opacity: 0.8, mode: 'still', lineFreq: '话多', passthrough: true, locked: true, topmost: true, snap: false, layer: 'bottom', bubbleStyle: 'dark', skin: '大肥鱼', volume: 0.5, musicLink: false, soundOn: false, city: '汕头', quietMinutes: 15, bubbleMs: 8000 } },
+      },
+    }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  const saved = JSON.parse(fs.readFileSync(tmpCfg.uiConfigFile, 'utf8'))
+  assert.equal(saved.pet.size, 0.9)
+  assert.equal(saved.pet.layer, 'bottom')
+  assert.equal(saved.pet.bubbleMs, 8000)
+  assert.equal(saved.bubble.normalMs, 8000)
+  assert.equal(saved.bubble.innerMs, 4800)
+  // 管道不存在：cmd 下发 ok:false 但配置照常保存
+  assert.equal(Array.isArray(result.data.applied.pet), true)
+  dispose()
+})
+
+await testAsync('logs.get 返回日志尾部行', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/logs.get', body: { rpcId: 'r-log', method: 'logs.get', payload: { lines: 3 } } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.lines.length, 3)
+  assert.ok(result.data.lines.some((l) => l.includes('say')))
+  dispose()
+})
+
+await testAsync('action.request 写 ui-action.json；未完成动作时 busy', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act', method: 'action.request', payload: { name: 'restart-pet' } } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.queued, true)
+  const queued = JSON.parse(fs.readFileSync(tmpCfg.actionFile, 'utf8'))
+  assert.equal(queued.name, 'restart-pet')
+  assert.ok(queued.id)
+  assert.equal(queued.handledAt, undefined)
+
+  // 未消费前再请求 → busy
+  const res2 = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act2', method: 'action.request', payload: { name: 'stop-pet' } } }),
+    makeRes(),
+  )
+  const result2 = JSON.parse(res2.body).result
+  assert.equal(result2.ok, false)
+  assert.equal(result2.error.code, 'busy')
+
+  // 模拟消费后允许下一次
+  queued.handledAt = new Date().toISOString()
+  queued.status = 'done'
+  fs.writeFileSync(tmpCfg.actionFile, JSON.stringify(queued), 'utf8')
+  const res3 = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act3', method: 'action.request', payload: { name: 'stop-pet' } } }),
+    makeRes(),
+  )
+  assert.equal(JSON.parse(res3.body).result.ok, true)
+
+  // 非法动作名
+  const res4 = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act4', method: 'action.request', payload: { name: 'format-c' } } }),
+    makeRes(),
+  )
+  assert.equal(JSON.parse(res4.body).result.ok, false)
+  dispose()
+})
+
+await testAsync('config.reset 恢复默认值（含完整 pet 默认表 + bubble）', async () => {
+  const { routes, dispose } = mount()
+  fs.writeFileSync(tmpCfg.uiConfigFile, JSON.stringify({ pet: { size: 0.2 }, activity: 'quiet' }), 'utf8')
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/config.reset', body: { rpcId: 'r-reset', method: 'config.reset' } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  const saved = JSON.parse(fs.readFileSync(tmpCfg.uiConfigFile, 'utf8'))
+  assert.equal(saved.pet.size, 0.36)
+  assert.equal(saved.pet.mode, 'wander')
+  assert.equal(saved.pet.city, '汕头')
+  assert.equal(saved.pet.bubbleMs, 5000)
+  assert.equal(saved.bubble.normalMs, 5000)
+  assert.equal(saved.activity, 'normal')
+  assert.deepEqual(saved.quietHours, ['23:30-08:00'])
+  assert.equal(fs.readFileSync(tmpCfg.activityFile, 'utf8'), 'normal')
+  dispose()
+})
+
+await testAsync('pet.nativeui 管道不可用时报错（不抛）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/pet.nativeui', body: { rpcId: 'r-nui', method: 'pet.nativeui', payload: { on: true } } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'pipe-unavailable')
+  dispose()
+})
+
+// ───────────────────────── 4. client bundle 契约 ─────────────────────────
+console.log('\n[4] client bundle 契约')
+
+test('client.js 语法合法且注册 __ModuleLoader__.load 工厂', () => {
+  const src = fs.readFileSync(path.join(libDir, 'client.js'), 'utf8')
+  assert.match(src, /window\.__ModuleLoader__\.load\(\{/)
+  assert.match(src, /id:\s*'dsh-pet-bridge-ui'/)
+  assert.match(src, /factory\(require\)/)
+  // 语法校验：作为脚本解析（不执行）
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+  assert.doesNotThrow(() => new AsyncFunction(src))
+  assert.doesNotThrow(() => new Function(src))
+})
+
+test('package.json 声明 dsh.client 且 exports["./client"] 存在', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8'))
+  assert.equal(pkg.dsh.client.platform, 'web')
+  assert.equal(pkg.exports['./client'], './lib/client.js')
+  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))
+  assert.ok(fs.existsSync(path.join(here, '..', pkg.exports['./client'])))
+})
+
+// ───────────────────────── 清理 ─────────────────────────
+fs.rmSync(tmpDir, { recursive: true, force: true })
+console.log(`\n结果：${passed} 通过${process.exitCode ? '（有失败）' : ''}`)
