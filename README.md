@@ -1,38 +1,50 @@
-# dsh-dafeiyu-pet — DSH 大肥鱼桌宠联动产品仓（插件产品）
+# dsh-dafeiyu-pet — 大肥鱼桌宠 × DSH 联动（单仓产品）
 
-> 本仓库只放 **DSH 插件产品**（server + client/管理面板 + 安装/脚本/文档）。
-> 桌宠源码在 fork 仓：`LuChangQiu/deepseek-dafeiyu-pet`（分支 `custom/dsh-linkage`，跟踪上游）；桌宠发行产物走该仓的 GitHub Release。
+> 桌宠源码 + DSH 插件 + 管理面板 + 安装脚本，全部在这一个仓库里：**不 fork 上游、不保留上游 git 历史**。
+> 上游只做手动对比（见 `docs/UPSTREAM.md`），不参与构建。
 
 ## 结构
-- `plugin/server/` — DSH host 插件 `dsh-pet-bridge`（事件归因/气泡节奏/配置真源/生命周期/state）
-- `plugin/client/` — 管理面板 `dsh-pet-bridge-ui`（Web 设置页，`/pet-bridge-ui`）
-- `install/` — `install.ps1` + patch 模板（`pet-bridge-vX` 与 `pet-bridge-ui` 两块）
-- `scripts/` — 自举/启停/回滚/活跃度/管道调试脚本；`pet-build-release.ps1` 为桌宠 fork 的发行构建脚本副本（构建需在 fork 源码运行）
-- `docs/` — 仓库分层、配置映射、使用说明
-- `release/`（后续）— 版本说明；二进制不进 git
+```
+pet/                     # 改好的桌宠源码（干净快照，无 git 历史，约 2.2MB）
+  ├─ 桌宠.py             # 主程序（含 DSH 联动补丁：管道协议/动作/微动画/配置）
+  ├─ ui_console.py       # 原生对话框配色（设置窗口已移除，仍用于余额/天气/小票弹窗样式）
+  ├─ assets/ sprites/    # 必需素材（约 1.4MB）
+  ├─ icon.ico            # 图标
+  ├─ 桌宠.spec           # PyInstaller 发行构建 spec
+  └─ requirements.txt    # PySide6 等依赖
+plugin/
+  ├─ server/             # DSH host 插件 dsh-pet-bridge
+  └─ client/             # 管理面板 dsh-pet-bridge-ui
+install/                 # 一键安装 + cordis.patch 模板（server+client 两块）
+scripts/                 # 自举/启停/回滚/活跃度/管道工具 + 发行构建脚本
+docs/                    # 仓库布局、功能范围、配置映射、代码盘点、上游对比
+```
 
-## 版本联动（防止插件新/桌宠旧）
-| 组件 | 版本/tag | 产物 |
+## 安装（同事）
+1. 装 DSH（Node 22+），克隆本仓库。
+2. `install\install.ps1`：复制 server/client 到 DSH profile、写 patch 两块、把 `pet/` 释放到 `%USERPROFILE%\pet-work\pet`。
+3. 重启 `dsh web`：管理面板出现；插件启动自举（`scripts\bootstrap-pet.ps1`）：
+   - 优先用**仓库内 `pet/` 源码** + 本机 Python 3.11+ 建 venv 启动；
+   - 无 Python / 无法建 venv 时，才回退 Release zip（`lifecycle.releaseZipUrl`，可选）。
+4. 应急：`scripts\start-pet.ps1 -Check|-Restart`、`scripts\pet-rollback.ps1`、`scripts\plugin-rollback.ps1`；面板内也有重启/停止/恢复默认/查看日志/回滚指引。
+5. 卸载：`scripts\plugin-rollback.ps1`（glob 清理插件+面板、还原 patch、校验无残留）。
+
+## 版本配对（插件 ↔ 桌宠）
+| 组件 | 位置 | 版本标识 |
 |---|---|---|
-| 插件 | 本仓 tag（如 `v0.18.0`） | 无二进制，npm/本地包 |
-| 桌宠 fork | tag `pet-v1.1.5-dsh.1`（分支 custom/dsh-linkage） | Release: `dafeiyu-pet-win64-1.1.5-dsh.1.zip` |
-- 当前桌宠 Release 资产（待上传）：`dafeiyu-pet-win64-1.1.5-dsh.1.zip`，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`（大小 75.3MB）
-- 插件 `state.json` 上报 `version`（插件）与 `petVersion`（桌宠补丁）；管理面板显示两者，不一致提示升级。
-- 自举：`scripts/bootstrap-pet.ps1` 检测不到运行时 → 优先本机 Python3.11+ 建 venv；无 Python 则下载桌宠 Release zip（`lifecycle.releaseZipUrl`）解压启动。
+| 插件 server | `plugin/server` | `version`（当前 0.19.0） |
+| 管理面板 client | `plugin/client` | 与 server 同步 |
+| 桌宠源码 | `pet/` | `petVersion`（`v1.1.5+patch-v19`，插件上报） |
 
-## 同事安装（只装插件）
-1. 装 DSH（Node 22+），`dsh plugin add <本仓本地目录或包>`
-2. `install\install.ps1`（装 server/client、写 profile patch 两块、准备运行目录）
-3. 重启 `dsh web` → 管理面板出现；自举自动拉起桌宠
-4. 回滚：`scripts\plugin-rollback.ps1` / `scripts\pet-rollback.ps1`
+插件 `state.json` 同时上报 `version` 与 `petVersion`；两处版本在**同一个 commit** 更新，避免漂移。
+
+## 发行包（免 Python，可选）
+- 打包：`scripts\pet-build-release.ps1 -Version 1.1.5-dsh.1` → `dafeiyu-pet-win64-<ver>.zip` + `.sha256`。
+- 分发：优先 GitHub Release；未上传时可直接发 zip（解压即用；单实例互斥会与运行中的桌宠二选一）。
+- 当前 zip：`dafeiyu-pet-win64-1.1.5-dsh.1.zip`，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`。
+
+## 上游更新
+不 fork、不建上游 git 历史：手动 diff 上游 `桌宠.py` 与 `pet/桌宠.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
 
 ## License
-MIT（见 LICENSE）；PySide6 为 LGPLv3 运行时依赖；上游桌宠素材声明见 NOTICE。
-
-## 发行包获取方式（重要）
-- 优先：桌宠 fork 仓 `LuChangQiu/deepseek-dafeiyu-pet` 的 **GitHub Release**（资产 `dafeiyu-pet-win64-<ver>.zip` + `.sha256`）。
-- Release 尚未上传时：可直接向维护者要本地包 `dafeiyu-pet-win64-1.1.5-dsh.1.zip`（75.3MB，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`），校验后解压即可运行（免 Python）。
-- 插件自举会读 `lifecycle.releaseZipUrl`；未配置时会优先用本机 Python+源码（当前开发机）或提示管理员配置 Release URL。
-
-## 功能范围（P1/P2/砍掉）与面板规划
-详见 `docs/PLUGIN-UI-SCOPE.md`：P1（余额/天气/音乐/汇总/显隐/回屏内/救急/双击/皮肤/静默/免打扰/自启/停止联动）必须补齐；P2 仅记录；明确砍掉 10 类原生功能（进程联动/定时提醒/歌词对时/内存回收/自定义音效等）。
+MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游素材声明见 `NOTICE`。

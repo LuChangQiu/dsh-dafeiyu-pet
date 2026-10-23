@@ -1,7 +1,7 @@
 # 14 · 代码盘点：我们到底改了什么（对照上游 v1.1.5）
 
-> 2026-10-23 ｜ 基线：上游 `RYANFFY/deepseek-dafeiyu-pet` commit `4a5a519`（tag `upstream-v1.1.5`，fork 仓 `5ff547b`）
-> 当前：桌宠 fork `custom/dsh-linkage`（本地 `20b3647`）+ 产品仓 `dsh-dafeiyu-pet` main
+> 2026-10-23 ｜ 基线：上游 `RYANFFY/deepseek-dafeiyu-pet` commit `4a5a519`（仅作参考来源，本仓不保留上游 git 历史）
+> 当前：产品仓 `dsh-dafeiyu-pet` main（`pet/桌宠.py` 为唯一真源）
 > 目的：回答用户"哪些改动真的需要"，并给 keep / simplify / remove 判断。
 
 ## 1. 一句话
@@ -61,3 +61,4 @@ host 路由 `/pet-bridge-ui` + 设置页入口；状态卡（host/pet/pipe/版�
 
 ## 7. 对用户的话
 "你原有的桌宠玩法、素材、设置数据一点没动；我们只给她加了一条能跟 DSH 对话的管道、几个动作/表情渲染叠加，外加一个跑在 DSH 里的插件和网页控制面板。桌宠本体净增约 700 行，全在这 12 处里；不需要的 10 类原生功能我们已经列成'明确砍掉'清单，避免误以为丢了功能。"
+

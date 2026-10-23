@@ -244,7 +244,7 @@ Get-Content '%PET_WORK%\evidence\pet-bridge-main.log' -Tail 20
   - 结束时 ui-config.json 逐字节恢复原样 ✅
 - 安装/回滚演练：`rollback.ps1` → 心跳消失 / 路由 405 / 包不存在；`install.ps1` → 心跳恢复 / 路由 401 / host 存活 ✅（详见 `deliverables/PLUGIN-UI.md`）
 
-## 仓库位置（交付仓库 `大肥鱼桌宠-fork`，分支 `custom/dsh-linkage`）
+## 仓库位置（产品仓 `dsh-dafeiyu-pet`，`main`；桌宠源码在 `pet/`）
 
 本包在 repo 中的路径：**`plugin/dsh-pet-bridge-ui/`**（与 `install/install.ps1` 的 `$p2` 一致）。
 `install/cordis.patch.template.yml` 由 tech-scout 维护、已含本插件 insert 块；**不要手写覆盖 patch**。
@@ -264,3 +264,4 @@ node test/make-fixture.mjs <out>    # 生成 harness 数据快照
 - **`ui-action` 已修复**：本面板排队的 `start-pet`/`stop-pet` 均被联动插件消费并 `status=done`（日志 `ui-action handled {... "status":"done"}`，`state.lastAction` 回显），**「重启桌宠」按钮可用**。
 - 联动 v0.17.0 / 桌宠 patch-v17；`ui-config.pet`、`ui-config.bubble`、`state.json`（version/petVersion/petSettings/bubble/attribution/lastAction）全部正常。
 - 测试隔离修复：`test/smoke.mjs` 的临时配置显式覆盖 `actionFile/petConfigFile/heartbeatFile`，跑测试不再触碰生产 sidecar。
+

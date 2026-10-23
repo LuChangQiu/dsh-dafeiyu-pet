@@ -4,12 +4,12 @@ param(
   [string]$OutDir = '',
   [string]$PythonExe = 'python'
 )
-# build-release.ps1 — 从 fork 源码可重复构建免 Python 的桌宠发行包（PyInstaller onedir）。
+# pet-build-release.ps1 — 从本仓 pet/ 源码可重复构建免 Python 的桌宠发行包（PyInstaller onedir）。
 # 产物：dist\<Version>\dafeiyu-pet-win64\ + dafeiyu-pet-win64-<Version>.zip + .sha256
 # 依赖：本机 Python 3.11+、pip install pyinstaller（脚本会给出提示）。
 $ErrorActionPreference = 'Stop'
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot 'dist' }
-$petSpec = Join-Path $RepoRoot '桌宠.spec'
+$petSpec = Join-Path $RepoRoot 'pet\桌宠.spec'
 if (-not (Test-Path $petSpec)) { throw "spec not found: $petSpec" }
 Write-Output "[build] version=$Version repo=$RepoRoot"
 
@@ -51,5 +51,6 @@ Write-Output "[build] sha256: $hash"
 # 4) 上传说明
 Write-Output '[build] 上传：GitHub Release 附上 zip 与 .sha256（可手动拖拽，或用 PAT: gh release upload <tag> <zip> <sha256文件>）'
 Write-Output '[build] 注意：发行 zip 不进 git（.gitignore 已排除 dist/）；插件自举用 lifecycle.releaseZipUrl 指向该资产。'
+
 
 

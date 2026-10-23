@@ -43,19 +43,18 @@ if (Test-Path $tpl) {
   if ($hits -lt 1 -or $uiHits -lt 1) { throw 'patch self-check failed (missing insert block)' }
 } else { Write-Info 'WARN: install/cordis.patch.template.yml not found, patch not updated' }
 
-# 3) pet runtime: venv + 源码补丁（若本机有 python）
+# 3) 释放仓库内 pet/ 源码，并交给 bootstrap 自举（venv/启动）
 $petRoot = Join-Path $RepoRoot 'pet'
 if (Test-Path $petRoot) {
-  $venv = Join-Path $PetWork '.venv'
-  if (-not (Test-Path $venv)) {
-    Write-Info 'creating venv (python 3.11+) ...'
-    & python -m venv $venv
-    & (Join-Path $venv 'Scripts\python.exe') -m pip install -r (Join-Path $RepoRoot 'requirements.txt')
-  }
   $dstPet = Join-Path $PetWork 'pet'
   if (-not (Test-Path $dstPet)) { New-Item -ItemType Directory -Force -Path $dstPet | Out-Null }
   Copy-Item (Join-Path $petRoot '*') $dstPet -Recurse -Force
+  Write-Info ("pet source released: " + $dstPet)
+  $boot = Join-Path $RepoRoot 'scripts\bootstrap-pet.ps1'
+  if (Test-Path $boot) {
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $boot -PetWork $PetWork -RepoRoot $RepoRoot | Out-Host } catch { Write-Info ("bootstrap warn: " + $_.Exception.Message) }
+  }
 }
-Write-Info 'done. 重启 dsh web 后：设置页出现管理面板，桌宠由插件自动拉起（start-pet.ps1）。'
-Write-Info '回滚：tools\plugin-rollback.ps1 / tools\pet-rollback.ps1'
+Write-Info 'done. 重启 dsh web 后：设置页出现管理面板，桌宠由插件自动拉起（bootstrap-pet.ps1）。'
+Write-Info '回滚：scripts\plugin-rollback.ps1 / scripts\pet-rollback.ps1'
 
