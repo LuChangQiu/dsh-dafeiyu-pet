@@ -1,0 +1,6 @@
+{
+  "agentTeam": { "members": [{ "id": "root", "name": "lead", "role": "lead", "phase": "active" }], "tasks": [] },
+  "goal": { "goal": { "phase": "complete" }, "operation": "complete", "roundsStarted": 2 },
+  "plan": { "active": false, "pending": false },
+  "userQuestions": { "active": [], "settled": [] }
+}

@@ -78,3 +78,11 @@ function Sample { $p = Get-Process -Id (Get-NetTCPConnection -LocalPort 3080 -St
 - 面板显示 `hostMemory{rssMB, lowFootprint}`（v2 字段，见 DATA-CONTRACT §10.5）。
 - 提供一键入口：`mode-off`（停止联动，= 低打扰/暂停联动）与 `mode-resume`；低占用自动降频时面板展示"低占用中"。
 - 高内存阈值建议沿用 `lowMemory.rssMb` 配置，不写死。
+
+## 8. 补充（2026-10-23，verifier 观测后）
+
+- **团队 Agent 并发是宿主内存最大的增长源**：本次实测 host RSS 2.9GB 时 heap 约 1.6GB，与"7~8 个 Agent 会话同时保活 + 每个都有长上下文"一致；
+  同等情况下插件 mem 日志显示自身写盘/pipe/timer 计数均很低（state ~7 次/分钟、pipe ~0.1 行/秒、timers 15–19）。
+- 建议（宿主使用侧）：**idle 时只保留 1 个活跃 Agent**（其余队友结束/不常驻）；定期归档旧会话（sessions 仓已 1.08GB/1650 文件）；
+  长挂机（数小时）后重启一次 host。插件侧已在此场景自动进入 lowFootprint（state 20s/statusPush 10s/停预生成与小剧场）。
+- 基线指标（用于 4h 对比）：pipeTimeout/pipeBackoff（应为 0）、 imers（本次 15–19，reload 后不应增长）、mem.persist.state/companion/events（约 6/3/1 次每分钟）。

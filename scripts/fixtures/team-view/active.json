@@ -1,0 +1,18 @@
+{
+  "agentTeam": {
+    "members": [
+      { "id": "root", "name": "lead", "role": "lead", "phase": "active" },
+      { "id": "m1", "name": "bridge-dev", "role": "teammate", "phase": "active" },
+      { "id": "m2", "name": "plugin-ui", "role": "teammate", "phase": "failed" }
+    ],
+    "tasks": [
+      { "id": "task-1", "subject": "T1", "description": "secret", "status": "completed", "ready": false, "writeScopes": ["x"] },
+      { "id": "task-2", "subject": "T2", "status": "in_progress", "ready": false },
+      { "id": "task-3", "subject": "T3", "status": "pending", "ready": true, "blockedBy": [] },
+      { "id": "task-4", "subject": "T4", "status": "pending", "ready": false, "blockedBy": ["task-3"] }
+    ]
+  },
+  "goal": { "goal": { "phase": "active", "objective": "secret" }, "operation": "create", "roundsStarted": 3 },
+  "plan": { "active": true, "pending": false },
+  "userQuestions": { "active": [{ "callId": "c1" }], "settled": [] }
+}

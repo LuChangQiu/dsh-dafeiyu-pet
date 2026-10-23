@@ -200,7 +200,9 @@ price = `pricing.per1kTokens`（0.0015）：
   `off`=停止自动联动（**手动互动保留**）；`active`=正常。优先级：**mode > quietHours > activity**。
 - **ui-action**（返回 `lastAction{done|failed,message}`）：`mode-silent{minutes}`（默认 30）、`mode-focus{minutes}`（默认 50）、
   `mode-off{until?}`（`HH:MM`/ISO；缺省到 `offUntilHour`=08:00）、`mode-resume`；兼容旧名 `mode-set/mode-clear/mode-cycle`。
-- **ui-config.mode**：`{silentMinutes:30,focusMinutes:50,offUntil:null,autoResume:true,hotkey:''}`（热更新，无需 reload）。
+- **ui-config.mode**：`{silentMinutes:30,focusMinutes:50,offUntil:null,autoResume:true}`（热更新，无需 reload）。
+  > 2026-10-23 用户决定 **DROP 全局快捷键**：不实现 RegisterHotKey；`ui-config.mode.hotkey` 不再读取/暴露。
+  > 同时 **DROP 音效**：`soundOn/volume` 仅作内部字段保留，插件下发时强制 `soundOn:false, volume:0`，不播任何音效。
 - 到点自动恢复（`autoResume:true`，默认）；重启保持（`modeFile` 持久化）；事件 `mode_change`（S1）。
 - 桌宠侧：模式期间 `cmd:mode:still` + `cmd:locked:true` + `cmd:freq:安静`；恢复时还原进入前设置。
 - **迁移约定**：`petSettings.mode='still'` 不再作为状态真源 → 映射为 normal（不迁移，避免被困），日志 `pet mode still -> normal`。
@@ -234,3 +236,23 @@ price = `pricing.per1kTokens`（0.0015）：
 6. `costCacheYuan/cacheSavedYuan` 与 §10.2 公式一致（±0.02）。
 7. mode：`mode-silent 15` 后 v2 `mode.kind=silent/active=true/remainMs≈900000`；`mode-resume` 后 `kind=active/active=false`；事件 `mode_change` S1。
 8. 隐私：`audit-privacy.mjs` 退出码 0（0 路径/0 key/0 对话字段）。
+
+## 11. v48 team / goal / plan / userQuestions 只读 v2 字段（task-57）
+
+> 实现：`plugin/server/lib/team-view.js` + `lib/index.js`；单测 `scripts/test-team-view.mjs`（fixtures：`scripts/fixtures/team-view/*.json`）。
+> 来源：DSH `ctx.sessionProjections.snapshot(session, ['agentTeam','goal','plan','userQuestions'])`；`WeakRef` 持会话引用，不增加内存占用。
+> 刷新：事件驱动（team/goal/plan/user-questions/turn-end，400ms 去抖）+ 20s 定时器，但**内部 ≤1/min 聚合**（`teamV2.refreshMs`）；变化或强刷时立即写 v2。
+
+| 字段            | 结构                                                                                                                                  | 说明                                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `team`          | `{enabled,status,members{total,active,failed},tasks{total,pending,in_progress,completed,blocked,ready,progress},updatedAt}` 或 `null` | `status: ok/empty/degraded`；`members.total` 只算 teammate（不含 lead）；`blocked = pending − ready`；**`total=0 → progress=null`**（不能显示成 0%）；`agentTeam.failure` 非空 → `status=degraded` |
+| `goal`          | `{active,operation,status,roundsStarted}` 或 `null`                                                                                   | `status` = goal phase（active/paused/blocked/complete）；不推 objective 原文                                                                                                                       |
+| `plan`          | `{active,pending}` 或 `null`                                                                                                          | 两个布尔                                                                                                                                                                                           |
+| `userQuestions` | `{active,sentCount}` 或 `null`                                                                                                        | active = 当前未答问题数；sentCount = 插件启动以来收到 `user-questions/request` 的次数                                                                                                              |
+| `degraded`      | `string[]`                                                                                                                            | 降级原因：`team:unsupported/not-registered/invalid/degraded`、`goal:…`、`plan:…`、`userQuestions:…`、`snapshot:error`、`session:none`、`sessionProjections:unsupported`                            |
+| `teamUpdatedAt` | ISO 或 null                                                                                                                           | 最近一次成功/降级刷新时间                                                                                                                                                                          |
+
+- **特性探测与降级**：`ctx.get('agentTeams')` 缺失 → `team:unsupported`；投影单元未注册 → `*:not-registered`；快照抛错 → 保留上次有效值 + `snapshot:error`（**异常不崩**）。字段为 null 时面板按"未启用/空态"渲染。
+- **隐私**：只推计数/状态枚举/时间；**不推** task subject/description、member name/description、goal objective、question/option 文本、cwd/writeScopes。
+- 日志：`team v2 updated {team:{enabled,status,members,tasks},goal:{status,rounds},plan,uq,degraded}`（仅计数）；`team v2 degraded/snapshot failed`。
+- 单测覆盖：活跃团队、空团队（progress=null）、未注册、服务未装载、failure 降级、非法输入不崩、隐私（输出不含 subject/description/objective/writeScopes/cwd）。

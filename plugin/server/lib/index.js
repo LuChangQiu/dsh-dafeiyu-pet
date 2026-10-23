@@ -51,6 +51,7 @@ import {
   DEFAULT_MODE_DEFAULTS
 } from './mode.js'
 import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
+import { buildTeamV2, emptyTeamV2 } from './team-view.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -132,7 +133,15 @@ const DEFAULTS = {
   companionFile: '',
   eventsFile: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
-  petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
+  petSettings: {
+    size: 0.72,
+    opacity: 1.0,
+    mode: 'wander',
+    lineFreq: '正常',
+    passthrough: false,
+    locked: false,
+    soundOn: false
+  },
   guards: { maxActionsPerHour: 60, noActionOnSameState: true, startleDelayMinMs: 900, startleDelayMaxMs: 1500 },
   spike: { enabled: true, ratio: 1.8, absFloor: 3000, window: 20, minSamples: 8, cooldownMs: 600000, dailyCap: 2 },
   rice: { enabled: true, bowlTokens: 100000 },
@@ -155,8 +164,8 @@ const DEFAULTS = {
     file: '', // 持久化（重启保持）；空 = 不落盘
     defaults: { focusMs: 50 * 60 * 1000, silentMs: 30 * 60 * 1000, offUntilHour: 8 },
     autoResume: true, // 到期自动恢复 active（ui-config.mode.autoResume 可关）
-    requestFile: '', // 外部（快捷键助手/脚本）写入模式请求；轮询消费
-    hotkey: { enabled: false, keys: 'Ctrl+Alt+Q', script: '', statusFile: '' } // 全局快捷键（v48）
+    // 通用外部触发文件（1s 轮询，供面板/脚本/测试用）；用户已明确 DROP 全局快捷键，无 RegisterHotKey 路径
+    requestFile: ''
   },
   // v47-hotfix/task-69：pipe 串行队列 & 低占用写盘/降频
   pipeTimeoutMs: 1200, // 单连接串行队列的等待上限（旧版 600ms 偏短）
@@ -164,6 +173,8 @@ const DEFAULTS = {
   companionSaveMs: 30000, // companion 情绪持久化最小间隔
   eventsSaveMs: 2000, // events 缓冲落盘去抖
   lowMemory: { rssMb: 2000, stateWriteMs: 20000, statusPushMs: 10000, memLogMs: 120000 },
+  // v48：team/goal/plan/userQuestions 只读 v2 字段（投影快照，≤1/min 聚合；缺失→null+degraded）
+  teamV2: { enabled: true, refreshMs: 60000 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -258,7 +269,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v47'
+export const name = 'dsh-pet-bridge-v48'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -279,7 +290,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v47] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v48] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -331,7 +342,12 @@ export function apply(ctx, rawConfig) {
   // 进入 focus/silent 前的桌宠原生设置，恢复 active 时还原
   const restorePet = { mode: 'wander', locked: false, lineFreq: '正常' }
   let modeSuppressLoggedAt = 0
-  let modeHotkeyChild = null
+  // v48 team/goal/plan/userQuestions 只读 v2 字段：投影快照 ≤1/min 聚合，WeakRef 持会话不增内存
+  let teamV2 = emptyTeamV2('not-refreshed')
+  let lastSessionRef = null
+  let lastTeamV2At = 0
+  let teamV2Timer = null
+  let userQuestionsSentCount = 0
   const modeEngaged = () => modeState.kind !== 'active'
   const logModeSuppress = (what, detail) => {
     if (Date.now() - modeSuppressLoggedAt < 60000) return
@@ -917,6 +933,9 @@ export function apply(ctx, rawConfig) {
     for (const [k, cmdKey] of Object.entries(map)) if (petCfg[k] !== undefined) out[cmdKey] = petCfg[k]
     if (petCfg.city !== undefined) out.city = petCfg.city
     if (petCfg.quietMinutes !== undefined) out.quiet = petCfg.quietMinutes
+    // 用户决定（2026-10-23）：联动不再有任何音效（soundOn/volume 保留内部字段但强制静音）
+    out.soundOn = false
+    out.volume = 0
     // v47 契约：petSettings.mode='still' 不再作为联动状态真源（映射为 normal）；模式由 mode 字段控制
     if (String(out.mode || '') === 'still') out.mode = 'wander'
     if (modeEngaged()) {
@@ -1568,8 +1587,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.47.0',
-        petVersion: 'v1.1.5+patch-v47',
+        version: '0.48.0',
+        petVersion: 'v1.1.5+patch-v48',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1603,6 +1622,13 @@ export function apply(ctx, rawConfig) {
           lowFootprint: refreshLowFootprint(),
           thresholdRssMB: Number(cfg.lowMemory?.rssMb || 2000)
         },
+        // v48：团队/目标/计划/等你选 —— 只读计数/状态枚举；投影缺失 → null + degraded（面板空态）
+        team: teamV2.team,
+        goal: teamV2.goal,
+        plan: teamV2.plan,
+        userQuestions: teamV2.userQuestions,
+        degraded: teamV2.degraded,
+        teamUpdatedAt: teamV2.updatedAt,
         companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
         userActiveCount: sess.filter((x) => x.role === 'user').length,
@@ -1780,6 +1806,75 @@ export function apply(ctx, rawConfig) {
     } catch {}
   }
   const modeRequestTimer = setInterval(pollModeRequest, 1000)
+
+  // ---------- v48：team / goal / plan / userQuestions 只读 v2 字段（投影快照，≤1/min） ----------
+  const refreshTeamV2 = (force = false) => {
+    if (!cfg.teamV2?.enabled) return
+    const now = Date.now()
+    if (!force && now - lastTeamV2At < Number(cfg.teamV2?.refreshMs || 60000)) return
+    lastTeamV2At = now
+    let svc = null
+    let teamsSvc = false
+    try {
+      svc = typeof ctx.get === 'function' ? ctx.get('sessionProjections') : null
+      teamsSvc = !!(typeof ctx.get === 'function' ? ctx.get('agentTeams') : null)
+    } catch {}
+    const session = lastSessionRef && typeof lastSessionRef.deref === 'function' ? lastSessionRef.deref() : null
+    if (!svc || typeof svc.snapshot !== 'function') {
+      teamV2 = buildTeamV2({ values: {}, services: { teams: teamsSvc }, sentCount: userQuestionsSentCount })
+      teamV2.degraded = ['sessionProjections:unsupported']
+      log('info', 'team v2 degraded', { reason: 'sessionProjections:unsupported', teamsSvc })
+      writeState(true)
+      return
+    }
+    if (!session) {
+      teamV2 = emptyTeamV2('session:none')
+      return
+    }
+    try {
+      const snap = svc.snapshot(session, ['agentTeam', 'goal', 'plan', 'userQuestions'])
+      const next = buildTeamV2({
+        values: (snap && snap.values) || {},
+        services: { teams: teamsSvc },
+        sentCount: userQuestionsSentCount
+      })
+      const changed =
+        JSON.stringify(next.team) !== JSON.stringify(teamV2.team) ||
+        JSON.stringify(next.goal) !== JSON.stringify(teamV2.goal) ||
+        JSON.stringify(next.plan) !== JSON.stringify(teamV2.plan) ||
+        JSON.stringify(next.userQuestions) !== JSON.stringify(teamV2.userQuestions) ||
+        JSON.stringify(next.degraded) !== JSON.stringify(teamV2.degraded)
+      teamV2 = next
+      if (changed || force) {
+        // 隐私：只记计数/状态/阶段，不记 subject/description/objective/cwd
+        log('info', 'team v2 updated', {
+          team: teamV2.team && {
+            enabled: teamV2.team.enabled,
+            status: teamV2.team.status,
+            members: teamV2.team.members,
+            tasks: teamV2.team.tasks
+          },
+          goal: teamV2.goal && { status: teamV2.goal.status, rounds: teamV2.goal.roundsStarted },
+          plan: teamV2.plan,
+          uq: teamV2.userQuestions && teamV2.userQuestions.active,
+          degraded: teamV2.degraded
+        })
+        writeState(true)
+      }
+    } catch (e) {
+      // 异常不崩：保留上一次有效值，标记降级
+      teamV2 = { ...teamV2, degraded: ['snapshot:error'] }
+      log('warn', 'team v2 snapshot failed', { error: clip(e && e.message, 80) })
+    }
+  }
+  const scheduleTeamRefresh = () => {
+    if (teamV2Timer) return
+    teamV2Timer = setTimeout(() => {
+      teamV2Timer = null
+      refreshTeamV2()
+    }, 400)
+  }
+
   let lastUiRaw = ''
   const pollUiConfig = () => {
     if (!cfg.uiConfigFile) return
@@ -1800,7 +1895,8 @@ export function apply(ctx, rawConfig) {
           applied.quietHours = ok
         }
       }
-      // v47 契约：ui-config.mode = {silentMinutes,focusMinutes,offUntil,autoResume,hotkey}
+      // v47 契约：ui-config.mode = {silentMinutes,focusMinutes,offUntil,autoResume}
+      // 用户已 DROP 全局快捷键：不再读取/暴露 hotkey 配置
       if (j.mode && typeof j.mode === 'object') {
         const md = { ...(cfg.mode?.defaults || {}) }
         if (Number(j.mode.silentMinutes) > 0) md.silentMs = Number(j.mode.silentMinutes) * 60000
@@ -1808,14 +1904,11 @@ export function apply(ctx, rawConfig) {
         if (j.mode.offUntil !== undefined && j.mode.offUntil !== null) md.offUntil = j.mode.offUntil
         cfg.mode = { ...(cfg.mode || {}), defaults: md }
         if (typeof j.mode.autoResume === 'boolean') cfg.mode.autoResume = j.mode.autoResume
-        if (typeof j.mode.hotkey === 'string' && j.mode.hotkey.trim())
-          cfg.mode.hotkey = { ...(cfg.mode.hotkey || {}), keys: j.mode.hotkey.trim() }
         applied.mode = {
           silentMinutes: Math.round((Number(md.silentMs) || 0) / 60000),
           focusMinutes: Math.round((Number(md.focusMs) || 0) / 60000),
           offUntil: md.offUntil ?? null,
-          autoResume: cfg.mode.autoResume !== false,
-          hotkey: cfg.mode.hotkey?.keys || ''
+          autoResume: cfg.mode.autoResume !== false
         }
       }
       if (j.llm && Number.isFinite(Number(j.llm.budgetPerDayYuan))) {
@@ -2381,6 +2474,14 @@ export function apply(ctx, rawConfig) {
     if (!session || !event || !event.type) return
     const t = event.type
     const recEarly = touchSession(session)
+    // v48：记录当前会话（WeakRef，不增加内存占用）；团队/目标/计划事件优先取用户根会话
+    try {
+      if (!recEarly || recEarly.role === 'user' || /^(team\/|goal\/|plan\/|user-questions\/)/.test(t)) {
+        lastSessionRef = new WeakRef(session)
+      }
+    } catch {}
+    if (t === 'user-questions/request') userQuestionsSentCount += 1
+    if (/^(team\/|goal\/|plan\/)/.test(t) || t === 'user-questions/request' || t === 'turn/end') scheduleTeamRefresh()
     // v46：usage 先归集（全角色、含 team/subagent/background；不受 skipSubagent/归因过滤影响，纯统计不演出）
     if (t === 'assistant/message') accountUsage(session, event.data)
     if (!passesFilter(session)) {
@@ -2806,6 +2907,8 @@ export function apply(ctx, rawConfig) {
       }
       refreshPetOnline()
       writeState()
+      // v48：团队/目标/计划字段定期刷新（内部 ≤1/min 聚合）
+      refreshTeamV2()
       // v47：桌宠上线后重发当前模式（reload/重启后保持）
       if (petOnline && modeEngaged()) pushModeToPet()
       // task-69：内存 / 定时器 / 降频自检（默认 2 分钟一行，供 4h 开/关对比测试）
@@ -2934,6 +3037,10 @@ export function apply(ctx, rawConfig) {
     } catch {}
     eventsDirtyTimer = null
     try {
+      if (teamV2Timer) clearTimeout(teamV2Timer)
+    } catch {}
+    teamV2Timer = null
+    try {
       saveEvents(true)
     } catch {}
     try {
@@ -2956,10 +3063,11 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v47', {
+  log('info', 'loaded v48', {
     memoryMB: memRssMb(),
     timers: timerCount(),
     lowMemory: cfg.lowMemory,
+    teamV2: { enabled: cfg.teamV2?.enabled !== false, refreshMs: cfg.teamV2?.refreshMs || 60000 },
     persistIntervals: { stateMs: cfg.stateWriteMs, companionMs: cfg.companionSaveMs, eventsMs: cfg.eventsSaveMs },
     pipe: { timeoutMs: Number(cfg.pipeTimeoutMs) || 1200, mode: 'serial-queue+coalesce' },
     mode: modeView(modeState),

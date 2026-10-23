@@ -1,0 +1,7 @@
+{
+  "agentTeam": {
+    "members": [{ "id": "root", "name": "lead", "role": "lead", "phase": "active" }],
+    "tasks": [],
+    "failure": "corrupted"
+  }
+}

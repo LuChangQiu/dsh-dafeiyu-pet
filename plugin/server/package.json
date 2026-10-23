@@ -1,8 +1,8 @@
 {
-  "name": "dsh-pet-bridge-v47",
-  "version": "0.47.0",
+  "name": "dsh-pet-bridge-v48",
+  "version": "0.48.0",
   "private": true,
-  "description": "P3: DSH session events -> dafeiyu pet protocol v2. v47: itemized token pricing (input/output/cacheRead/cacheWrite), control modes (active/focus/silent/off), privacy redaction, low-footprint host safety (state/companion/events write throttling, serial pipe queue).",
+  "description": "P3: DSH session events -> dafeiyu pet protocol v2. v48: read-only team/goal/plan/userQuestions v2 fields (projection snapshot, degraded-safe), itemized token pricing, control modes, privacy redaction, low-footprint host safety.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": { ".": "./lib/index.js", "./package.json": "./package.json" },
