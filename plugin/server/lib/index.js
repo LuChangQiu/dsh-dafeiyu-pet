@@ -140,6 +140,7 @@ const DEFAULTS = {
   receiptFile: '',
   maxReceiptLines: 4,
   testHookFile: '', // TEST ONLY: watch a JSON file to inject演出 events (default off)
+  pipeTimeoutMs: 1200, // v47-hotfix：单连接串行队列的等待上限（旧版 600ms 偏短）
   logFile: '',
   logLevel: 'info',
   stateFile: '', // P3: read-only status snapshot for pet-bridge-ui (state.json)
@@ -948,21 +949,26 @@ export function apply(ctx, rawConfig) {
     message: ''
   }
   // v46：工具类型细分（9 类）已抽到 ./tool-types.js（纯函数、可单测），动作映射见 tool/call 处理分支
+  // v47-hotfix：状态推送合并节流 —— ≥5s 一次、只推当前状态汇总（旧版每次 setStatus 都开连接）
+  let lastStatusPushAt = 0
+  let lastStatusPayload = ''
   const pushStatusToPet = () => {
     if (!cfg.statusChannel?.petPush) return
     try {
-      if (petOnline)
-        send(
-          'state:' +
-            JSON.stringify({
-              state: statusState.state,
-              tool: statusState.tool,
-              since: statusState.since,
-              step: statusState.step,
-              turn: statusState.turn,
-              heartbeatAt: statusState.heartbeatAt
-            })
-        )
+      if (!petOnline) return
+      const now = Date.now()
+      if (now - lastStatusPushAt < 5000) return
+      const payload = JSON.stringify({
+        state: statusState.state,
+        tool: statusState.tool,
+        since: statusState.since,
+        step: statusState.step,
+        turn: statusState.turn
+      })
+      if (payload === lastStatusPayload && now - lastStatusPushAt < 15000) return
+      lastStatusPushAt = now
+      lastStatusPayload = payload
+      send('state:' + payload, { coalesceKey: 'state' })
     } catch {}
   }
   const setStatus = (st, extra = {}) => {
@@ -1430,47 +1436,110 @@ export function apply(ctx, rawConfig) {
     } catch {}
   }
 
-  // ---------- pipe (short connection per line, silent failures) ----------
-  function send(line) {
+  // ---------- pipe：单连接串行队列 + 合并状态 + 指数退避（v47-hotfix） ----------
+  // 旧实现"每行开一条 net.connect、并发写、600ms 超时 + 单次重试"在状态推送密集时会并发打开
+  // 多个连接，桌宠命名管道处理不过来 ⇒ pipe timeout 刷屏。改为：全局串行、一次一条连接、
+  // 状态行按 key 合并（只保留最新）、失败指数退避（400ms→30s）且不逐行重试、告警日志限流 30s。
+  const pipeQ = []
+  let pipeBusy = false
+  let pipeFailStreak = 0
+  let pipePausedUntil = 0
+  let pipeDisposed = false
+  let pipeWarnAt = 0
+  const pipeTimeoutMs = () => Math.max(300, Number(cfg.pipeTimeoutMs) || 1200)
+  const pipeWarn = (msg, extra) => {
+    if (Date.now() - pipeWarnAt < 30000) return
+    pipeWarnAt = Date.now()
+    log('warn', msg, extra)
+  }
+  const pipePump = () => {
+    if (pipeDisposed || pipeBusy || !pipeQ.length) return
+    const wait = pipePausedUntil - Date.now()
+    if (wait > 0) {
+      setTimeout(pipePump, wait)
+      return
+    }
+    const item = pipeQ.shift()
+    pipeBusy = true
+    let settled = false
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      pipeBusy = false
+      if (ok) {
+        pipeFailStreak = 0
+        pipePausedUntil = 0
+        // 成功后排下一行前稍等一拍，让桌宠先处理完当前连接（单连接串行，不并发）
+        if (!pipeDisposed) setTimeout(pipePump, 15)
+      } else {
+        pipeFailStreak += 1
+        const backoff = Math.min(30000, 400 * Math.pow(2, Math.min(6, pipeFailStreak - 1)))
+        pipePausedUntil = Date.now() + backoff
+        pipeWarn('pipe backoff', { streak: pipeFailStreak, backoffMs: backoff, queued: pipeQ.length })
+        if (!pipeDisposed) setTimeout(pipePump, 0)
+      }
+    }
+    try {
+      const sock = net.connect(cfg.pipe)
+      sock.setTimeout(pipeTimeoutMs())
+      let wrote = false
+      sock.once('connect', () => {
+        // 桌宠管道语义：服务端读到一行就 dispatch 并主动断开 ⇒ 客户端写完后会收到 EPIPE/close，属正常。
+        // 因此「写在 connect 内成功」即视为投递成功，不等待 close（否则每行都被误判成超时/失败）。
+        try {
+          sock.write(item.line + '\n')
+          sock.end()
+          wrote = true
+          finish(true)
+        } catch {
+          finish(false)
+        }
+        setTimeout(() => {
+          try {
+            sock.destroy()
+          } catch {}
+        }, 80)
+      })
+      sock.on('data', () => {})
+      sock.once('close', () => finish(wrote))
+      sock.once('error', () => {
+        try {
+          sock.destroy()
+        } catch {}
+        finish(wrote) // 已写出 = 已投递（EPIPE 是桌宠主动断开的正常表现）
+      })
+      sock.once('timeout', () => {
+        try {
+          sock.destroy()
+        } catch {}
+        finish(wrote)
+      })
+    } catch (e) {
+      finish(false)
+      pipeWarn('pipe connect threw', { error: clip(e && e.message, 80) })
+    }
+  }
+  const pipeEnqueue = (line, opts = {}) => {
+    if (pipeDisposed) return
+    const item = { line: String(line), key: opts.coalesceKey || '' }
+    if (item.key) {
+      for (let i = pipeQ.length - 1; i >= 0; i--) {
+        if (pipeQ[i].key === item.key) {
+          pipeQ[i] = item // 同 key 只保留最新（例如 state: 只推当前状态）
+          return
+        }
+      }
+    }
+    if (pipeQ.length >= 200) pipeQ.shift()
+    pipeQ.push(item)
+    if (!pipeBusy) setTimeout(pipePump, 0)
+  }
+  function send(line, opts = {}) {
     if (cfg.dryRun) {
       log('info', 'dryRun send', { line })
       return
     }
-    const payload = line + '\n'
-    let wrote = false
-    const attempt = (n) => {
-      const sock = net.connect(cfg.pipe)
-      let settled = false
-      sock.setTimeout(600)
-      sock.on('connect', () => {
-        sock.write(payload)
-        wrote = true
-        sock.end()
-      })
-      sock.on('data', () => {})
-      sock.on('timeout', () => {
-        if (!settled) {
-          settled = true
-          sock.destroy()
-          log('warn', 'pipe timeout')
-        }
-      })
-      sock.on('error', (err) => {
-        if (settled) return
-        settled = true
-        sock.destroy()
-        if (!wrote && n < 1) {
-          setTimeout(() => attempt(n + 1), 60)
-          return
-        }
-        if (!wrote) log('warn', 'pipe unavailable', err.code || err.message)
-      })
-    }
-    try {
-      attempt(0)
-    } catch (e) {
-      log('warn', 'pipe send threw', e && e.message)
-    }
+    pipeEnqueue(line, opts)
   }
   // ---------- P0 v9: bubble queue (serial, coalesce, configurable durations) ----------
   let bubbleQ = []
@@ -2383,6 +2452,9 @@ export function apply(ctx, rawConfig) {
   }
 
   const dispose = () => {
+    // v47-hotfix：reload 时完整停掉本实例的定时器/队列，避免旧实例定时器叠加（host 内存/CPU 泄漏排查点）
+    pipeDisposed = true
+    pipeQ.length = 0
     try {
       if (statusTimer) clearInterval(statusTimer)
     } catch {}
@@ -2396,13 +2468,16 @@ export function apply(ctx, rawConfig) {
       if (hookTimer) clearInterval(hookTimer)
     } catch {}
     sessions.clear()
+    log('info', 'disposed', { pipeQueued: 0, streak: pipeFailStreak })
   }
   try {
     if (typeof ctx.effect === 'function') ctx.effect(() => dispose)
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v46', {
+  log('info', 'loaded v46-hotpipe', {
+    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    pipe: { timeoutMs: Number(cfg.pipeTimeoutMs) || 1200, mode: 'serial-queue+coalesce' },
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
