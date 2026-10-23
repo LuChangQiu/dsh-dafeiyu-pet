@@ -141,6 +141,11 @@ const DEFAULTS = {
   maxReceiptLines: 4,
   testHookFile: '', // TEST ONLY: watch a JSON file to inject演出 events (default off)
   pipeTimeoutMs: 1200, // v47-hotfix：单连接串行队列的等待上限（旧版 600ms 偏短）
+  // task-69 低占用：写盘节流 + 低占用模式
+  stateWriteMs: 10000, // state 写盘最小间隔（心跳/事件都会触发，但被此间隔合并）
+  companionSaveMs: 30000, // companion 情绪持久化最小间隔
+  eventsSaveMs: 2000, // events 缓冲落盘去抖
+  lowMemory: { rssMb: 2000, stateWriteMs: 20000, statusPushMs: 10000, memLogMs: 120000 },
   logFile: '',
   logLevel: 'info',
   stateFile: '', // P3: read-only status snapshot for pet-bridge-ui (state.json)
@@ -242,6 +247,42 @@ export function apply(ctx, rawConfig) {
       return String(v)
     }
   }
+
+  // ---------- task-69 低占用：内存/定时器自检 + 自动降频（尽早声明，热路径函数引用） ----------
+  const memRssMb = () => {
+    try {
+      return Math.round(process.memoryUsage().rss / 1048576)
+    } catch {
+      return 0
+    }
+  }
+  const memHeapMb = () => {
+    try {
+      return Math.round(process.memoryUsage().heapUsed / 1048576)
+    } catch {
+      return 0
+    }
+  }
+  // Node 活动 Timeout 数（timer 泄漏自检：reload 后不应随加载次数增长）
+  const timerCount = () => {
+    try {
+      return (process.getActiveResourcesInfo?.() || []).filter((x) => x === 'Timeout').length
+    } catch {
+      return -1
+    }
+  }
+  let lowFootprint = false
+  let lowFootprintCheckedAt = 0
+  let lastMemLogAt = 0
+  const refreshLowFootprint = () => {
+    if (Date.now() - lowFootprintCheckedAt < 20000) return lowFootprint
+    lowFootprintCheckedAt = Date.now()
+    const was = lowFootprint
+    lowFootprint = memRssMb() >= Number(cfg.lowMemory?.rssMb || 2000)
+    if (was !== lowFootprint) log('info', 'low footprint mode', { lowFootprint, rssMB: memRssMb() })
+    return lowFootprint
+  }
+  const pipeStats = { ok: 0, fail: 0 }
 
   // ---------- P0 pools ----------
   const pools = { kaigong: [], ganhuo: [], shougong: [], anwei: [], dengdai: [], shenye: [], inner: {} }
@@ -957,7 +998,8 @@ export function apply(ctx, rawConfig) {
     try {
       if (!petOnline) return
       const now = Date.now()
-      if (now - lastStatusPushAt < 5000) return
+      const interval = refreshLowFootprint() ? Number(cfg.lowMemory?.statusPushMs || 10000) : 5000
+      if (now - lastStatusPushAt < interval) return
       const payload = JSON.stringify({
         state: statusState.state,
         tool: statusState.tool,
@@ -1120,7 +1162,18 @@ export function apply(ctx, rawConfig) {
     const affW = levelOf(companion.affinity)
     return { mood: moodW, energy: energyW, affinity: affW }
   }
-  const saveCompanion = () => {
+  // 写盘统计（task-69：用于证明写盘频率/跳过次数）
+  const persistStats = { companion: 0, events: 0, state: 0, skipped: 0 }
+  let companionDirty = false
+  let lastCompanionSaveAt = 0
+  const saveCompanion = (force = false) => {
+    if (!force && Date.now() - lastCompanionSaveAt < Number(cfg.companionSaveMs || 30000)) {
+      companionDirty = true
+      return
+    }
+    lastCompanionSaveAt = Date.now()
+    companionDirty = false
+    persistStats.companion += 1
     try {
       companion.level = levelOf ? levelOf(companion.affinity) : companion.level
       companion.updatedAt = new Date().toISOString()
@@ -1138,13 +1191,30 @@ export function apply(ctx, rawConfig) {
       if (Array.isArray(j.events)) events = j.events
     }
   } catch {}
-  const saveEvents = () => {
-    try {
-      if (cfg.eventsFile) {
-        const t = cfg.eventsFile + '.tmp'
-        fs.writeFileSync(t, JSON.stringify({ events: events.slice(-500) }), 'utf8')
-        fs.renameSync(t, cfg.eventsFile)
+  // task-69：events 落盘去抖（2s 合并；旧版每个事件同步写一次，热路径 IO）
+  let eventsDirty = false
+  let eventsDirtyTimer = null
+  const saveEvents = (force = false) => {
+    if (!cfg.eventsFile) return
+    if (!force) {
+      eventsDirty = true
+      if (!eventsDirtyTimer) {
+        eventsDirtyTimer = setTimeout(
+          () => {
+            eventsDirtyTimer = null
+            if (eventsDirty) saveEvents(true)
+          },
+          Number(cfg.eventsSaveMs || 2000)
+        )
       }
+      return
+    }
+    eventsDirty = false
+    persistStats.events += 1
+    try {
+      const t = cfg.eventsFile + '.tmp'
+      fs.writeFileSync(t, JSON.stringify({ events: events.slice(-500) }), 'utf8')
+      fs.renameSync(t, cfg.eventsFile)
     } catch {}
   }
   const pushEvent = (kind, level, payload, said) => {
@@ -1298,15 +1368,27 @@ export function apply(ctx, rawConfig) {
     today.period = new Date().getHours() >= 0 && new Date().getHours() < 8 ? '低谷' : '高峰'
   }
 
-  const writeState = () => {
+  // v46：状态文件可能被事件路径在心跳之间触发写入；v47/task-69：写盘节流（默认 10s，低占用 20s），
+  // 写前重算派生字段保证快照自洽（verifier 断言按文件读取）。
+  let lastStateWriteAt = 0
+  let stateWriteSkipped = 0
+  const writeState = (force = false) => {
     const target = cfg.stateFileV2 || ''
     if (!target) return
-    // v46：状态文件可能被事件路径（ui-action/互动等）在两次心跳之间触发写入；
-    // 写盘前重算派生字段（cost*/riceBowls/calls/petLlmCostYuan），保证快照自洽（verifier 断言按文件读取）。
+    const interval = refreshLowFootprint()
+      ? Number(cfg.lowMemory?.stateWriteMs || 20000)
+      : Number(cfg.stateWriteMs || 10000)
+    const nowMs = Date.now()
+    if (!force && nowMs - lastStateWriteAt < interval) {
+      stateWriteSkipped += 1
+      return
+    }
+    lastStateWriteAt = nowMs
     try {
       todayReset()
     } catch {}
     try {
+      const sess = sessionsPayload() // task-69：每次写盘只算一次（旧版算 4 次深拷贝）
       const state = {
         updatedAt: new Date().toISOString(),
         host: true,
@@ -1350,10 +1432,10 @@ export function apply(ctx, rawConfig) {
         today,
         companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
-        userActiveCount: sessionsPayload().filter((x) => x.role === 'user').length,
-        backgroundCount: sessionsPayload().filter((x) => x.role !== 'user').length,
-        activeSessionCount: sessionsPayload().filter((x) => x.role === 'user').length,
-        sessions: sessionsPayload(),
+        userActiveCount: sess.filter((x) => x.role === 'user').length,
+        backgroundCount: sess.filter((x) => x.role !== 'user').length,
+        activeSessionCount: sess.filter((x) => x.role === 'user').length,
+        sessions: sess,
         skins: (() => {
           try {
             const pc = JSON.parse(fs.readFileSync(cfg.petConfigFile, 'utf8'))
@@ -1381,6 +1463,8 @@ export function apply(ctx, rawConfig) {
         logsRecent: []
       }
       fs.writeFileSync(target, JSON.stringify(state), 'utf8')
+      persistStats.state += 1
+      persistStats.skipped = stateWriteSkipped
     } catch {}
   }
   let lastUiRaw = ''
@@ -1469,10 +1553,12 @@ export function apply(ctx, rawConfig) {
       if (ok) {
         pipeFailStreak = 0
         pipePausedUntil = 0
+        pipeStats.ok += 1
         // 成功后排下一行前稍等一拍，让桌宠先处理完当前连接（单连接串行，不并发）
         if (!pipeDisposed) setTimeout(pipePump, 15)
       } else {
         pipeFailStreak += 1
+        pipeStats.fail += 1
         const backoff = Math.min(30000, 400 * Math.pow(2, Math.min(6, pipeFailStreak - 1)))
         pipePausedUntil = Date.now() + backoff
         pipeWarn('pipe backoff', { streak: pipeFailStreak, backoffMs: backoff, queued: pipeQ.length })
@@ -2197,7 +2283,7 @@ export function apply(ctx, rawConfig) {
           speak(kind, g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
         )
         // pregenerate next turn's opening line while idle
-        if (cfg.llm.pregen && cfg.llm.enabled) {
+        if (cfg.llm.pregen && cfg.llm.enabled && !refreshLowFootprint()) {
           void generate('turnStart', s).then((g) => {
             if (g.source === 'llm') {
               pregen.text = g.text
@@ -2367,6 +2453,19 @@ export function apply(ctx, rawConfig) {
       }
       refreshPetOnline()
       writeState()
+      // task-69：内存 / 定时器 / 降频自检（默认 2 分钟一行，供 4h 开/关对比测试）
+      refreshLowFootprint()
+      if (Date.now() - lastMemLogAt >= Number(cfg.lowMemory?.memLogMs || 120000)) {
+        lastMemLogAt = Date.now()
+        log('info', 'mem', {
+          rssMB: memRssMb(),
+          heapMB: memHeapMb(),
+          timers: timerCount(),
+          lowFootprint,
+          pipe: { ...pipeStats },
+          persist: { ...persistStats }
+        })
+      }
       // P3: long task -> walk two small steps every ~30s
       if (
         cfg.actions?.enabled &&
@@ -2389,6 +2488,7 @@ export function apply(ctx, rawConfig) {
       // P3: idle skit — only when nobody is operating, not during quiet hours
       if (
         cfg.idleSkit?.enabled &&
+        !refreshLowFootprint() &&
         cfg.idleSkit.eventGapMs &&
         Date.now() - lastEventAt >= cfg.idleSkit.eventGapMs &&
         !quietNow() &&
@@ -2452,7 +2552,7 @@ export function apply(ctx, rawConfig) {
   }
 
   const dispose = () => {
-    // v47-hotfix：reload 时完整停掉本实例的定时器/队列，避免旧实例定时器叠加（host 内存/CPU 泄漏排查点）
+    // v47-hotfix/task-69：reload 时完整停掉本实例定时器/队列并 flush 待写盘数据
     pipeDisposed = true
     pipeQ.length = 0
     try {
@@ -2467,8 +2567,27 @@ export function apply(ctx, rawConfig) {
     try {
       if (hookTimer) clearInterval(hookTimer)
     } catch {}
+    try {
+      if (eventsDirtyTimer) clearTimeout(eventsDirtyTimer)
+    } catch {}
+    eventsDirtyTimer = null
+    try {
+      saveEvents(true)
+    } catch {}
+    try {
+      saveCompanion(true)
+    } catch {}
+    try {
+      writeState(true)
+    } catch {}
     sessions.clear()
-    log('info', 'disposed', { pipeQueued: 0, streak: pipeFailStreak })
+    log('info', 'disposed', {
+      pipeQueued: 0,
+      pipe: { ...pipeStats },
+      persist: { ...persistStats },
+      timers: timerCount(),
+      rssMB: memRssMb()
+    })
   }
   try {
     if (typeof ctx.effect === 'function') ctx.effect(() => dispose)
@@ -2476,7 +2595,10 @@ export function apply(ctx, rawConfig) {
   } catch {}
 
   log('info', 'loaded v46-hotpipe', {
-    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    memoryMB: memRssMb(),
+    timers: timerCount(),
+    lowMemory: cfg.lowMemory,
+    persistIntervals: { stateMs: cfg.stateWriteMs, companionMs: cfg.companionSaveMs, eventsMs: cfg.eventsSaveMs },
     pipe: { timeoutMs: Number(cfg.pipeTimeoutMs) || 1200, mode: 'serial-queue+coalesce' },
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
