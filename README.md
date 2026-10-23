@@ -28,3 +28,8 @@
 
 ## License
 MIT（见 LICENSE）；PySide6 为 LGPLv3 运行时依赖；上游桌宠素材声明见 NOTICE。
+
+## 发行包获取方式（重要）
+- 优先：桌宠 fork 仓 `LuChangQiu/deepseek-dafeiyu-pet` 的 **GitHub Release**（资产 `dafeiyu-pet-win64-<ver>.zip` + `.sha256`）。
+- Release 尚未上传时：可直接向维护者要本地包 `dafeiyu-pet-win64-1.1.5-dsh.1.zip`（75.3MB，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`），校验后解压即可运行（免 Python）。
+- 插件自举会读 `lifecycle.releaseZipUrl`；未配置时会优先用本机 Python+源码（当前开发机）或提示管理员配置 Release URL。
