@@ -193,7 +193,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v39'
+export const name = 'dsh-pet-bridge-v40'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -212,7 +212,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v39] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v40] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -933,9 +933,14 @@ export function apply(ctx, rawConfig) {
     turns: 0,
     toolCalls: 0,
     longestTurnMs: 0,
+    tokens: 0,
     costYuan: 0,
+    petLlmCostYuan: 0,
     budgetYuan: cfg.llm.budgetPerDayYuan || 1,
-    calls: 0
+    calls: 0,
+    agentCalls: 0,
+    riceBowls: 0,
+    period: ''
   }
   const companion = {
     mood: 10,
@@ -1170,8 +1175,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.39.0',
-        petVersion: 'v1.1.5+patch-v39',
+        version: '0.40.0',
+        petVersion: 'v1.1.5+patch-v40',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -2139,7 +2144,7 @@ export function apply(ctx, rawConfig) {
         if (raw === lastRaw) return
         lastRaw = raw
         const spec = JSON.parse(raw)
-        log('info', 'TESTHOOK event', spec)
+        log('info', 'TEST HOOK event', spec)
         if (spec.type === 'approval') {
           stats.approvals += 1
           if (cfg.walkOnApproval) send('walk:center')
@@ -2164,7 +2169,7 @@ export function apply(ctx, rawConfig) {
         }
       } catch {}
     }, 1500)
-    log('warn', 'TESTHOOK enabled (test-only)', { file: cfg.testHookFile })
+    log('warn', 'TEST HOOK enabled (test-only)', { file: cfg.testHookFile })
   }
 
   const dispose = () => {
@@ -2187,7 +2192,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v39', {
+  log('info', 'loaded v40', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
