@@ -1,5 +1,4 @@
 ﻿param([switch]$Format)
-# lint.ps1 — 代码规范检查（不改行为）：node --check 全部 JS + prettier 检查 + ruff（若安装）
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
@@ -10,14 +9,18 @@ try {
   if (Test-Path 'node_modules\.bin\prettier.cmd') {
     Write-Output '== prettier =='
     & node_modules\.bin\prettier.cmd --check "plugin/**/*.js"
-    if ($LASTEXITCODE -ne 0) { Write-Output 'WARN: prettier check failed (run npm run format)'; exit 1 }
-  } else { Write-Output 'SKIP: prettier 未安装（npm install）' }
-  $ruff = Get-Command ruff -ErrorAction SilentlyContinue
-  if ($ruff) {
-    Write-Output '== ruff =='
-    & ruff check pet --config ruff.toml
-    if ($LASTEXITCODE -ne 0) { Write-Output 'WARN: ruff 有问题（见上）'; exit 1 }
-  } else { Write-Output 'SKIP: ruff 未安装（uv pip install ruff）' }
+    if ($LASTEXITCODE -ne 0) { Write-Output 'FAIL: prettier（运行 npm run format）'; exit 1 }
+  } else { Write-Output 'FAIL: prettier 未安装（npm install）'; exit 1 }
+  $ruffOk = $false
+  if (Get-Command ruff -ErrorAction SilentlyContinue) { $ruffCmd = 'ruff'; $ruffOk = $true }
+  else { try { $null = & python -m ruff --version 2>$null; if ($LASTEXITCODE -eq 0) { $ruffCmd = 'python -m ruff'; $ruffOk = $true } } catch {} }
+  if (-not $ruffOk) {
+    Write-Output 'FAIL: ruff 未安装（pip install ruff / uv pip install ruff），不能跳过'
+    exit 1
+  }
+  Write-Output '== ruff =='
+  if ($ruffCmd -eq 'ruff') { & ruff check pet --config ruff.toml } else { & python -m ruff check pet --config ruff.toml }
+  if ($LASTEXITCODE -ne 0) { Write-Output 'FAIL: ruff（见上，修复或加精确 noqa 并记录 CODE-STYLE）'; exit 1 }
   Write-Output 'LINT OK'
   exit 0
 } finally { Pop-Location }

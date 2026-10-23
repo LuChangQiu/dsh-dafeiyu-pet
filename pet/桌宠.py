@@ -8,8 +8,8 @@
 按压 Q 弹、按键音效、每轮 Codex 对话消耗换算（峰谷定价表取自该项目）
 音乐联动：放 QQ音乐 / 网易云 时读 Windows 媒体会话，把当前歌词挂在气泡里
 """
-import ctypes
 import contextlib
+import ctypes
 import hashlib
 import json
 import math
@@ -24,6 +24,7 @@ import wave
 from array import array
 from datetime import datetime
 
+
 def load_config():
     try:
         with open("config.json", "r", encoding="utf-8") as f:
@@ -35,21 +36,58 @@ def load_config():
         }
 
 import requests
-from PySide6.QtCore import (Qt, QTimer, QPoint, QPointF, QRectF, QUrl, QIODevice,
-                            QEventLoop, QSize, QFileInfo, QEvent, QAbstractNativeEventFilter,
-                            QObject)
-from PySide6.QtGui import (QPainter, QPixmap, QFont, QColor, QIcon, QFontMetrics,
-                           QPolygonF, QImage, QCursor, QMouseEvent, QKeySequence)
-from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
-                               QMessageBox, QInputDialog, QLineEdit, QVBoxLayout,
-                               QHBoxLayout, QPushButton, QFrame, QDialog, QToolButton,
-                               QSlider, QWidgetAction, QFileDialog, QListWidget,
-                               QListWidgetItem, QLabel, QFileIconProvider, QSizePolicy,
-                               QComboBox)
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter,
+    QEvent,
+    QFileInfo,
+    QIODevice,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+)
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QImage,
+    QKeySequence,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+    QPolygonF,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFileIconProvider,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QSystemTrayIcon,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 try:
-    from PySide6.QtMultimedia import QSoundEffect
-    from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
+    from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices, QSoundEffect
     AUDIO_AVAILABLE = True
 except Exception:
     AUDIO_AVAILABLE = False
@@ -1741,8 +1779,7 @@ class AutoSayDialog(QDialog):
     # ---------- 编辑一条 ----------
     def _edit(self, cur):
         from PySide6.QtCore import QTime
-        from PySide6.QtWidgets import (QPlainTextEdit, QSpinBox, QTimeEdit,
-                                       QCheckBox, QKeySequenceEdit)
+        from PySide6.QtWidgets import QCheckBox, QKeySequenceEdit, QPlainTextEdit, QSpinBox, QTimeEdit
         rule = dict(cur[1]) if cur else {}
         old_key = cur[0] if cur else None
         is_new = cur is None
@@ -2976,7 +3013,7 @@ def app_name_from_id(app_id):
 def smtc_available():
     """本机能不能读 Windows 媒体会话（读不了就走"看窗口标题"的退路）。"""
     try:
-        import winsdk.windows.media.control     # noqa: F401
+        import winsdk.windows.media.control  # noqa: F401
         return True
     except Exception:
         return False
@@ -3024,8 +3061,8 @@ def toggle_media_playpause():
     """
     try:
         import asyncio
-        from winsdk.windows.media.control import (
-            GlobalSystemMediaTransportControlsSessionManager as _Manager)
+
+        from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as _Manager
     except Exception:
         return False
 
@@ -3053,8 +3090,8 @@ def skip_media(direction):
         return False
     try:
         import asyncio
-        from winsdk.windows.media.control import (
-            GlobalSystemMediaTransportControlsSessionManager as _Manager)
+
+        from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as _Manager
     except Exception:
         return False
 
@@ -3080,8 +3117,8 @@ def read_media_session():
     """
     try:
         import asyncio
-        from winsdk.windows.media.control import (
-            GlobalSystemMediaTransportControlsSessionManager as _Manager)
+
+        from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as _Manager
     except Exception:
         return None
 
@@ -4090,7 +4127,7 @@ class PetWindow(QWidget):
             except Exception:
                 pass
         self._cfg_snapshot = None
-        
+
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
         if self.cfg.get("topmost", True):
             flags |= Qt.WindowType.WindowStaysOnTopHint
@@ -4106,7 +4143,7 @@ class PetWindow(QWidget):
             _app.installNativeEventFilter(self._hotkey_bridge)
         self.setMouseTracking(True)      # 菜单开着时要靠这个收鼠标移动消息（见 _forward_mouse_to_menu）
         self.setWindowTitle("大肥鱼桌宠")
-        
+
         # 精灵加载（三视图 + 挂件，每一张都可以被用户自定义图片替换）
         self.sprites = {}
         self.custom_skin_ok = {}
@@ -4345,7 +4382,7 @@ class PetWindow(QWidget):
         except Exception:
             self._devices = None
         QTimer.singleShot(1200, self._check_audio_device)
-        
+
         # 后台线程 → 主线程的结果队列
         self._say_queue = []          # 要冒泡的文本
         self._city_queue = []         # 自动定位结果
@@ -6169,7 +6206,6 @@ class PetWindow(QWidget):
             # 1) 眨眼：60~110ms 的眼睑线（无美术时的降级近似）
             if now < fx.get("blink_until", 0.0):
                 p.setPen(QColor(40, 44, 66, 210))
-                lw = max(1.0, pet_h * 0.010)
                 for sgn in (-1, 1):
                     ex = cx + sgn * pet_w * 0.17
                     ey = top + pet_h * 0.38

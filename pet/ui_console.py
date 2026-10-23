@@ -20,20 +20,58 @@ import os
 import time
 from string import Template
 
-from PySide6.QtCore import (QAbstractNativeEventFilter, QEasingCurve, QEvent,
-                            QByteArray, QObject, QParallelAnimationGroup, QPoint,
-                            QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer,
-                            QUrl, QVariantAnimation)
-from PySide6.QtGui import (QColor, QCursor, QFont, QIcon, QImage, QPainter,
-                           QPainterPath, QPen, QPixmap, QRegion, QWheelEvent)
-from PySide6.QtWidgets import (QAbstractButton, QAbstractScrollArea,
-                               QAbstractSlider, QApplication, QButtonGroup,
-                               QColorDialog, QComboBox, QFileDialog, QFrame,
-                               QGridLayout, QHBoxLayout, QInputDialog, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-                               QScrollArea, QScrollBar,
-                               QSizePolicy, QSlider, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter,
+    QByteArray,
+    QEvent,
+    QObject,
+    QPoint,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+)
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QIcon,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRegion,
+    QWheelEvent,
+)
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractScrollArea,
+    QAbstractSlider,
+    QApplication,
+    QButtonGroup,
+    QColorDialog,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QScrollBar,
+    QSizePolicy,
+    QSlider,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 try:
     from PySide6.QtSvg import QSvgRenderer

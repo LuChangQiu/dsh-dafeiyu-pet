@@ -8,3 +8,7 @@
   - `scripts\lint.ps1`（node + prettier + ruff 一站式）
   - Python：`ruff check pet --config ruff.toml`
 - **原则**：只做规范化，不改行为；改动前后跑 `node --check` 与 smoke/E2E。
+
+## 例外与说明
+- `pet/` 为上游来源的大文件：能安全修的风格问题已修（导入排序/未用导入/未用变量）；不整文件 ignore。
+- 若确实无法修改的上游模式，使用**精确 `# noqa: <code>`** 并在提交说明中写原因，禁止整文件豁免。

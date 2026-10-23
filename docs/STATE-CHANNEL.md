@@ -41,9 +41,10 @@ state:{"state":"thinking","tool":null,"since":"ISO","step":2,"turn":5,"heartbeat
 兼容：状态值等价别名（面板可映射）：`approval→waiting_approval`、`toolcall→tool`、`running→background`、`failed→error`、`completed→done`、`offline→disconnected`。
 
 ## 4. 可靠性
-- 心跳：插件 5s 一次，同时刷新 `heartbeatAt` 并推 `state:`（桌宠离线时跳过）。
+- 心跳：插件内部 5s 刷新一次 `heartbeatAt` 并推 `state:`（桌宠离线时跳过）；`state.json` 为**变化即写 + 定时落盘（约 17~24s 周期）**，面板用 `heartbeatAt` 判失联时按 **30s 阈值**（即使落盘有周期也安全）。
 - 断线：`petOnline=false` → `disconnected`；恢复后回 `idle`。
 - 重启恢复：插件重新加载时从 `attribution.json` 恢复活跃会话，状态初始 `idle`，随下一事件更新；桌宠重启后自动重新建立 pipe 并继续收 `state:`（`bootstrap/start-pet` 由 DSH 启动或自举脚本负责）。
 
 ## 5. 面板映射（plugin-ui 已实现）
 面板按 `state.json.status` 显示实时状态、工具名、耗时（`now - since`）、心跳/失联；无该字段时显示「状态通道未就绪」并按 `updatedAt` 兜底。
+
