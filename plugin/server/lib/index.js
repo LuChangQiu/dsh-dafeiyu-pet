@@ -20,6 +20,13 @@
  *   - LLM 计账（calls/petLlmCostYuan）在 callLlm 成功处直接累计；reload 用 lastLlm* 差分 +
  *     bridge-state-v2.today 续种，不清零。
  *   - toolType 9 类规则见 ./tool-types.js（mcp 白名单、plan、knowledge、agent、job 子类…）。
+ *
+ * v47（分项计价 / 控制模式 / 隐私）：
+ *   - 费用改分项价：input/output/cacheRead/cacheWrite × priceTable（元/百万 token，估算）；
+ *     costYuanFlat 保留旧口径对照；tokens* 分项与 costCacheYuan/cacheSavedYuan 见 DATA-CONTRACT §10。
+ *   - 控制模式 mode{active,kind,remainMs,resumeAt}：focus/silent/off 门控气泡/动作/LLM/状态推送，
+ *     到点自动恢复、重启保持、estill 迁移；ui-action mode-set / mode-clear。
+ *   - 隐私：日志出口统一脱敏绝对路径；v2 会话工作区只留 workspaceName + workspaceHash。
  */
 
 import net from 'node:net'
@@ -28,6 +35,22 @@ const require = createRequire(import.meta.url)
 import fs from 'node:fs'
 import path from 'node:path'
 import { toolTypeOf } from './tool-types.js'
+import { usageParts, costOf, flatCostOf, splitCost, priceTable, legacyParts, DEFAULT_PRICING } from './pricing.js'
+import {
+  normalizeKind,
+  modeLabel,
+  resolveResumeAt,
+  modeView,
+  normalizeRequest,
+  cycleKind,
+  modeAllowsBubble,
+  modeAllowsLlm,
+  modeAllowsAction,
+  modeAllowsStatusPush,
+  modeAllowsAmbient,
+  DEFAULT_MODE_DEFAULTS
+} from './mode.js'
+import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -117,7 +140,30 @@ const DEFAULTS = {
   stateClass: { enabled: true, debounceMs: 300 },
   reunion: { enabled: true },
   costModel: { ricePriceYuan: 0.5, userPricePer1kTokensYuan: 0.002 },
-  pricing: { per1kTokens: 0.0015 },
+  // v47 分项计价（元/百万 token，默认按 DeepSeek 公开价假设；全部为估算，可配置）
+  pricing: {
+    per1kTokens: 0.0015,
+    inputPerM: 2,
+    outputPerM: 3,
+    cacheReadPerM: 0.2,
+    cacheWritePerM: 2,
+    currency: 'CNY',
+    legacyMix: { input: 0.01, output: 0.01, cacheRead: 0.98, cacheWrite: 0 }
+  },
+  // v47 控制模式：active / focus（专注）/ silent（静一静）/ off（下班）
+  mode: {
+    file: '', // 持久化（重启保持）；空 = 不落盘
+    defaults: { focusMs: 50 * 60 * 1000, silentMs: 30 * 60 * 1000, offUntilHour: 8 },
+    autoResume: true, // 到期自动恢复 active（ui-config.mode.autoResume 可关）
+    requestFile: '', // 外部（快捷键助手/脚本）写入模式请求；轮询消费
+    hotkey: { enabled: false, keys: 'Ctrl+Alt+Q', script: '', statusFile: '' } // 全局快捷键（v48）
+  },
+  // v47-hotfix/task-69：pipe 串行队列 & 低占用写盘/降频
+  pipeTimeoutMs: 1200, // 单连接串行队列的等待上限（旧版 600ms 偏短）
+  stateWriteMs: 10000, // state 写盘最小间隔（心跳/事件都会触发，但被此间隔合并）
+  companionSaveMs: 30000, // companion 情绪持久化最小间隔
+  eventsSaveMs: 2000, // events 缓冲落盘去抖
+  lowMemory: { rssMb: 2000, stateWriteMs: 20000, statusPushMs: 10000, memLogMs: 120000 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -140,12 +186,6 @@ const DEFAULTS = {
   receiptFile: '',
   maxReceiptLines: 4,
   testHookFile: '', // TEST ONLY: watch a JSON file to inject演出 events (default off)
-  pipeTimeoutMs: 1200, // v47-hotfix：单连接串行队列的等待上限（旧版 600ms 偏短）
-  // task-69 低占用：写盘节流 + 低占用模式
-  stateWriteMs: 10000, // state 写盘最小间隔（心跳/事件都会触发，但被此间隔合并）
-  companionSaveMs: 30000, // companion 情绪持久化最小间隔
-  eventsSaveMs: 2000, // events 缓冲落盘去抖
-  lowMemory: { rssMb: 2000, stateWriteMs: 20000, statusPushMs: 10000, memLogMs: 120000 },
   logFile: '',
   logLevel: 'info',
   stateFile: '', // P3: read-only status snapshot for pet-bridge-ui (state.json)
@@ -218,13 +258,15 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v46'
+export const name = 'dsh-pet-bridge-v47'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
   const log = (level, msg, extra) => {
     if (cfg.logLevel !== 'debug' && level === 'debug') return
-    const line = `[${new Date().toISOString()}] [${level}] ${msg}${extra === undefined ? '' : ' ' + safe(extra)}`
+    const raw = `[${new Date().toISOString()}] [${level}] ${msg}${extra === undefined ? '' : ' ' + safe(extra)}`
+    // v47 隐私（task-68）：日志出口统一脱敏 —— 绝对路径只留 basename，不落 C:\ / E:\ 路径
+    const line = redactPathText(raw)
     try {
       if (cfg.logFile) {
         // rotate at ~5MB; previous file kept next to it with a timestamp suffix
@@ -237,7 +279,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v46] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v47] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -283,6 +325,31 @@ export function apply(ctx, rawConfig) {
     return lowFootprint
   }
   const pipeStats = { ok: 0, fail: 0 }
+
+  // ---------- v47 控制模式状态（尽早声明：send/act/generate/status 等门控都引用） ----------
+  const modeState = { kind: 'active', since: null, resumeAt: 0, source: null }
+  // 进入 focus/silent 前的桌宠原生设置，恢复 active 时还原
+  const restorePet = { mode: 'wander', locked: false, lineFreq: '正常' }
+  let modeSuppressLoggedAt = 0
+  let modeHotkeyChild = null
+  const modeEngaged = () => modeState.kind !== 'active'
+  const logModeSuppress = (what, detail) => {
+    if (Date.now() - modeSuppressLoggedAt < 60000) return
+    modeSuppressLoggedAt = Date.now()
+    log('info', 'mode suppress', { mode: modeState.kind, what, detail: clip(detail, 36) })
+  }
+  // 发给桌宠的每一行在出口统一门控（force=true = 手动/模式自身指令，永不被拦）
+  const modeAllowsPipeLine = (line) => {
+    const k = modeState.kind
+    if (k === 'active') return true
+    const l = String(line || '')
+    if (k === 'focus' || k === 'silent') {
+      if (l.startsWith('state:')) return k === 'focus'
+      if (l.startsWith('say') || l.startsWith('inner')) return true // 上游 speak() 已按 S0 门控
+      return false // 动作/走动/特效/余额
+    }
+    return false // off：停止一切自动联动（手动互动走 force）
+  }
 
   // ---------- P0 pools ----------
   const pools = { kaigong: [], ganhuo: [], shougong: [], anwei: [], dengdai: [], shenye: [], inner: {} }
@@ -579,6 +646,11 @@ export function apply(ctx, rawConfig) {
                       : 'shougong'
       return { text: pick(poolName), source: 'pool', latencyMs: 0, tokens: 0 }
     }
+    if (!modeAllowsLlm(modeState.kind, kind)) {
+      // v47：模式期间不为非 S0 生成文案（省钱/安静）；S0 仍可用 LLM
+      log('debug', 'llm fallback: mode', { kind, mode: modeState.kind })
+      return fallback()
+    }
     if (!llmBudgetOk() || cfg.llm.lines?.enabled === false) {
       log('debug', 'llm fallback: budget/disabled', { kind })
       return fallback()
@@ -683,6 +755,11 @@ export function apply(ctx, rawConfig) {
   let hourActKey = ''
   let hourlyActions = 0
   const act = (name) => {
+    // v47：focus 只允许最小幅度动作；silent/off 不动
+    if (!modeAllowsAct(modeState.kind, name)) {
+      logModeSuppress('act', name)
+      return
+    }
     const hk = new Date().toDateString() + new Date().getHours()
     if (hk !== hourActKey) {
       hourActKey = hk
@@ -698,6 +775,7 @@ export function apply(ctx, rawConfig) {
     log('debug', 'act', { name })
   }
   const walkNear = () => {
+    if (!modeAllowsAction(modeState.kind)) return
     if (!cfg.enabled || !cfg.actions?.enabled) return
     send('walk:nearby')
     log('debug', 'walk nearby')
@@ -839,9 +917,22 @@ export function apply(ctx, rawConfig) {
     for (const [k, cmdKey] of Object.entries(map)) if (petCfg[k] !== undefined) out[cmdKey] = petCfg[k]
     if (petCfg.city !== undefined) out.city = petCfg.city
     if (petCfg.quietMinutes !== undefined) out.quiet = petCfg.quietMinutes
+    // v47 契约：petSettings.mode='still' 不再作为联动状态真源（映射为 normal）；模式由 mode 字段控制
+    if (String(out.mode || '') === 'still') out.mode = 'wander'
+    if (modeEngaged()) {
+      // 模式期间强制桌宠侧：不散步 + 锁位置 + 少主动说话
+      out.mode = 'still'
+      out.locked = true
+      out.lineFreq = '安静'
+    } else {
+      if (out.mode !== undefined) restorePet.mode = String(out.mode || 'wander')
+      if (out.locked !== undefined) restorePet.locked = !!out.locked
+      if (out.lineFreq !== undefined) restorePet.lineFreq = String(out.lineFreq || '正常')
+    }
     if (Object.keys(out).length) {
       petCmd('cmd:config:' + JSON.stringify(out))
       cfg.petSettings = { ...(cfg.petSettings || {}), ...petCfg }
+      if (modeEngaged()) cfg.petSettings = { ...cfg.petSettings, mode: 'still', locked: true, lineFreq: '安静' }
       log('info', 'pet settings pushed', out)
     }
   }
@@ -908,13 +999,28 @@ export function apply(ctx, rawConfig) {
             message = String(e && e.message)
           }
         }
-        if (j.name === 'restart-pet') {
-          if (petOnline) send('cmd:restart')
+        // v47 契约：mode-silent{minutes} / mode-focus{minutes} / mode-off{until?} / mode-resume
+        // 兼容旧名 mode-set / mode-clear / mode-cycle；返回 lastAction{done|failed,message}
+        if (/^mode[-_]/i.test(String(j.name || ''))) {
+          const isCycle = String(j.name).toLowerCase() === 'mode-cycle'
+          const req = isCycle
+            ? { kind: cycleKind(modeState.kind), durationMs: 0, clear: false }
+            : normalizeRequest(j, cfg.mode?.defaults)
+          if (!req) {
+            status = 'failed'
+            message = 'unsupported mode request'
+          } else {
+            const r = applyMode(req, 'ui-action')
+            status = r.ok ? 'done' : 'failed'
+            message = r.message
+          }
+        } else if (j.name === 'restart-pet') {
+          if (petOnline) send('cmd:restart', { force: true })
           else runTask()
         } else if (j.name === 'start-pet') {
           runTask()
         } else if (j.name === 'quit-pet' || j.name === 'stop-pet') {
-          send('cmd:exit')
+          send('cmd:exit', { force: true })
         } else if (j.name === 'enable-autostart' || j.name === 'disable-autostart') {
           const startup = path.join(
             process.env.APPDATA || '',
@@ -962,7 +1068,13 @@ export function apply(ctx, rawConfig) {
         status = 'failed'
         message = String(e && e.message)
       }
-      lastAction = { id: String(j.id || ''), name: j.name, status, at: new Date().toISOString(), message }
+      lastAction = {
+        id: String(j.id || ''),
+        name: j.name,
+        status,
+        at: new Date().toISOString(),
+        message: redactPathText(message) // v47 隐私：错误信息里不落路径
+      }
       j.handledAt = new Date().toISOString()
       j.status = status
       try {
@@ -990,11 +1102,12 @@ export function apply(ctx, rawConfig) {
     message: ''
   }
   // v46：工具类型细分（9 类）已抽到 ./tool-types.js（纯函数、可单测），动作映射见 tool/call 处理分支
-  // v47-hotfix：状态推送合并节流 —— ≥5s 一次、只推当前状态汇总（旧版每次 setStatus 都开连接）
+  // v47-hotfix：状态推送合并节流 —— ≥5s 一次（低占用 10s）、只推当前状态汇总
   let lastStatusPushAt = 0
   let lastStatusPayload = ''
   const pushStatusToPet = () => {
     if (!cfg.statusChannel?.petPush) return
+    if (!modeAllowsStatusPush(modeState.kind)) return // v47：silent/off 不推姿态
     try {
       if (!petOnline) return
       const now = Date.now()
@@ -1065,12 +1178,19 @@ export function apply(ctx, rawConfig) {
     toolCalls: 0,
     longestTurnMs: 0,
     tokens: 0,
+    tokensInput: 0,
+    tokensOutput: 0,
+    tokensCacheRead: 0,
+    tokensCacheWrite: 0,
     tokensUser: 0,
     tokensAgent: 0,
     roleUnknown: 0,
     costUserYuan: 0,
     costAgentYuan: 0,
     costYuan: 0,
+    costYuanFlat: 0,
+    costCacheYuan: 0,
+    cacheSavedYuan: 0,
     petLlmCostYuan: 0,
     budgetYuan: cfg.llm.budgetPerDayYuan || 1,
     calls: 0,
@@ -1104,6 +1224,20 @@ export function apply(ctx, rawConfig) {
           (Number(today.tokens) || 0) - (Number(today.tokensUser) || 0) - (Number(today.tokensAgent) || 0)
         if (legacyGap > 0) today.tokensUser = (Number(today.tokensUser) || 0) + legacyGap
         today.roleUnknown = Number(today.roleUnknown) || 0
+        // v47 迁移：v46 及更早只累计 tokens 总数、没有分项 ⇒ 按典型缓存占比拆四类（合计不变，便于分项计价）
+        if (prev.today.tokensInput === undefined && (Number(today.tokens) || 0) > 0) {
+          const legacy = legacyParts(today.tokens, cfg.pricing?.legacyMix)
+          today.tokensInput = legacy.input
+          today.tokensOutput = legacy.output
+          today.tokensCacheRead = legacy.cacheRead
+          today.tokensCacheWrite = legacy.cacheWrite
+          log('info', 'today seed migrate itemized', {
+            total: legacy.total,
+            input: legacy.input,
+            output: legacy.output,
+            cacheRead: legacy.cacheRead
+          })
+        }
         // v46：calls/petLlmCostYuan 增量续种 —— llmDay 承接今日已发生量，lastLlm* 作为差分基线
         llmDay.calls = Number(today.calls) || 0
         llmDay.cost = Number(today.petLlmCostYuan) || 0
@@ -1162,7 +1296,7 @@ export function apply(ctx, rawConfig) {
     const affW = levelOf(companion.affinity)
     return { mood: moodW, energy: energyW, affinity: affW }
   }
-  // 写盘统计（task-69：用于证明写盘频率/跳过次数）
+  // task-69：写盘统计 + 去抖落盘（companion 30s / events 2s；旧版顺手每 5s 写 companion、每个事件写 events）
   const persistStats = { companion: 0, events: 0, state: 0, skipped: 0 }
   let companionDirty = false
   let lastCompanionSaveAt = 0
@@ -1191,7 +1325,6 @@ export function apply(ctx, rawConfig) {
       if (Array.isArray(j.events)) events = j.events
     }
   } catch {}
-  // task-69：events 落盘去抖（2s 合并；旧版每个事件同步写一次，热路径 IO）
   let eventsDirty = false
   let eventsDirtyTimer = null
   const saveEvents = (force = false) => {
@@ -1232,25 +1365,26 @@ export function apply(ctx, rawConfig) {
   const interact = (name) => {
     const now = Date.now()
     const limits = { head: 5 * 60 * 1000, feed: 0, come: 60 * 1000 }
+    // v47 契约：手动互动在 off/silent/focus 下仍保留（force 直发，不受模式门控）
     if (name === 'head') {
-      send('cmd:fx:love')
+      send('cmd:fx:love', { force: true })
       companion.mood = Math.min(100, companion.mood + 3)
       companion.affinity = Math.min(100, companion.affinity + 0.5)
     } else if (name === 'feed') {
       const h = new Date().getHours()
       if (h >= 23 || h < 8) return 'feed-night'
-      send('act:jump')
-      setTimeout(() => send('cmd:fx:love'), 300)
+      send('act:jump', { force: true })
+      setTimeout(() => send('cmd:fx:love', { force: true }), 300)
       companion.mood = Math.min(100, companion.mood + 2)
       companion.energy = Math.min(100, companion.energy + 3)
     } else if (name === 'come') {
-      send('walk:nearby')
-      setTimeout(() => send('freeze:800'), 700)
+      send('walk:nearby', { force: true })
+      setTimeout(() => send('freeze:800', { force: true }), 700)
       companion.mood = Math.min(100, companion.mood + 1)
     }
     companion.totals.interactions += 1
     companion.lastSeenAt = new Date().toISOString()
-    saveCompanion()
+    saveCompanion(true)
     pushEvent('interaction', 'S3', name, false)
     log('info', 'interaction', { name, mood: companion.mood, affinity: companion.affinity })
     return 'ok'
@@ -1338,12 +1472,16 @@ export function apply(ctx, rawConfig) {
   const todayReset = () => {
     const d = new Date().toISOString().slice(0, 10)
     if (today.date !== d) {
-      // v46：跨天重置全部日统计（旧版漏了 tokens/角色/cost/agentCalls 等，会串到新的一天）
+      // v46/v47：跨天重置全部日统计（旧版漏了 tokens/角色/cost/agentCalls 等，会串到新的一天）
       today.date = d
       today.turns = 0
       today.toolCalls = 0
       today.longestTurnMs = 0
       today.tokens = 0
+      today.tokensInput = 0
+      today.tokensOutput = 0
+      today.tokensCacheRead = 0
+      today.tokensCacheWrite = 0
       today.tokensUser = 0
       today.tokensAgent = 0
       today.roleUnknown = 0
@@ -1351,6 +1489,9 @@ export function apply(ctx, rawConfig) {
       today.costUserYuan = 0
       today.costAgentYuan = 0
       today.costYuan = 0
+      today.costYuanFlat = 0
+      today.costCacheYuan = 0
+      today.cacheSavedYuan = 0
       today.petLlmCostYuan = 0
       today.calls = 0
       today.riceBowls = 0
@@ -1359,17 +1500,37 @@ export function apply(ctx, rawConfig) {
     rollLlmDay()
     // v46：calls/petLlmCostYuan 以续种后的 llmDay 为准（reload 不清零）
     publishLlmAccounting()
-    const priceK = cfg.pricing?.per1kTokens ?? cfg.costModel?.userPricePer1kTokensYuan ?? 0.0015
-    today.costUserYuan = Number((((today.tokensUser || 0) / 1000) * priceK).toFixed(4))
-    today.costAgentYuan = Number((((today.tokensAgent || 0) / 1000) * priceK).toFixed(4))
-    today.costYuan = Number(((today.costUserYuan || 0) + (today.costAgentYuan || 0)).toFixed(4))
+    // v47：分项计价（估算）；costYuanFlat 保留 v46 旧口径对照；三本账按 token 占比分摊（两者和 = 总）
+    const price = priceTable(cfg.pricing)
+    const parts = {
+      input: Number(today.tokensInput) || 0,
+      output: Number(today.tokensOutput) || 0,
+      cacheRead: Number(today.tokensCacheRead) || 0,
+      cacheWrite: Number(today.tokensCacheWrite) || 0,
+      total: Number(today.tokens) || 0
+    }
+    const itemCost = costOf(parts, price)
+    const split = splitCost(itemCost, today.tokensUser, today.tokens)
+    today.costYuan = Number(itemCost.toFixed(4))
+    today.costUserYuan = split.user
+    today.costAgentYuan = split.agent
+    today.costYuanFlat = Number(flatCostOf(today.tokens, price).toFixed(4))
+    today.costCacheYuan = Number(
+      ((parts.cacheRead * price.cacheReadPerM + parts.cacheWrite * price.cacheWritePerM) / 1e6).toFixed(4)
+    )
+    today.cacheSavedYuan = Number(
+      (
+        (parts.cacheRead * Math.max(0, price.inputPerM - price.cacheReadPerM) +
+          parts.cacheWrite * Math.max(0, price.inputPerM - price.cacheWritePerM)) /
+        1e6
+      ).toFixed(4)
+    )
     today.budgetYuan = cfg.llm.budgetPerDayYuan || 1
     today.riceBowls = Number(((today.tokens || 0) / (cfg.rice?.bowlTokens || 100000)).toFixed(2))
     today.period = new Date().getHours() >= 0 && new Date().getHours() < 8 ? '低谷' : '高峰'
   }
 
-  // v46：状态文件可能被事件路径在心跳之间触发写入；v47/task-69：写盘节流（默认 10s，低占用 20s），
-  // 写前重算派生字段保证快照自洽（verifier 断言按文件读取）。
+  // task-69：state 写盘节流（默认 10s，低占用 20s）；写前重算派生字段保证快照自洽
   let lastStateWriteAt = 0
   let stateWriteSkipped = 0
   const writeState = (force = false) => {
@@ -1384,11 +1545,13 @@ export function apply(ctx, rawConfig) {
       return
     }
     lastStateWriteAt = nowMs
+    // v46：状态文件可能被事件路径（ui-action/互动等）在两次心跳之间触发写入；
+    // 写盘前重算派生字段（cost*/riceBowls/calls/petLlmCostYuan），保证快照自洽（verifier 断言按文件读取）。
     try {
       todayReset()
     } catch {}
     try {
-      const sess = sessionsPayload() // task-69：每次写盘只算一次（旧版算 4 次深拷贝）
+      const sess = sessionsPayload() // task-69：每次写盘只算一次（旧版算 4 次）
       const state = {
         updatedAt: new Date().toISOString(),
         host: true,
@@ -1405,8 +1568,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.46.0',
-        petVersion: 'v1.1.5+patch-v46',
+        version: '0.47.0',
+        petVersion: 'v1.1.5+patch-v47',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1430,6 +1593,16 @@ export function apply(ctx, rawConfig) {
         },
         currentSessionId: currentSessionId ? String(currentSessionId).slice(0, 16) : null,
         today,
+        priceTable: priceTable(cfg.pricing),
+        mode: modeView(modeState),
+        // task-69：宿主低占用观测（面板可显示"低占用中"/内存；阈值来自 lowMemory.rssMb）
+        hostMemory: {
+          rssMB: memRssMb(),
+          heapMB: memHeapMb(),
+          timers: timerCount(),
+          lowFootprint: refreshLowFootprint(),
+          thresholdRssMB: Number(cfg.lowMemory?.rssMb || 2000)
+        },
         companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
         userActiveCount: sess.filter((x) => x.role === 'user').length,
@@ -1451,7 +1624,9 @@ export function apply(ctx, rawConfig) {
           skin: true,
           quiet: true,
           quit: true,
-          autoStart: true
+          autoStart: true,
+          // v47/契约：面板可切换 active/focus/silent/off
+          mode: { silent: true, focus: true, off: true, resume: true }
         },
         bootstrap: (() => {
           try {
@@ -1465,8 +1640,146 @@ export function apply(ctx, rawConfig) {
       fs.writeFileSync(target, JSON.stringify(state), 'utf8')
       persistStats.state += 1
       persistStats.skipped = stateWriteSkipped
+      // v47：旧 state.json 只写兼容镜像（权威仍是 bridge-state-v2.json，见 DATA-CONTRACT §10）
+      try {
+        if (cfg.stateFile) {
+          const mirror = {
+            updatedAt: state.updatedAt,
+            version: state.version,
+            petVersion: state.petVersion,
+            host: state.host,
+            pet: state.pet,
+            enabled: state.enabled,
+            compactOnly: true,
+            today: state.today,
+            mode: state.mode,
+            status: state.status,
+            companion: state.companion
+          }
+          const t2 = cfg.stateFile + '.tmp'
+          fs.writeFileSync(t2, JSON.stringify(mirror), 'utf8')
+          fs.renameSync(t2, cfg.stateFile)
+        }
+      } catch {}
     } catch {}
   }
+
+  // ---------- v47 控制模式：应用 / 持久化 / 自动恢复 / 桌宠侧行为 ----------
+  const captureRestorePet = () => {
+    const pm = String(cfg.petSettings?.mode || '')
+    restorePet.mode = pm && pm !== 'still' ? pm : 'wander'
+    restorePet.locked = !!cfg.petSettings?.locked
+    restorePet.lineFreq = String(cfg.petSettings?.lineFreq || '正常')
+  }
+  const persistMode = () => {
+    if (!cfg.mode?.file) return
+    try {
+      fs.writeFileSync(cfg.mode.file, JSON.stringify({ ...modeState, updatedAt: new Date().toISOString() }), 'utf8')
+    } catch {}
+  }
+  // focus/silent：停散步 + 锁位置 + 少主动台词；active：还原进入前的原生设置
+  const pushModeToPet = () => {
+    if (!petOnline) return
+    try {
+      if (modeEngaged()) {
+        send('cmd:mode:still', { force: true })
+        send('cmd:locked:true', { force: true })
+        send('cmd:freq:安静', { force: true })
+      } else {
+        send('cmd:mode:' + restorePet.mode, { force: true })
+        send('cmd:locked:' + (restorePet.locked ? 'true' : 'false'), { force: true })
+        send('cmd:freq:' + restorePet.lineFreq, { force: true })
+      }
+      log('info', 'mode pet applied', modeView(modeState))
+    } catch {}
+  }
+  const applyMode = (req, source = 'api') => {
+    if (!req) return { ok: false, message: 'unsupported mode request' }
+    const wanted = req.clear ? 'active' : normalizeKind(req.kind)
+    if (wanted === 'active') {
+      modeState.kind = 'active'
+      modeState.resumeAt = 0
+      modeState.since = new Date().toISOString()
+      modeState.source = source
+    } else {
+      if (modeState.kind === 'active') captureRestorePet()
+      modeState.kind = wanted
+      modeState.resumeAt = resolveResumeAt(wanted, cfg.mode?.defaults, req.durationMs, new Date())
+      modeState.since = new Date().toISOString()
+      modeState.source = source
+    }
+    persistMode()
+    pushModeToPet()
+    try {
+      bubbleQ.length = 0 // 进入模式时丢弃排队中的非 S0 气泡
+    } catch {}
+    // 契约：事件 kind = mode_change，级别 S1
+    pushEvent('mode_change', 'S1', modeLabel(modeState.kind), false)
+    const view = modeView(modeState)
+    log('info', 'mode change', {
+      kind: view.kind,
+      remainMs: view.remainMs,
+      resumeAt: view.resumeAt,
+      source,
+      auto: !!req.auto
+    })
+    writeState(true) // 模式变化立即落盘（不被写盘节流吞掉，面板/verifier 即时可见）
+    return { ok: true, message: view.kind + (view.remainMs ? ' remainMs=' + view.remainMs : '') }
+  }
+  const modeTick = () => {
+    if (!modeEngaged() || !modeState.resumeAt) return
+    if (cfg.mode?.autoResume === false) return
+    if (Date.now() >= modeState.resumeAt) {
+      log('info', 'mode auto resume', { from: modeState.kind })
+      applyMode({ kind: 'active', clear: true, auto: true }, 'auto')
+    }
+  }
+  const modeTimer = setInterval(modeTick, 1000)
+  // 启动加载：优先持久化恢复；契约迁移：petSettings.mode='still' → normal（不迁移，避免被困）
+  const loadMode = () => {
+    let restored = false
+    try {
+      if (cfg.mode?.file && fs.existsSync(cfg.mode.file)) {
+        const j = JSON.parse(fs.readFileSync(cfg.mode.file, 'utf8'))
+        const kind = normalizeKind(j.kind)
+        const resumeAt = Number(j.resumeAt) || 0
+        if (kind !== 'active' && !(resumeAt && resumeAt <= Date.now())) {
+          modeState.kind = kind
+          modeState.resumeAt = resumeAt
+          modeState.since = j.since || new Date().toISOString()
+          modeState.source = 'restore'
+          restored = true
+        }
+        log('info', 'mode restored', { kind: modeState.kind, remainMs: modeView(modeState).remainMs })
+      }
+    } catch {}
+    if (!restored && String(cfg.petSettings?.mode || '') === 'still') {
+      cfg.petSettings = { ...(cfg.petSettings || {}), mode: 'wander' }
+      log('info', 'pet mode still -> normal (v47 contract)')
+    }
+    captureRestorePet()
+    if (modeEngaged()) pushModeToPet()
+  }
+  loadMode()
+  // 外部模式请求文件（快捷键助手等写入；1s 轮询，消费后写 handled 标记）
+  let modeRequestRaw = ''
+  const pollModeRequest = () => {
+    if (!cfg.mode?.requestFile) return
+    try {
+      const raw = fs.readFileSync(cfg.mode.requestFile, 'utf8')
+      if (!raw || raw === modeRequestRaw) return
+      modeRequestRaw = raw
+      const j = JSON.parse(raw)
+      const req = normalizeRequest(j, cfg.mode?.defaults)
+      if (!req) return
+      applyMode(req, 'request-file')
+      log('info', 'mode request consumed', { kind: req.kind, name: String(j.name || '') })
+      try {
+        fs.writeFileSync(cfg.mode.requestFile, JSON.stringify({ handled: true, at: new Date().toISOString() }), 'utf8')
+      } catch {}
+    } catch {}
+  }
+  const modeRequestTimer = setInterval(pollModeRequest, 1000)
   let lastUiRaw = ''
   const pollUiConfig = () => {
     if (!cfg.uiConfigFile) return
@@ -1485,6 +1798,24 @@ export function apply(ctx, rawConfig) {
         if (ok.length) {
           cfg.quietHours = ok
           applied.quietHours = ok
+        }
+      }
+      // v47 契约：ui-config.mode = {silentMinutes,focusMinutes,offUntil,autoResume,hotkey}
+      if (j.mode && typeof j.mode === 'object') {
+        const md = { ...(cfg.mode?.defaults || {}) }
+        if (Number(j.mode.silentMinutes) > 0) md.silentMs = Number(j.mode.silentMinutes) * 60000
+        if (Number(j.mode.focusMinutes) > 0) md.focusMs = Number(j.mode.focusMinutes) * 60000
+        if (j.mode.offUntil !== undefined && j.mode.offUntil !== null) md.offUntil = j.mode.offUntil
+        cfg.mode = { ...(cfg.mode || {}), defaults: md }
+        if (typeof j.mode.autoResume === 'boolean') cfg.mode.autoResume = j.mode.autoResume
+        if (typeof j.mode.hotkey === 'string' && j.mode.hotkey.trim())
+          cfg.mode.hotkey = { ...(cfg.mode.hotkey || {}), keys: j.mode.hotkey.trim() }
+        applied.mode = {
+          silentMinutes: Math.round((Number(md.silentMs) || 0) / 60000),
+          focusMinutes: Math.round((Number(md.focusMs) || 0) / 60000),
+          offUntil: md.offUntil ?? null,
+          autoResume: cfg.mode.autoResume !== false,
+          hotkey: cfg.mode.hotkey?.keys || ''
         }
       }
       if (j.llm && Number.isFinite(Number(j.llm.budgetPerDayYuan))) {
@@ -1621,6 +1952,11 @@ export function apply(ctx, rawConfig) {
     if (!pipeBusy) setTimeout(pipePump, 0)
   }
   function send(line, opts = {}) {
+    // v47 模式门控：自动演出按 mode 拦截；手动互动/模式指令传 force:true
+    if (!opts.force && !modeAllowsPipeLine(line)) {
+      logModeSuppress('pipe', String(line).split('|')[0])
+      return
+    }
     if (cfg.dryRun) {
       log('info', 'dryRun send', { line })
       return
@@ -1645,8 +1981,7 @@ export function apply(ctx, rawConfig) {
   // v46：usage 角色判定（与会话列表展示口径分开）。
   // 已知：顶层会话（origin 为空）→ user；subagent/团队（origin 命中 ROLE_BG 或 delegationDepth>0）→ agent。
   // 非空但未知的 origin 视为未知角色：tokens 归 user 并计数 today.roleUnknown（规格要求）。
-  const usageTokens = (u) =>
-    Math.max(0, Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0)
+  const usageTokens = (u) => usageParts(u).total
   const usageRoleOf = (session) => {
     const hdr = session && session.header
     if (!hdr) return 'unknown'
@@ -1657,13 +1992,19 @@ export function apply(ctx, rawConfig) {
     return 'unknown'
   }
   let roleUnknownLoggedAt = 0
-  // v46：usage 归集放在 skipSubagent/归因过滤之前调用 ⇒ tokens 覆盖全部角色/会话（含团队/后台）。
+  // v46/v47：usage 归集放在 skipSubagent/归因过滤之前调用 ⇒ tokens 覆盖全部角色/会话（含团队/后台）。
   const accountUsage = (session, data) => {
     const u = data && data.usage
     if (!u) return 0
-    const dt = usageTokens(u)
+    const parts = usageParts(u)
+    const dt = parts.total
     if (!dt) return 0
     today.tokens = (today.tokens || 0) + dt
+    // v47：分项累计（cache 原样单列，用于分项计价）
+    today.tokensInput = (today.tokensInput || 0) + parts.input
+    today.tokensOutput = (today.tokensOutput || 0) + parts.output
+    today.tokensCacheRead = (today.tokensCacheRead || 0) + parts.cacheRead
+    today.tokensCacheWrite = (today.tokensCacheWrite || 0) + parts.cacheWrite
     let role = usageRoleOf(session)
     if (role === 'unknown') {
       today.roleUnknown = (today.roleUnknown || 0) + 1
@@ -1723,7 +2064,10 @@ export function apply(ctx, rawConfig) {
       .slice(0, 20)
       .map((r) => ({
         sessionId: String(r.sessionId).slice(0, 16),
-        workspace: r.workspace,
+        // v47 隐私：不落绝对路径 —— name(basename) + hash 区分同名；workspace 为兼容旧字段（只给 name）
+        workspace: workspaceName(r.workspace),
+        workspaceName: workspaceName(r.workspace),
+        workspaceHash: workspaceHash(r.workspace),
         title: r.title,
         role: r.role,
         lastUserMessageAt: r.lastUserMessageAt ? new Date(r.lastUserMessageAt).toISOString() : null,
@@ -1748,7 +2092,7 @@ export function apply(ctx, rawConfig) {
           const sid = String(j.sessionId)
           sessionRegistry.set(sid, {
             sessionId: sid,
-            workspace: String(j.cwd || ''),
+            workspace: String(j.cwdName || workspaceName(j.cwd) || ''),
             title: 'workspace · #' + sid.slice(-8),
             role: 'user',
             lastUserMessageAt: Date.now(),
@@ -1948,6 +2292,11 @@ export function apply(ctx, rawConfig) {
   const speak = (kind, text, opts = {}) => {
     const t = clip(text, 60)
     if (!t) return false
+    // v47：模式门控优先于 quietHours/activity —— focus/silent 只留 S0，off 全静默（手动互动走 force）
+    if (!modeAllowsBubble(modeState.kind, kind, !!opts.urgent)) {
+      logModeSuppress('bubble', kind)
+      return false
+    }
     if (!opts.force && !canSpeak(kind, opts.urgent, opts)) return false
     if (recentLines.some((x) => x.text === t)) {
       log('debug', 'skip throttle: duplicate', { kind })
@@ -2076,7 +2425,11 @@ export function apply(ctx, rawConfig) {
             if (cfg.attribution?.stateFile)
               fs.writeFileSync(
                 cfg.attribution.stateFile,
-                JSON.stringify({ sessionId: session.id, at: new Date().toISOString(), cwd: hdr.cwd || '' })
+                JSON.stringify({
+                  sessionId: session.id,
+                  at: new Date().toISOString(),
+                  cwdName: workspaceName(hdr.cwd)
+                })
               )
           } catch {}
           log('info', 'session follow', {
@@ -2453,6 +2806,8 @@ export function apply(ctx, rawConfig) {
       }
       refreshPetOnline()
       writeState()
+      // v47：桌宠上线后重发当前模式（reload/重启后保持）
+      if (petOnline && modeEngaged()) pushModeToPet()
       // task-69：内存 / 定时器 / 降频自检（默认 2 分钟一行，供 4h 开/关对比测试）
       refreshLowFootprint()
       if (Date.now() - lastMemLogAt >= Number(cfg.lowMemory?.memLogMs || 120000)) {
@@ -2462,6 +2817,7 @@ export function apply(ctx, rawConfig) {
           heapMB: memHeapMb(),
           timers: timerCount(),
           lowFootprint,
+          mode: modeState.kind,
           pipe: { ...pipeStats },
           persist: { ...persistStats }
         })
@@ -2488,7 +2844,7 @@ export function apply(ctx, rawConfig) {
       // P3: idle skit — only when nobody is operating, not during quiet hours
       if (
         cfg.idleSkit?.enabled &&
-        !refreshLowFootprint() &&
+        !refreshLowFootprint() && // task-69：低占用不跑小剧场
         cfg.idleSkit.eventGapMs &&
         Date.now() - lastEventAt >= cfg.idleSkit.eventGapMs &&
         !quietNow() &&
@@ -2568,6 +2924,12 @@ export function apply(ctx, rawConfig) {
       if (hookTimer) clearInterval(hookTimer)
     } catch {}
     try {
+      if (modeTimer) clearInterval(modeTimer)
+    } catch {}
+    try {
+      if (modeRequestTimer) clearInterval(modeRequestTimer)
+    } catch {}
+    try {
       if (eventsDirtyTimer) clearTimeout(eventsDirtyTimer)
     } catch {}
     eventsDirtyTimer = null
@@ -2582,7 +2944,7 @@ export function apply(ctx, rawConfig) {
     } catch {}
     sessions.clear()
     log('info', 'disposed', {
-      pipeQueued: 0,
+      mode: modeState.kind,
       pipe: { ...pipeStats },
       persist: { ...persistStats },
       timers: timerCount(),
@@ -2594,20 +2956,21 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v46-hotpipe', {
+  log('info', 'loaded v47', {
     memoryMB: memRssMb(),
     timers: timerCount(),
     lowMemory: cfg.lowMemory,
     persistIntervals: { stateMs: cfg.stateWriteMs, companionMs: cfg.companionSaveMs, eventsMs: cfg.eventsSaveMs },
     pipe: { timeoutMs: Number(cfg.pipeTimeoutMs) || 1200, mode: 'serial-queue+coalesce' },
+    mode: modeView(modeState),
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
     history: cfg.historyFile ? 'on' : 'off',
-    pricing: cfg.pricing,
+    pricing: priceTable(cfg.pricing),
     accounting: {
-      tokens: 'all-roles incl cache (totalTokens)',
-      costs: 'user/agent split @ pricing.per1kTokens',
+      tokens: 'all-roles incl cache (totalTokens) + itemized categories',
+      costs: 'itemized priceTable; costYuanFlat kept for v46 comparison',
       calls: 'seed from state v2 + lastLlm delta'
     },
     toolTypes: '9-class (tool-types.js)',

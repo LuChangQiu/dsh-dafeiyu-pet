@@ -161,3 +161,76 @@ price = `pricing.per1kTokens`（0.0015）：
 
 - 附加：触发一次桌宠 LLM（主会话一轮对话）后，`calls` 与 `petLlmCostYuan` 只增不减，日志出现 `llm accounted`。
 - **快照自洽**：`writeState()`（含事件路径触发的写盘）写前重算 `cost*/riceBowls/calls/petLlmCostYuan`，保证文件里 `tokens` 与派生字段同一时刻（避免两次心跳之间读盘出现“token 涨了、cost 没涨”的瞬时不一致）。
+
+## 10. v47 分项计价 / 控制模式 / 隐私 / 低占用（2026-10-23，当前权威口径）
+
+> 实现：`plugin/server/lib/{index,pricing,mode,privacy}.js`；单测：`scripts/test-{pricing,mode,privacy}.mjs`；
+> 隐私抽检：`node scripts/audit-privacy.mjs --dir <pet-work>`；低占用测量见 `docs/HOST-SAFETY.md`。
+> 与 §9 的关系：v46 的 `costYuan/costUserYuan/costAgentYuan` 语义在 v47 **改为分项价**（更真实）；
+> v46 旧平铺公式保留在 `costYuanFlat` 并原样可复核。所有金额仍是**估算**。
+
+### 10.1 tokens 分项（全部会话、含 cache）
+
+- `today.tokens` = 所有会话 `usage.totalTokens` 之和（不变）。
+- 新增 `tokensInput/tokensOutput/tokensCacheRead/tokensCacheWrite`：DSH 适配器口径 ——
+  `inputTokens` 是**未命中缓存的输入**，`totalTokens = input + output + cacheRead + cacheWrite`；cache 原样累计、不单独折算。
+- 迁移日（v46→v47）：历史只有 `tokens` 总数时，按典型长会话缓存占比
+  `legacyMix={input 1%, output 1%, cacheRead 98%, cacheWrite 0%}` 拆成四类（合计不变，日志 `today seed migrate itemized`）；
+  次日按真实 usage 分项累计。
+- 不变式：`tokensInput+tokensOutput+tokensCacheRead+tokensCacheWrite ≈ tokens`。
+
+### 10.2 分项计价（估算）
+
+`priceTable`（v2 与 loaded 日志都输出，可配置于 patch `pricing`）：
+`{ inputPerM:2, outputPerM:3, cacheReadPerM:0.2, cacheWritePerM:2, per1kTokens:0.0015, currency:'CNY' }`（元/百万 token，默认按 DeepSeek 公开价假设）。
+
+| 字段             | 公式                                                                                                                      | 说明                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `costYuan`       | `(tokensInput×inputPerM + tokensOutput×outputPerM + tokensCacheRead×cacheReadPerM + tokensCacheWrite×cacheWritePerM)/1e6` | **主口径**（真实量级）     |
+| `costYuanFlat`   | `tokens/1000 × per1kTokens`                                                                                               | v46 旧口径，保留对照       |
+| `costCacheYuan`  | `(cacheRead×cacheReadPerM + cacheWrite×cacheWritePerM)/1e6`                                                               | 缓存部分费用               |
+| `cacheSavedYuan` | `(cacheRead×(inputPerM−cacheReadPerM) + cacheWrite×max(0,inputPerM−cacheWritePerM))/1e6`                                  | 相对"全按输入价"省下的估算 |
+| `costUserYuan`   | `costYuan × tokensUser/tokens`（4 位小数）                                                                                | 按 token 占比分摊          |
+| `costAgentYuan`  | `costYuan − costUserYuan`                                                                                                 | 与前者和 = `costYuan`      |
+
+### 10.3 控制模式（task-65；tech-scout 定稿契约）
+
+- **v2**：`mode{active,kind:'silent'|'focus'|'off',remainMs,resumeAt:'ISO'|null,since}`；`capabilities.mode{silent,focus,off,resume}`。
+- **语义**：`silent`=除 S0（审批/等你选）外不说不动；`focus`=减动作（仅最小幅度 sway/peek/nod/stretch）+ 除 S0/审批静默；
+  `off`=停止自动联动（**手动互动保留**）；`active`=正常。优先级：**mode > quietHours > activity**。
+- **ui-action**（返回 `lastAction{done|failed,message}`）：`mode-silent{minutes}`（默认 30）、`mode-focus{minutes}`（默认 50）、
+  `mode-off{until?}`（`HH:MM`/ISO；缺省到 `offUntilHour`=08:00）、`mode-resume`；兼容旧名 `mode-set/mode-clear/mode-cycle`。
+- **ui-config.mode**：`{silentMinutes:30,focusMinutes:50,offUntil:null,autoResume:true,hotkey:''}`（热更新，无需 reload）。
+- 到点自动恢复（`autoResume:true`，默认）；重启保持（`modeFile` 持久化）；事件 `mode_change`（S1）。
+- 桌宠侧：模式期间 `cmd:mode:still` + `cmd:locked:true` + `cmd:freq:安静`；恢复时还原进入前设置。
+- **迁移约定**：`petSettings.mode='still'` 不再作为状态真源 → 映射为 normal（不迁移，避免被困），日志 `pet mode still -> normal`。
+  该副作用（"呼吸/眨眼频率"）**无协议支持**，当前以停走动+锁位置+减动作为等效；后续需桌宠补丁新增 calm 指令。
+
+### 10.4 隐私（task-68）
+
+- 日志：`log()` 出口统一调用 `redactPathText`，`C:\...`/`E:\...`/UNC 一律只留 basename；`audit-privacy.mjs` 对日志 0 路径断言。
+- v2 `sessions[]`：`workspace`（兼容旧字段）与新增 `workspaceName` 都只给 basename；`workspaceHash` = sha1 前 6 位区分同名。
+- `attribution.json` 写 `cwdName`（不再写绝对 `cwd`；旧文件读取兼容）。
+- `lastAction.message` 写入前脱敏。
+- 旧日志归档：`evidence/pet-bridge-main.log.pre-v47-<ts>.old`；新日志从脱敏版开始。
+- 抽检：`node scripts/audit-privacy.mjs --dir "<pet-work>" --json`（v2/events/companion/attribution/mode/state + 日志；0 路径/0 key/0 对话字段）。
+
+### 10.5 低占用（task-69）
+
+- v2 新增 `hostMemory{rssMB,heapMB,timers,lowFootprint,thresholdRssMB}`。
+- 写盘节流：`stateWriteMs`(10s，低占用 20s)、`companionSaveMs`(30s)、`eventsSaveMs`(2s 去抖)；关键变化强制写。
+- `lowMemory{rssMb,stateWriteMs,statusPushMs,memLogMs}`：RSS 超阈值自动降频（状态推送 10s、停预生成/小剧场）。
+- pipe：单队列串行 + 状态合并 + 指数退避；桌宠"读后断开"的 EPIPE 视为投递成功。
+- `mem` 日志（默认 2 分钟）输出 `rssMB/heapMB/timers/pipe{ok,fail}/persist{...}`，用于 4h 开/关对比（见 `docs/HOST-SAFETY.md`）。
+- `state.json` 仅写**兼容镜像**（`compactOnly:true`，含 today/mode/status/companion）；权威状态仍是 `bridge-state-v2.json`。
+
+### 10.6 v47 验收断言（verifier）
+
+1. `abs(riceBowls×100000 − tokens) < 5000`（不变）。
+2. **旧公式**：`abs(costYuanFlat − tokens/1000×per1kTokens) < 0.01`。
+3. **新公式**：`abs(costYuan − 分项公式(§10.2, priceTable)) < 0.02`。
+4. `abs((costUserYuan+costAgentYuan) − costYuan) < 0.001`，且 `costUserYuan ≈ costYuan×tokensUser/tokens`。
+5. `abs((tokensInput+tokensOutput+tokensCacheRead+tokensCacheWrite) − tokens) < 1`（迁移日也成立：按 legacyMix 拆分合计不变）。
+6. `costCacheYuan/cacheSavedYuan` 与 §10.2 公式一致（±0.02）。
+7. mode：`mode-silent 15` 后 v2 `mode.kind=silent/active=true/remainMs≈900000`；`mode-resume` 后 `kind=active/active=false`；事件 `mode_change` S1。
+8. 隐私：`audit-privacy.mjs` 退出码 0（0 路径/0 key/0 对话字段）。
