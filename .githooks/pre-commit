@@ -1,20 +1,24 @@
 #!/bin/sh
-# 提交前检查：node --check + prettier 格式；失败则阻�止提交（先跑 npm run format）
+# 提交前检查：node --check + prettier 格式 + ruff（若可用）。
+# 任一失败则阻止提交；格式问题请先运行 `npm run format`。
 set -e
+
 if command -v node >/dev/null 2>&1; then
   node scripts/lint.mjs
-  npx --no-install prettier --check "plugin/**/*.js" "scripts/**/*.mjs" || {
+  if ! npx --no-install prettier --check "plugin/**/*.js" "scripts/**/*.mjs"; then
     echo ""
     echo "[pre-commit] Prettier 格式不一致，请先运行: npm run format"
     exit 1
-  }
-fi
-if command -v python >/dev/null 2>&1; then
-  if python -m ruff --version >/dev/null 2>&1; then
-    python -m ruff check pet --config ruff.toml || {
-      echo "[pre-commit] ruff 检查失败，请修复后再提交"
-      exit 1
-    }
   fi
 fi
+
+if command -v python >/dev/null 2>&1; then
+  if python -m ruff --version >/dev/null 2>&1; then
+    if ! python -m ruff check pet --config ruff.toml; then
+      echo "[pre-commit] ruff 检查失败，请修复后再提交"
+      exit 1
+    fi
+  fi
+fi
+
 echo "[pre-commit] OK"
