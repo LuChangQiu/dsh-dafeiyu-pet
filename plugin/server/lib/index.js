@@ -1294,6 +1294,11 @@ export function apply(ctx, rawConfig) {
   const writeState = () => {
     const target = cfg.stateFileV2 || ''
     if (!target) return
+    // v46：状态文件可能被事件路径（ui-action/互动等）在两次心跳之间触发写入；
+    // 写盘前重算派生字段（cost*/riceBowls/calls/petLlmCostYuan），保证快照自洽（verifier 断言按文件读取）。
+    try {
+      todayReset()
+    } catch {}
     try {
       const state = {
         updatedAt: new Date().toISOString(),
