@@ -12,6 +12,14 @@
  * Guardrails: minGap / per-kind cooldown / chance / hourly & daily caps / quiet hours
  * (23:30-08:00; approval still urgent) / text de-dupe / failure silent.
  * No LLM in P1.5: lines come from the P0 pools (JSON), with embedded fallbacks.
+ *
+ * v46（三本账 / 工具分类 / 计账续种）：
+ *   - tokens = 全会话 usage.totalTokens 之和（含 cache，原样计入）；按会话 role 拆 tokensUser/tokensAgent，
+ *     role 未知归 user 并计数 roleUnknown。
+ *   - costUserYuan/costAgentYuan/costYuan = tokens/1000 × pricing.per1kTokens（默认 0.0015 元/1k，估算）。
+ *   - LLM 计账（calls/petLlmCostYuan）在 callLlm 成功处直接累计；reload 用 lastLlm* 差分 +
+ *     bridge-state-v2.today 续种，不清零。
+ *   - toolType 9 类规则见 ./tool-types.js（mcp 白名单、plan、knowledge、agent、job 子类…）。
  */
 
 import net from 'node:net'
@@ -19,6 +27,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 import fs from 'node:fs'
 import path from 'node:path'
+import { toolTypeOf } from './tool-types.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -203,7 +212,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v45'
+export const name = 'dsh-pet-bridge-v46'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -222,7 +231,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v45] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v46] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -337,7 +346,12 @@ export function apply(ctx, rawConfig) {
     log('debug', 'line remembered', { source, chars: text.length })
   }
 
+  // v46：LLM 计账（calls/petLlmCostYuan）跨 reload 续种。
+  // llmDay = 今日累计（装载时从 bridge-state-v2.today 续种，预算护栏也按续种后天数计）；
+  // lastLlmCalls/lastLlmCost = 已发布到 today 的基线，用于增量差分（避免重复累计或清零）。
   const llmDay = { day: dateKey(), calls: 0, tokens: 0, cost: 0 }
+  let lastLlmCalls = 0
+  let lastLlmCost = 0
   const rollLlmDay = () => {
     const k = dateKey()
     if (llmDay.day !== k) {
@@ -345,7 +359,13 @@ export function apply(ctx, rawConfig) {
       llmDay.calls = 0
       llmDay.tokens = 0
       llmDay.cost = 0
+      lastLlmCalls = 0
+      lastLlmCost = 0
     }
+  }
+  const publishLlmAccounting = () => {
+    today.calls = llmDay.calls
+    today.petLlmCostYuan = Number(llmDay.cost.toFixed(4))
   }
   const llmBudgetOk = () => {
     rollLlmDay()
@@ -469,10 +489,22 @@ export function apply(ctx, rawConfig) {
       const r2 = await runOnce(2)
       r = { text: r2.text, latencyMs: r.latencyMs + r2.latencyMs, tokens: r.tokens + r2.tokens }
     }
+    // v46：计账放在“调用成功”处（不再依赖 say/气泡路径）；reload 后用 lastLlm* 差分续种，跨 reload 不清零。
     rollLlmDay()
     llmDay.calls += 1
     llmDay.tokens += r.tokens
     llmDay.cost += estimateCost(r.tokens)
+    const deltaCalls = llmDay.calls - lastLlmCalls
+    const deltaCost = llmDay.cost - lastLlmCost
+    lastLlmCalls = llmDay.calls
+    lastLlmCost = llmDay.cost
+    publishLlmAccounting()
+    log('info', 'llm accounted', {
+      calls: deltaCalls,
+      cost: Number(deltaCost.toFixed(6)),
+      callsToday: today.calls,
+      costToday: today.petLlmCostYuan
+    })
     log('info', 'llm call', {
       kind,
       latencyMs: r.latencyMs,
@@ -905,6 +937,7 @@ export function apply(ctx, rawConfig) {
     lastActionState: null,
     tool: null,
     toolType: null,
+    subkind: null,
     phase: null,
     since: new Date().toISOString(),
     step: null,
@@ -913,20 +946,7 @@ export function apply(ctx, rawConfig) {
     source: null,
     message: ''
   }
-  // Phase-1：工具类型细分（read/write/command/search/agent/other）→ 动作
-  const TOOL_TYPE_RULES = [
-    ['agent', /^(subagent|workflow|team|ask|spawn|task)/i],
-    ['search', /^(web_search|web_fetch|codegraph|context7|grep|glob|search)/i],
-    ['write', /^(write|edit|patch|apply_patch|create_file|rename)/i],
-    ['command', /^(bash|pwsh|exec|shell|run|process|terminal)/i],
-    ['read', /^(read|list|open|view|cat|get_file|read_file)/i]
-  ]
-  const toolTypeOf = (name) => {
-    const n = String(name || '')
-    for (const [type, re] of TOOL_TYPE_RULES) if (re.test(n)) return type
-    if (/^mcp__/i.test(n)) return 'search'
-    return 'other'
-  }
+  // v46：工具类型细分（9 类）已抽到 ./tool-types.js（纯函数、可单测），动作映射见 tool/call 处理分支
   const pushStatusToPet = () => {
     if (!cfg.statusChannel?.petPush) return
     try {
@@ -953,6 +973,7 @@ export function apply(ctx, rawConfig) {
     statusState.since = new Date().toISOString()
     if (extra.tool !== undefined) statusState.tool = extra.tool || null
     if (extra.toolType !== undefined) statusState.toolType = extra.toolType || null
+    if (extra.subkind !== undefined) statusState.subkind = extra.subkind || null
     if (extra.phase !== undefined) statusState.phase = extra.phase || null
     if (extra.step !== undefined) statusState.step = extra.step
     if (extra.turn !== undefined) statusState.turn = extra.turn
@@ -989,8 +1010,6 @@ export function apply(ctx, rawConfig) {
 
   // ---------- Phase-1：今日统计 / 事件环形缓冲 / companion 情绪模型 / 互动 ----------
   let currentTurnStartAt = 0
-  let lastLlmCalls = 0
-  let lastLlmCost = 0
   const today = {
     date: new Date().toISOString().slice(0, 10),
     turns: 0,
@@ -999,6 +1018,7 @@ export function apply(ctx, rawConfig) {
     tokens: 0,
     tokensUser: 0,
     tokensAgent: 0,
+    roleUnknown: 0,
     costUserYuan: 0,
     costAgentYuan: 0,
     costYuan: 0,
@@ -1027,7 +1047,29 @@ export function apply(ctx, rawConfig) {
   try {
     if (cfg.stateFileV2 && fs.existsSync(cfg.stateFileV2)) {
       const prev = JSON.parse(fs.readFileSync(cfg.stateFileV2, 'utf8'))
-      if (prev && prev.today && prev.today.date === today.date) Object.assign(today, prev.today)
+      if (prev && prev.today && prev.today.date === today.date) {
+        Object.assign(today, prev.today)
+        // v46 迁移：v45 及更早只累计 tokens、没有 role 拆分 ⇒ 把当日历史缺口补进 tokensUser
+        // （口径：role 未知归 user），保证 tokens ≈ tokensUser + tokensAgent 不变式。
+        const legacyGap =
+          (Number(today.tokens) || 0) - (Number(today.tokensUser) || 0) - (Number(today.tokensAgent) || 0)
+        if (legacyGap > 0) today.tokensUser = (Number(today.tokensUser) || 0) + legacyGap
+        today.roleUnknown = Number(today.roleUnknown) || 0
+        // v46：calls/petLlmCostYuan 增量续种 —— llmDay 承接今日已发生量，lastLlm* 作为差分基线
+        llmDay.calls = Number(today.calls) || 0
+        llmDay.cost = Number(today.petLlmCostYuan) || 0
+        lastLlmCalls = llmDay.calls
+        lastLlmCost = llmDay.cost
+        log('info', 'today seed', {
+          from: 'bridge-state-v2',
+          tokens: today.tokens,
+          tokensUser: today.tokensUser,
+          tokensAgent: today.tokensAgent,
+          roleUnknown: today.roleUnknown,
+          calls: today.calls,
+          petLlmCostYuan: today.petLlmCostYuan
+        })
+      }
     }
   } catch {}
   const updateLastContext = (ok) => {
@@ -1219,15 +1261,27 @@ export function apply(ctx, rawConfig) {
   const todayReset = () => {
     const d = new Date().toISOString().slice(0, 10)
     if (today.date !== d) {
+      // v46：跨天重置全部日统计（旧版漏了 tokens/角色/cost/agentCalls 等，会串到新的一天）
       today.date = d
       today.turns = 0
       today.toolCalls = 0
       today.longestTurnMs = 0
+      today.tokens = 0
+      today.tokensUser = 0
+      today.tokensAgent = 0
+      today.roleUnknown = 0
+      today.agentCalls = 0
+      today.costUserYuan = 0
+      today.costAgentYuan = 0
       today.costYuan = 0
+      today.petLlmCostYuan = 0
       today.calls = 0
+      today.riceBowls = 0
+      log('info', 'today rollover', { date: d })
     }
-    today.calls = llmDay.calls
-    today.petLlmCostYuan = Number(llmDay.cost.toFixed(4))
+    rollLlmDay()
+    // v46：calls/petLlmCostYuan 以续种后的 llmDay 为准（reload 不清零）
+    publishLlmAccounting()
     const priceK = cfg.pricing?.per1kTokens ?? cfg.costModel?.userPricePer1kTokensYuan ?? 0.0015
     today.costUserYuan = Number((((today.tokensUser || 0) / 1000) * priceK).toFixed(4))
     today.costAgentYuan = Number((((today.tokensAgent || 0) / 1000) * priceK).toFixed(4))
@@ -1257,8 +1311,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.45.0',
-        petVersion: 'v1.1.5+patch-v45',
+        version: '0.46.0',
+        petVersion: 'v1.1.5+patch-v46',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1267,6 +1321,7 @@ export function apply(ctx, rawConfig) {
           stateClass: statusState.stateClass,
           tool: statusState.tool,
           toolType: statusState.toolType,
+          subkind: statusState.subkind,
           phase: statusState.phase,
           since: statusState.since,
           step: statusState.step,
@@ -1426,6 +1481,41 @@ export function apply(ctx, rawConfig) {
     if ((hdr.delegationDepth ?? 0) > 0) return 'subagent'
     return 'user'
   }
+  // v46：usage 角色判定（与会话列表展示口径分开）。
+  // 已知：顶层会话（origin 为空）→ user；subagent/团队（origin 命中 ROLE_BG 或 delegationDepth>0）→ agent。
+  // 非空但未知的 origin 视为未知角色：tokens 归 user 并计数 today.roleUnknown（规格要求）。
+  const usageTokens = (u) =>
+    Math.max(0, Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0)
+  const usageRoleOf = (session) => {
+    const hdr = session && session.header
+    if (!hdr) return 'unknown'
+    const origin = String(hdr.origin || '').toLowerCase()
+    if (ROLE_BG.has(origin)) return 'agent'
+    if ((hdr.delegationDepth ?? 0) > 0) return 'agent'
+    if (!origin || origin === 'user') return 'user'
+    return 'unknown'
+  }
+  let roleUnknownLoggedAt = 0
+  // v46：usage 归集放在 skipSubagent/归因过滤之前调用 ⇒ tokens 覆盖全部角色/会话（含团队/后台）。
+  const accountUsage = (session, data) => {
+    const u = data && data.usage
+    if (!u) return 0
+    const dt = usageTokens(u)
+    if (!dt) return 0
+    today.tokens = (today.tokens || 0) + dt
+    let role = usageRoleOf(session)
+    if (role === 'unknown') {
+      today.roleUnknown = (today.roleUnknown || 0) + 1
+      if (Date.now() - roleUnknownLoggedAt > 60000) {
+        roleUnknownLoggedAt = Date.now()
+        log('warn', 'usage role unknown -> user', { session: String((session && session.id) || '').slice(0, 16) })
+      }
+      role = 'user'
+    }
+    if (role === 'user') today.tokensUser = (today.tokensUser || 0) + dt
+    else today.tokensAgent = (today.tokensAgent || 0) + dt
+    return dt
+  }
   const touchSession = (session) => {
     const hdr = session.header || {}
     const id = String(session.id)
@@ -1575,13 +1665,7 @@ export function apply(ctx, rawConfig) {
     return true
   }
   const sendBubble = (item) => {
-    if (item && typeof item.source === 'string' && item.source.startsWith('llm')) {
-      today.calls = (today.calls || 0) + 1
-      const tk = Number(item.tokens) || 0
-      const price = cfg.pricing?.per1kTokens ?? cfg.llm.costPer1kTokensYuan ?? 0.0015
-      today.petLlmCostYuan = Number(((today.petLlmCostYuan || 0) + (tk / 1000) * price).toFixed(6))
-      log('info', 'llm line accounted', { kind: item.kind, source: item.source, tokens: tk })
-    }
+    // v46：calls/petLlmCostYuan 已改在 callLlm 成功处计账（此处不再重复累计，避免 pregen/重试/排队重复计数）
     const sec = Math.max(1, Math.min(30, Math.round(item.durMs / 1000)))
     recentSay.push({ at: new Date().toISOString(), kind: item.kind, source: item.source, line: item.text })
     if (recentSay.length > 10) recentSay.shift()
@@ -1785,7 +1869,10 @@ export function apply(ctx, rawConfig) {
   // ---------- event handlers ----------
   const onEvent = (session, event) => {
     if (!session || !event || !event.type) return
+    const t = event.type
     const recEarly = touchSession(session)
+    // v46：usage 先归集（全角色、含 team/subagent/background；不受 skipSubagent/归因过滤影响，纯统计不演出）
+    if (t === 'assistant/message') accountUsage(session, event.data)
     if (!passesFilter(session)) {
       recEarly.state = recEarly.role === 'user' ? recEarly.state : 'background'
       if ((t === 'turn/start' || t === 'tool/call') && recEarly.role !== 'user') today.agentCalls += 1
@@ -1794,7 +1881,6 @@ export function apply(ctx, rawConfig) {
     lastEventAt = Date.now()
     rollStats()
     const s = summaryOf(session)
-    const t = event.type
     if (t === 'assistant/message.stream') return
     const d = event.data || {}
     log('debug', 'event', { type: t, session: String(session.id || '').slice(0, 14) })
@@ -1897,13 +1983,20 @@ export function apply(ctx, rawConfig) {
 
     if (t === 'user/message' || t === 'system/message' || t === 'request/header') return
     if (t === 'tool/call') {
-      const toolName = d.tool || d.name || 'tool'
-      const toolType = toolTypeOf(toolName)
-      setStatus('tool', { tool: toolName, toolType, step: s.tools + 1 })
+      const toolName = String(d.tool || d.name || 'tool')
+      const tt = toolTypeOf(toolName)
+      // v46：ask_user_question = 等用户做选择 → 状态 waiting_input（stateClass 派生 waiting），不只是普通 tool
+      const isAsk = tt.type === 'plan' && /^ask_user_question$/i.test(toolName)
+      setStatus(isAsk ? 'waiting_input' : 'tool', {
+        tool: toolName,
+        toolType: tt.type,
+        subkind: tt.subkind,
+        step: s.tools + 1
+      })
       {
         const r = sessionRegistry.get(String(session.id))
         if (r) {
-          r.state = 'tool'
+          r.state = isAsk ? 'waiting_input' : 'tool'
           r.tool = toolName
           r.step = s.tools + 1
         }
@@ -1918,34 +2011,28 @@ export function apply(ctx, rawConfig) {
       ) {
         lastToolActAt = Date.now()
         toolActionSeq += 1
-        if (toolType === 'agent') today.agentCalls = (today.agentCalls || 0) + 1
-        if (toolType === 'read') act('peek')
-        else if (toolType === 'write') act('jump')
-        else if (toolType === 'command') {
+        if (tt.type === 'agent') today.agentCalls = (today.agentCalls || 0) + 1
+        if (tt.type === 'read') act('peek')
+        else if (tt.type === 'write') act('jump')
+        else if (tt.type === 'command') {
           act('peek')
           setTimeout(() => walkNear(), 450)
-        } else if (toolType === 'search') {
+        } else if (tt.type === 'search') {
           act('peek')
           setTimeout(() => act('peek'), 500)
-        } else if (toolType === 'agent') {
+        } else if (tt.type === 'mcp') {
+          // v46：MCP 工具独立成类；动作沿用旧口径（探一下头），但不逐条播报
+          act('peek')
+        } else if (tt.type === 'agent') {
           /* 后台任务不动作 */
         }
       }
       return
     }
     if (t === 'assistant/message') {
+      // v46：usage 已在入口 accountUsage 归集（全角色含 cache）；此处只累计当前会话摘要，供偷吃/报账判断
       const u = d.usage
-      try {
-        if (u) {
-          const dt = Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
-          today.tokens = (today.tokens || 0) + dt
-          const rr = sessionRegistry.get(String(session.id))
-          const role = rr ? rr.role : 'user'
-          if (role === 'user') today.tokensUser = (today.tokensUser || 0) + dt
-          else today.tokensAgent = (today.tokensAgent || 0) + dt
-        }
-      } catch {}
-      if (u) s.tokens += Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
+      if (u) s.tokens += usageTokens(u)
       return
     }
     if (t === 'turn/start') {
@@ -2303,11 +2390,18 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v45', {
+  log('info', 'loaded v46', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
     history: cfg.historyFile ? 'on' : 'off',
+    pricing: cfg.pricing,
+    accounting: {
+      tokens: 'all-roles incl cache (totalTokens)',
+      costs: 'user/agent split @ pricing.per1kTokens',
+      calls: 'seed from state v2 + lastLlm delta'
+    },
+    toolTypes: '9-class (tool-types.js)',
     llm: cfg.llm.enabled ? `${cfg.llm.provider}/${cfg.llm.model}` : 'off',
     llmLimits: {
       maxTokens: cfg.llm.maxTokens,

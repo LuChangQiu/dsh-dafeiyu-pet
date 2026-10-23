@@ -1,8 +1,8 @@
 {
-  "name": "dsh-pet-bridge-v45",
-  "version": "0.45.0",
+  "name": "dsh-pet-bridge-v46",
+  "version": "0.46.0",
   "private": true,
-  "description": "P3: DSH session events -> dafeiyu pet protocol v2 (say/act/cmd/walk/peek/mute), P0 lines pool, receipts, rituals.",
+  "description": "P3: DSH session events -> dafeiyu pet protocol v2 (say/act/cmd/walk/peek/mute), P0 lines pool, receipts, rituals. v46: role-based token accounting (user/agent), cost estimate split, LLM call/cost seeding across reloads, 9-class toolType.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": { ".": "./lib/index.js", "./package.json": "./package.json" },

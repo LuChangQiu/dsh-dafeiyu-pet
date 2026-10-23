@@ -1,7 +1,8 @@
-# DATA-CONTRACT · 插件数据契约（Phase-1，v35）
+# DATA-CONTRACT · 插件数据契约（Phase-1 v35 → v46 口径）
 
 > 面向 plugin-ui（主页/时间线/互动）与 verifier。口径来自 `19-deep-integration-spec.md` §3.3/§4/§6/§8/§9。
 > 数据目录 = `<pet-work>`；所有写入原子（tmp+rename），**不含对话原文/路径/命令参数**。
+> v39 及更早：见 §6–§8；**v46 三本账/工具分类/计账续种见 §9（当前权威口径）**。
 
 ## 1. `bridge-state-v2.json`（权威状态，v33+；`state.json` 仅兜底）
 新增字段（v35）：
@@ -65,9 +66,64 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 - 触发：gap ≥2 天（普通）/≥7 天（长别）；**每天最多一次**；到附近 + 文案（含"上次在…"抽象标签）；affinity+2/mood+3；events `kind=reunion, level=S1`。
 
 ## 8. v39 数据底座 / 三态 / 气泡 notBefore（20-p0 笔记口径）
-- `today`：`tokens`（用户 token 累计）、`costYuan`（按 `pricing` 估算：`inputPerM/outputPerM/cacheReadPerM`，默认 DeepSeek 公开价，文档注明"估算"）、`petLlmCostYuan`（桌宠说话 LLM 花费，1 元预算）、`agentCalls`、`riceBowls`（`bowlTokens=100000`）。
+- `today`：`tokens`（用户 token 累计）、`costYuan`（按 `pricing` 估算；**v46 起统一为 `pricing.per1kTokens` 平铺估算并拆成 user/agent 三本账，见 §9**）、`petLlmCostYuan`（桌宠说话 LLM 花费，1 元预算）、`agentCalls`、`riceBowls`（`bowlTokens=100000`）。
 - `companion.lastContext={at,toolType,outcome,turns}`（隐私安全：只类型/结果/轮次）。
 - `status.stateClass`：`running/waiting/ready/error/idle/disconnected`（派生，300ms 去抖，不改 9 状态枚举）。
 - 气泡 `notBefore`：S0（prio100）到点即时；低优先级未到点不阻塞；愣一拍 900~1500ms（预生成×0.6）。
 - 开关：`spike/rice/hesitate/stateClass/reunion.enabled`；偷吃参数 `ratio1.8/absFloor3000/window20/minSamples8/cooldown10min/每日2`；重逢 4 档（2–8h/8–24h/1–3d/≥3d+7d bonus），gap 用 `companion.lastSeenAt`（真人交互）。
 - `STATE-CHANNEL` 别名修正：`running→thinking`（有 tool 则 tool）；`background` 仅非活跃会话。
+
+## 9. v46 三本账 / 工具分类 / 计账续种（2026-10-23，当前权威口径）
+
+> 实现：`plugin/server/lib/index.js`、`plugin/server/lib/tool-types.js`；单测：`scripts/test-tool-types.mjs`。
+> 所有金额均为**估算**（面板标注“估算·含团队”），不是账单；不含对话原文/路径/key。
+
+### 9.1 tokens 归集（全会话、含 cache）
+- `today.tokens` = **所有会话**（当前用户会话 + subagent/团队/background）的 `assistant/message.usage` token 之和。
+  - 取值：`usage.totalTokens`；缺失时退回 `usage.inputTokens + usage.outputTokens`。
+  - **cache 口径：原样计入** —— `totalTokens`/`inputTokens` 已含缓存命中部分，插件不单独扣减、不单独按 cacheRead/cacheWrite 计价（因此费用是保守上界）。
+- `tokensUser`：会话 role = user（顶层会话，`header.origin` 为空/user）的 token 和。
+- `tokensAgent`：会话 role = agent（`header.origin` ∈ subagent/teammate/team/delegate/background/tool，或 `delegationDepth>0`）的 token 和。
+- `roleUnknown`：role 无法判定（无 header / 非空但未知 origin）的 usage **事件数**；这些 token **归入 tokensUser**（规格：role 未知归 user 并计数）。
+- 不变式：`tokens ≈ tokensUser + tokensAgent`。v46 上线首日会把 v45 及更早“只有 tokens、无角色拆分”的历史缺口补入 `tokensUser`（日志 `today seed`）；跨天清零后严格成立。
+- 采集点：`onEvent` 入口、在 `skipSubagent` / 归因过滤**之前**归集（旧版在过滤之后 ⇒ 团队/子代理 token 全部丢失，且事件在 TDZ 处抛错）。
+- 计数范围：所有会话，不受 `onlyCwd` / `attribution.onlyActive` 影响（只影响统计，不触发任何演出）。
+
+### 9.2 三本账成本（估算）
+| 字段 | 公式 | 说明 |
+|---|---|---|
+| `pricing.per1kTokens` | 默认 `0.0015` 元/1k tokens | 插件配置项，可调（patch 可显式覆盖） |
+| `costUserYuan` | `round(tokensUser/1000 × price, 4)` | 用户会话估算 |
+| `costAgentYuan` | `round(tokensAgent/1000 × price, 4)` | 团队/子代理估算 |
+| `costYuan` | `costUserYuan + costAgentYuan` | **估算·含团队**，面板需标注“估算” |
+- 与 `petLlmCostYuan` 区分：前者是 DSH 模型用量估算；后者是桌宠自身说话（`llm.lines`）的花费（独立 1 元/日预算）。
+- 跨天：`today` 全部日统计重置（含 tokens/tokensUser/tokensAgent/roleUnknown/agentCalls/cost*/petLlmCostYuan/calls/riceBowls）。
+
+### 9.3 calls / petLlmCostYuan 续种（reload 不清零）
+- `today.calls` = 今日桌宠 LLM 调用次数；`today.petLlmCostYuan` = 今日桌宠 LLM 估算花费（4 位小数）。
+- **计账点**：`callLlm` 成功返回处直接累计（不再依赖 say/气泡路径；pregen/重试/排队不会重复计数）；日志 `llm accounted {calls,cost}`（delta）。
+- **续种**：插件 reload 时读 `bridge-state-v2.json.today`（同日 `calls`/`petLlmCostYuan`）续种 `llmDay`，`lastLlmCalls/lastLlmCost` 为差分基线（日志 `today seed`）。
+- 预算护栏（`llm.maxCallsPerDay` / `llm.budgetPerDayYuan`）同样按续种后的今日累计判断。
+
+### 9.4 toolType 9 类（判定顺序固定）
+1. `mcp__` 前缀：白名单 `codegraph|context7|understand*` → `knowledge`；其余 `mcp__*` → `mcp`
+2. `plan`：`todo_write|create_goal|get_goal|update_goal|update_plan|plan|taskboard|ask_user_question`（精确名；`update_goal` 为 goal 家族补齐）
+3. `knowledge` 前缀：`memory|skill|context|compact|knowledge|remember`
+4. `agent` 前缀：`subagent|team|send_message|workflow|ralph|spawn_*`
+5. `job_*` → `unknown` + `status.subkind='job'`
+6. `search` 前缀：`web_search|web_fetch|search|grep|glob`（非 mcp）
+7. `write` 前缀：`write|edit|patch|apply_patch|create_file|rename`
+8. `command` 前缀：`bash|pwsh|exec|shell|run|terminal|process`
+9. `read` 前缀：`read|list|open|view|cat|get_file|read_file`
+10. 其余/空名 → `unknown`
+- 输出：`state.status.toolType`（9 类之一）、`state.status.subkind`（job 时 = `job`，否则 null）。
+- `ask_user_question` 额外把状态置为 `waiting_input`（`stateClass=waiting`，等用户选），不只普通 tool。
+- 动作映射（旧口径延续）：read→peek、write→jump、command→peek+走近、search→peek×2、mcp→peek；plan/knowledge/unknown 不动作。
+- 单测：`node scripts/test-tool-types.mjs`（全部示例 + 顺序校验 + 9 类枚举覆盖）。
+
+### 9.5 3 条验收断言（verifier 复测，`bridge-state-v2.json.today`）
+price = `pricing.per1kTokens`（0.0015）：
+1. `abs(riceBowls × 100000 − tokens) < 5000`（riceBowls 保留 2 位小数）。
+2. `abs(costYuan − tokens/1000 × price) < 0.01`（costYuan 为 user/agent 两个 4 位小数分项之和）。
+3. `abs(costUserYuan − tokensUser/1000 × price) < 0.01` **且** `costUserYuan ≠ costYuan`（要求 `tokensAgent > 0`，即团队/子代理 token 已计入）。
+- 附加：触发一次桌宠 LLM（主会话一轮对话）后，`calls` 与 `petLlmCostYuan` 只增不减，日志出现 `llm accounted`。
