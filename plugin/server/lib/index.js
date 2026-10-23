@@ -186,7 +186,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v35'
+export const name = 'dsh-pet-bridge-v36'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -205,7 +205,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v35] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v36] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -1031,8 +1031,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.35.0',
-        petVersion: 'v1.1.5+patch-v35',
+        version: '0.36.0',
+        petVersion: 'v1.1.5+patch-v36',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1552,6 +1552,7 @@ export function apply(ctx, rawConfig) {
     rollStats()
     const s = summaryOf(session)
     const t = event.type
+    if (t === 'assistant/message.stream') return
     const d = event.data || {}
     log('debug', 'event', { type: t, session: String(session.id || '').slice(0, 14) })
     if (/error|failed/i.test(t)) {
@@ -1686,6 +1687,12 @@ export function apply(ctx, rawConfig) {
     }
     if (t === 'assistant/message') {
       const u = d.usage
+      try {
+        if (u) {
+          today.tokens =
+            Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || today.tokens || 0
+        }
+      } catch {}
       if (u) s.tokens += Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
       return
     }
@@ -1735,7 +1742,12 @@ export function apply(ctx, rawConfig) {
       stats.longestMs = Math.max(stats.longestMs, dur)
       stats.tokens += s.tokens
       s.tokens = 0
-      const ok = String(d.reason?.kind || '') === 'completed'
+      const reasonKind = String(d.reason?.kind || '')
+      const ok = reasonKind === 'completed'
+      if (['error', 'aborted', 'max-tokens', 'max_tokens'].includes(reasonKind)) {
+        setStatus('error', { message: reasonKind })
+        pushEvent('error', 'S1', reasonKind, true)
+      }
       today.turns += 1
       today.longestTurnMs = Math.max(today.longestTurnMs, dur)
       if (cfg.actions?.enabled) {
@@ -1795,6 +1807,37 @@ export function apply(ctx, rawConfig) {
       }
       pushEvent('turn', 'S1', ok ? '完成' : '未完成', true)
       writeReceipt()
+      return
+    }
+    if (t === 'approval/decided') {
+      setStatus('thinking')
+      pushEvent('approval', 'S3', '已决定', false)
+      if (cfg.actions?.enabled) act('stretch')
+      return
+    }
+    if (t === 'user-questions/request') {
+      setStatus('waiting_input')
+      pushEvent('waiting_input', 'S0', '等你选', true)
+      if (cfg.walkOnApproval) {
+        send('walk:center')
+        setTimeout(() => send('freeze:3000'), 700)
+      }
+      speak('approval', pick('dengdai'), { urgent: true, source: 'pool', style: 'remind' })
+      writeReceipt()
+      return
+    }
+    if (t === 'agent/request-error') {
+      const code = String(d.failure?.code || d.code || 'agent-error').slice(0, 40)
+      setStatus('error', { message: code })
+      pushEvent('error', 'S1', code, true)
+      if (cfg.actions?.enabled) {
+        act('shake')
+        setTimeout(() => send('cmd:fx:sweat'), 400)
+      }
+      return
+    }
+    if (t === 'llm/retry') {
+      pushEvent('retry', 'S3', '重试', false)
       return
     }
     if (t === 'approval/asked') {
@@ -1977,7 +2020,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v35', {
+  log('info', 'loaded v36', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
