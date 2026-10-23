@@ -704,10 +704,10 @@ window.__ModuleLoader__.load({
             h('div', { style: S.statusGrid },
               h(Stat, {
                 label: '当前工具',
-                on: !!rt.tool,
-                unknown: !rt.tool,
+                on: rt.state === 'tool' ? !!rt.tool : false,
+                unknown: rt.state !== 'tool',
                 value: rt.tool || '—',
-                detail: rt.state === 'tool' ? '正在调用工具' : '',
+                detail: rt.state === 'tool' ? '正在调用工具' : rt.tool ? '最近使用（当前非工具状态）' : '',
               }),
               h(Stat, {
                 label: '状态耗时',
