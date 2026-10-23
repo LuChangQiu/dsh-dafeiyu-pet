@@ -63,3 +63,11 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 ### 久别重逢 v2
 - 数据：`companion.lastUserSeenAt`、`companion.lastActivityLabel`（抽象标签如 read/command）、`lastGreetDate`。
 - 触发：gap ≥2 天（普通）/≥7 天（长别）；**每天最多一次**；到附近 + 文案（含"上次在…"抽象标签）；affinity+2/mood+3；events `kind=reunion, level=S1`。
+
+## 8. v39 数据底座 / 三态 / 气泡 notBefore（20-p0 笔记口径）
+- `today`：`tokens`（用户 token 累计）、`costYuan`（按 `pricing` 估算：`inputPerM/outputPerM/cacheReadPerM`，默认 DeepSeek 公开价，文档注明"估算"）、`petLlmCostYuan`（桌宠说话 LLM 花费，1 元预算）、`agentCalls`、`riceBowls`（`bowlTokens=100000`）。
+- `companion.lastContext={at,toolType,outcome,turns}`（隐私安全：只类型/结果/轮次）。
+- `status.stateClass`：`running/waiting/ready/error/idle/disconnected`（派生，300ms 去抖，不改 9 状态枚举）。
+- 气泡 `notBefore`：S0（prio100）到点即时；低优先级未到点不阻塞；愣一拍 900~1500ms（预生成×0.6）。
+- 开关：`spike/rice/hesitate/stateClass/reunion.enabled`；偷吃参数 `ratio1.8/absFloor3000/window20/minSamples8/cooldown10min/每日2`；重逢 4 档（2–8h/8–24h/1–3d/≥3d+7d bonus），gap 用 `companion.lastSeenAt`（真人交互）。
+- `STATE-CHANNEL` 别名修正：`running→thinking`（有 tool 则 tool）；`background` 仅非活跃会话。

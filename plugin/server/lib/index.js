@@ -93,8 +93,12 @@ const DEFAULTS = {
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   guards: { maxActionsPerHour: 60, noActionOnSameState: true, startleDelayMinMs: 900, startleDelayMaxMs: 1500 },
-  costModel: { ricePriceYuan: 0.5 },
-  costGuard: { spikeRatio: 1.8, minTokens: 2000, window: 5, cooldownMs: 600000, dailyCap: 3 },
+  spike: { enabled: true, ratio: 1.8, absFloor: 3000, window: 20, minSamples: 8, cooldownMs: 600000, dailyCap: 2 },
+  rice: { enabled: true, bowlTokens: 100000 },
+  hesitate: { enabled: true, minMs: 900, maxMs: 1500 },
+  stateClass: { enabled: true, debounceMs: 300 },
+  reunion: { enabled: true },
+  costModel: { ricePriceYuan: 0.5, userPricePer1kTokensYuan: 0.002 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -189,7 +193,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v38'
+export const name = 'dsh-pet-bridge-v39'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -208,7 +212,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v38] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v39] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -841,6 +845,7 @@ export function apply(ctx, rawConfig) {
   // ---------- task-44 状态通道（state:<json>） ----------
   const statusState = {
     state: 'idle',
+    stateClass: 'idle',
     lastActionState: null,
     tool: null,
     toolType: null,
@@ -898,6 +903,7 @@ export function apply(ctx, rawConfig) {
     if (extra.source !== undefined) statusState.source = extra.source
     if (extra.message !== undefined) statusState.message = extra.message
     statusState.heartbeatAt = new Date().toISOString()
+    if (cfg.stateClass?.enabled) scheduleClass()
     pushStatusToPet()
     if (st !== 'thinking' && st !== 'tool') log('info', 'state', { state: st, tool: statusState.tool })
   }
@@ -946,6 +952,40 @@ export function apply(ctx, rawConfig) {
     if (cfg.companionFile && fs.existsSync(cfg.companionFile))
       Object.assign(companion, JSON.parse(fs.readFileSync(cfg.companionFile, 'utf8')))
   } catch {}
+  const updateLastContext = (ok) => {
+    companion.lastContext = {
+      at: new Date().toISOString(),
+      toolType: statusState.toolType || statusState.state,
+      outcome: ok ? 'ok' : 'bad',
+      turns: today.turns
+    }
+  }
+  const deriveStateClass = (st) =>
+    st === 'error'
+      ? 'error'
+      : st === 'waiting_approval' || st === 'waiting_input'
+        ? 'waiting'
+        : st === 'thinking' || st === 'tool'
+          ? 'running'
+          : st === 'done'
+            ? 'ready'
+            : st === 'idle'
+              ? 'idle'
+              : st
+  let classTimer = null
+  const scheduleClass = () => {
+    if (classTimer) return
+    classTimer = setTimeout(() => {
+      classTimer = null
+      const c = deriveStateClass(statusState.state)
+      if (c !== statusState.stateClass) {
+        statusState.stateClass = c
+        if (c === 'running' || c === 'waiting') {
+          /* 只演一次 */
+        }
+      }
+    }, cfg.stateClass?.debounceMs || 300)
+  }
   const stateWords = () => {
     const moodW = companion.mood >= 40 ? '开心' : companion.mood <= -20 ? '有点低落' : '平静'
     const energyW = companion.energy < 30 ? '困了' : companion.energy > 70 ? '有精神' : '有点累'
@@ -1027,13 +1067,15 @@ export function apply(ctx, rawConfig) {
   const REUNION_7D = '好久不见，上次你好像在忙，我就一直趴这儿'
   const checkUsageSpike = (turnTokens) => {
     try {
-      const cg = cfg.costGuard || {}
-      const win = tokenHistory.slice(-(cg.window || 5))
+      const cg = cfg.spike || {}
+      if (cg.enabled === false) return
+      const win = tokenHistory.slice(-(cg.window || 20))
       tokenHistory.push(turnTokens)
       if (tokenHistory.length > 20) tokenHistory.shift()
-      if (win.length < 3 || !turnTokens || turnTokens < (cg.minTokens || 2000)) return
-      const base = win.reduce((a, b) => a + b, 0) / win.length
-      if (!base || turnTokens <= base * (cg.spikeRatio || 1.8)) return
+      if (win.length < (cg.minSamples || 8) || !turnTokens || turnTokens < (cg.absFloor || 3000)) return
+      const sorted = [...win].sort((a, b) => a - b)
+      const base = sorted[Math.floor(sorted.length / 2)]
+      if (!base || turnTokens <= base * (cg.ratio || 1.8)) return
       const dayKey = new Date().toISOString().slice(0, 10)
       if (usageSpikeDay !== dayKey) {
         usageSpikeDay = dayKey
@@ -1062,8 +1104,16 @@ export function apply(ctx, rawConfig) {
       const gap = Date.now() - Date.parse(last)
       const todayKey = new Date().toISOString().slice(0, 10)
       if (companion.lastGreetDate === todayKey) return
-      if (gap < 2 * 86400000) return
-      const text = gap >= 7 * 86400000 ? REUNION_7D : REUNION_2D
+      if (gap < 2 * 3600000) return
+      const text =
+        gap >= 3 * 86400000
+          ? gap >= 7 * 86400000
+            ? REUNION_7D
+            : '你回来啦，这几天没见我心里空空的'
+          : gap >= 86400000
+            ? '你回来啦，一天没见，我都想你了'
+            : '你回来啦，刚才那会儿我还以为你忙完了'
+
       const where = companion.lastActivityLabel ? '上次在' + companion.lastActivityLabel : ''
       companion.lastGreetDate = todayKey
       companion.affinity = Math.min(100, (companion.affinity || 0) + 2)
@@ -1091,9 +1141,12 @@ export function apply(ctx, rawConfig) {
       today.calls = 0
     }
     today.calls = llmDay.calls
-    today.costYuan = Number(llmDay.cost.toFixed(4))
+    today.petLlmCostYuan = Number(llmDay.cost.toFixed(4))
+    today.costYuan = Number(
+      (((today.tokens || 0) / 1000) * (cfg.costModel?.userPricePer1kTokensYuan || 0.002)).toFixed(4)
+    )
     today.budgetYuan = cfg.llm.budgetPerDayYuan || 1
-    today.riceBowls = Number((llmDay.cost / (cfg.costModel?.ricePriceYuan || 0.5)).toFixed(1))
+    today.riceBowls = Number(((today.tokens || 0) / (cfg.rice?.bowlTokens || 100000)).toFixed(2))
     today.period = new Date().getHours() >= 0 && new Date().getHours() < 8 ? '低谷' : '高峰'
   }
 
@@ -1117,13 +1170,14 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.38.0',
-        petVersion: 'v1.1.5+patch-v38',
+        version: '0.39.0',
+        petVersion: 'v1.1.5+patch-v39',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
         status: {
           state: statusState.state,
+          stateClass: statusState.stateClass,
           tool: statusState.tool,
           toolType: statusState.toolType,
           phase: statusState.phase,
@@ -1271,7 +1325,7 @@ export function apply(ctx, rawConfig) {
     }
   }
   // ---------- P0 v9: bubble queue (serial, coalesce, configurable durations) ----------
-  const bubbleQ = []
+  let bubbleQ = []
   let bubbleBusyUntil = 0
   let activeSessionId = null
   // ---------- task-46 多会话/多工作区 ----------
@@ -1425,6 +1479,7 @@ export function apply(ctx, rawConfig) {
       durMs: bubbleDurFor(kind, style),
       prio: bubblePrio(kind, style),
       at: Date.now(),
+      notBefore: Date.now() + (meta.notBeforeMs || 0),
       latencyMs: meta.latencyMs ?? null,
       tokens: meta.tokens ?? null
     })
@@ -1457,17 +1512,20 @@ export function apply(ctx, rawConfig) {
       if (now < bubbleBusyUntil + (cfg.bubble?.queueGapMs || 300)) return
       if (!bubbleQ.length) return
       const win = cfg.bubble?.coalesceWindowMs || 2000
-      if (bubbleQ.length > 1 && now - bubbleQ[0].at <= win) {
-        bubbleQ.sort((a, b) => b.prio - a.prio)
-        const keep = bubbleQ.shift()
-        const dropped = bubbleQ.length
-        bubbleQ.length = 0
-        if (dropped) log('info', 'bubble coalesced', { kept: keep.kind, dropped })
+      const ready = bubbleQ.filter((x) => (x.notBefore || 0) <= now)
+      if (!ready.length) return
+      if (ready.length > 1 && now - ready[0].at <= win) {
+        ready.sort((a, b) => b.prio - a.prio)
+        const keep = ready[0]
+        bubbleQ = bubbleQ.filter((x) => !ready.includes(x))
+        if (ready.length > 1) log('info', 'bubble coalesced', { kept: keep.kind, dropped: ready.length - 1 })
         sendBubble(keep)
         return
       }
-      bubbleQ.sort((a, b) => b.prio - a.prio)
-      sendBubble(bubbleQ.shift())
+      ready.sort((a, b) => b.prio - a.prio)
+      const chosen = ready[0]
+      bubbleQ = bubbleQ.filter((x) => x !== chosen)
+      sendBubble(chosen)
     } catch {}
   }
   const bubbleTimer = setInterval(flushBubbleQueue, 250)
@@ -1765,6 +1823,7 @@ export function apply(ctx, rawConfig) {
       ) {
         lastToolActAt = Date.now()
         toolActionSeq += 1
+        if (toolType === 'agent') today.agentCalls = (today.agentCalls || 0) + 1
         if (toolType === 'read') act('peek')
         else if (toolType === 'write') act('jump')
         else if (toolType === 'command') {
@@ -1783,8 +1842,8 @@ export function apply(ctx, rawConfig) {
       const u = d.usage
       try {
         if (u) {
-          today.tokens =
-            Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || today.tokens || 0
+          const dt = Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
+          today.tokens = (today.tokens || 0) + dt
         }
       } catch {}
       if (u) s.tokens += Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
@@ -1813,18 +1872,21 @@ export function apply(ctx, rawConfig) {
         const startleMs =
           g0.startleDelayMinMs +
           Math.floor(Math.random() * Math.max(1, (g0.startleDelayMaxMs || 1500) - (g0.startleDelayMinMs || 900)))
-        setTimeout(() => {
-          if (fresh) {
-            const cached = pregen.text
-            pregen.text = ''
-            log('info', 'use pregen line', { kind: 'turnStart' })
-            speak('turnStart', cached, { force: true, source: 'llm-pregen' })
-          } else {
-            void generate('turnStart', s).then((g) =>
-              speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
-            )
-          }
-        }, startleMs)
+        setTimeout(
+          () => {
+            if (fresh) {
+              const cached = pregen.text
+              pregen.text = ''
+              log('info', 'use pregen line', { kind: 'turnStart' })
+              speak('turnStart', cached, { force: true, source: 'llm-pregen' })
+            } else {
+              void generate('turnStart', s).then((g) =>
+                speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
+              )
+            }
+          },
+          fresh ? Math.round(startleMs * 0.6) : startleMs
+        )
       }
       return
     }
@@ -1840,6 +1902,7 @@ export function apply(ctx, rawConfig) {
       const dur = s.turnStartAt ? Date.now() - s.turnStartAt : 0
       const durBucket = dur < 15000 ? '很快' : dur < 60000 ? '一会儿' : '挺久'
       stats.longestMs = Math.max(stats.longestMs, dur)
+      updateLastContext(String(d.reason?.kind || '') === 'completed')
       checkUsageSpike(s.tokens)
       stats.tokens += s.tokens
       s.tokens = 0
@@ -2124,7 +2187,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v38', {
+  log('info', 'loaded v39', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
