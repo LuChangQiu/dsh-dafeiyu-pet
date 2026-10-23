@@ -1433,6 +1433,89 @@ test('renderHomeHtml：自包含（无外链 http(s)），含主页关键节点'
   assert.doesNotMatch(html, /https?:\/\//)
 })
 
+// ───────────────────────── 3.11 task-58：团队/目标/计划（v2 优先 + host fallback + 降级） ─────────────────────────
+console.log('\n[3.11] 团队/目标/计划数据')
+
+const { normalizeTeamFeatures } = index.__test
+
+test('v2 字段优先：team/goal/plan/userQuestions 原样归一', () => {
+  const r = normalizeTeamFeatures(
+    {
+      team: {
+        enabled: true,
+        status: 'ok',
+        members: { total: 3, active: 1, failed: 0 },
+        tasks: { total: 5, pending: 2, in_progress: 1, completed: 2, blocked: 0, ready: 1, progress: 0.4 },
+        updatedAt: '2026-10-23T07:00:00Z'
+      },
+      goal: { active: true, status: 'running', roundsStarted: 2 },
+      plan: { active: true, pending: 3 },
+      userQuestions: { active: 1, sentCount: 2 }
+    },
+    { status: 'unsupported', reason: 'host-should-be-ignored' }
+  )
+  assert.equal(r.source, 'v2')
+  assert.equal(r.status, 'ok')
+  assert.equal(r.team.members.total, 3)
+  assert.equal(r.team.tasks.progress, 0.4)
+  assert.equal(r.goal.status, 'running')
+  assert.equal(r.plan.pending, 3)
+  assert.equal(r.userQuestions.active, 1)
+})
+
+test('host fallback：ok/empty/degraded/unsupported 四级', () => {
+  const ok = normalizeTeamFeatures(null, {
+    status: 'ok',
+    team: {
+      status: 'ok',
+      members: { total: 2, active: 1, failed: 0 },
+      tasks: { total: 4, pending: 1, in_progress: 1, completed: 2, blocked: 0, ready: 1, progress: 0.5 }
+    },
+    goal: { active: false, status: null, roundsStarted: null },
+    plan: { active: true, pending: 2 },
+    userQuestions: { active: 1, sentCount: 0 }
+  })
+  assert.equal(ok.source, 'host')
+  assert.equal(ok.team.tasks.completed, 2)
+  assert.equal(ok.goal.active, false)
+  assert.equal(ok.plan.pending, 2)
+  const empty = normalizeTeamFeatures(null, {
+    status: 'empty',
+    team: { status: 'empty', members: { total: 1, active: 1, failed: 0 }, tasks: { total: 0, progress: null } }
+  })
+  assert.equal(empty.status, 'empty')
+  assert.equal(empty.enabled, true)
+  const degraded = normalizeTeamFeatures(null, { status: 'degraded', reason: 'snapshot-error' })
+  assert.equal(degraded.status, 'degraded')
+  assert.equal(degraded.enabled, false)
+  const unsupported = normalizeTeamFeatures(null, { status: 'unsupported', reason: 'projection-service-missing' })
+  assert.equal(unsupported.status, 'unsupported')
+  assert.equal(unsupported.source, 'host')
+})
+
+test('无任何数据：unsupported + 空计数（不抛错）', () => {
+  const r = normalizeTeamFeatures(null, null)
+  assert.equal(r.source, null)
+  assert.equal(r.status, 'unsupported')
+  assert.equal(r.team.tasks.total, 0)
+  assert.equal(r.team.tasks.progress, null)
+  assert.equal(r.goal.active, false)
+})
+
+await testAsync('state.get 含 teamFeatures（无 host bridge 时为 unsupported）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-team', method: 'state.get' } }),
+    makeRes()
+  )
+  const data = JSON.parse(res.body).result.data
+  assert.ok(data.teamFeatures && typeof data.teamFeatures === 'object')
+  assert.equal(typeof data.teamFeatures.status, 'string')
+  assert.ok(data.teamFeatures.team && data.teamFeatures.team.members && data.teamFeatures.team.tasks)
+  dispose()
+})
+
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────
 console.log('\n[4] client bundle 契约')
 

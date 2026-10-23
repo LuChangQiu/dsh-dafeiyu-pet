@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼 × DSH · shell.overlay 徽标 demo</title>
+<style>
+  :root { color-scheme: dark; --bg:#17181b; --panel:#1d1f24; --line:#2c2f36; --fg:#e7e8ea; --muted:#9aa0a6; --accent:#6ea8ff }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif }
+  .shell { max-width:960px; margin:0 auto; padding:24px 28px 120px }
+  .top { display:flex; gap:10px; align-items:center; padding:10px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--muted); font-size:12px }
+  .layout { display:grid; grid-template-columns:200px 1fr; gap:14px; margin-top:14px }
+  .side { border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:10px; font-size:12px; color:var(--muted); min-height:320px }
+  .side .foot { margin-top:auto }
+  .main { border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:16px; color:var(--muted); font-size:12px; min-height:320px }
+  .note { margin-top:18px; border:1px dashed var(--line); border-radius:10px; padding:12px 14px; font-size:12px; color:var(--muted) }
+  .note b { color:var(--fg) }
+  .badge { position:fixed; right:14px; bottom:14px; z-index:2147483000; display:flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:rgba(24,26,31,.88); color:#e7e8ea; border:1px solid rgba(110,168,255,.45); box-shadow:0 2px 10px rgba(0,0,0,.35); font-size:12px; cursor:pointer; pointer-events:auto; user-select:none }
+  .badge .dot { width:7px; height:7px; border-radius:50%; background:#e5534b; display:inline-block }
+  .badge.second { bottom:54px; border-color:rgba(229,83,75,.55) }
+  .mock-link { color:var(--accent) }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">🐋 DSH · 工作区 / 会话（示意，非真实页面）<span style="flex:1"></span>设置 · 帮助</div>
+  <div class="layout">
+    <div class="side">
+      会话<br>· 当前会话<br>· 子代理<br>· 团队
+      <div class="foot" style="margin-top:220px">🐋 大肥鱼 ← sidebar.footer.action 入口（同一 client 插件已注册）</div>
+    </div>
+    <div class="main">
+      主区域（示意）<br><br>
+      这里展示 `shell.overlay` 的团队徽标：固定右下角、click-through 层上的小胶囊、`pointerEvents:'auto'`、点击打开大肥鱼主页。
+      <br><br>
+      两个状态示例：①「任务 3/6」；②「等你选 1」+ 红点（S0 未读 / userQuestions.active）。
+    </div>
+  </div>
+  <div class="note">
+    <b>这是 shell.overlay 的设计 demo</b>（静态页，用于视觉验收/E2E 证据，不是真实 DSH 页面）。真实组件在 <code>lib/client.js</code> 注册
+    <code>shell.overlay</code>（id <code>pet-bridge-ui-badge</code>），15s 轮询 <code>state.get</code>、hidden 暂停、无团队/等待数据时不渲染。
+    真实页面可见性需刷新 DSH 页面；数据源以 v2 team 字段为准（当前生产为空态降级）。
+  </div>
+</div>
+<div class="badge" title="大肥鱼 · 打开主页">🐋 任务 3/6</div>
+<div class="badge second" title="大肥鱼 · 打开主页">🐋 等你选 1<span class="dot"></span></div>
+</body>
+</html>

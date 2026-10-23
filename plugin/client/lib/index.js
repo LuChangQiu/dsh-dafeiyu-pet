@@ -537,6 +537,8 @@ export function readEvents(file, limit = 50) {
     file,
     total: list.length,
     unread: list.filter((item) => item?.unread).length,
+    // P0（task-58/M3）：S0 未读（等你选/审批类）供主页「她现在需要你」卡片与 overlay 红点
+    s0Unread: list.filter((item) => item?.unread && String(item?.level || '').toUpperCase() === 'S0').length,
     items
   }
 }
@@ -1045,7 +1047,360 @@ Write-Output 'ok'
 
 // ────────────────────────────── 状态聚合 ──────────────────────────────
 
-function buildHandler(cfg, log) {
+/**
+ * task-58/62：团队/目标/计划/等你选数据归一。
+ *
+ * 数据源优先级：**v2 字段（tech-scout task-57）→ host 只读投影 fallback → 未启用**。
+ * 返回结构对两种来源同构，面板只按 `status` 三级降级展示（ok/empty/degraded/unsupported）。
+ *
+ * @param {object|null} stateFile v2 快照（stateFile.team/goal/plan/userQuestions）
+ * @param {object|null} hostSnapshot host fallback（createHostBridge().teamInfo() 结果；已归一同构）
+ * @returns {{source:'v2'|'host'|null,status:string,reason:string|null,enabled:boolean,
+ *   team:{status:string,members:{total:number,active:number,failed:number},
+ *         tasks:{total:number,pending:number,in_progress:number,completed:number,blocked:number,ready:number,progress:number|null},
+ *         updatedAt:string|null},
+ *   goal:{active:boolean,status:string|null,roundsStarted:number|null},
+ *   plan:{active:boolean,pending:number},
+ *   userQuestions:{active:number,sentCount:number}}}
+ */
+export function normalizeTeamFeatures(stateFile, hostSnapshot) {
+  const emptyTaskCounts = () => ({
+    total: 0,
+    pending: 0,
+    in_progress: 0,
+    completed: 0,
+    blocked: 0,
+    ready: 0,
+    progress: null
+  })
+  const emptyMembers = () => ({ total: 0, active: 0, failed: 0 })
+  const asCount = (value) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0)
+  const base = {
+    source: null,
+    status: 'unsupported',
+    reason: 'no-team-data',
+    enabled: false,
+    team: { status: 'unsupported', members: emptyMembers(), tasks: emptyTaskCounts(), updatedAt: null },
+    goal: { active: false, status: null, roundsStarted: null },
+    plan: { active: false, pending: 0 },
+    userQuestions: { active: 0, sentCount: 0 }
+  }
+
+  // ① v2 优先（tech-scout task-57 形状：team:{enabled,status,members,tasks} goal/plan/userQuestions）
+  if (isObject(stateFile?.team)) {
+    const t = stateFile.team
+    const members = isObject(t.members) ? t.members : {}
+    const tasks = isObject(t.tasks) ? t.tasks : {}
+    const status = ['ok', 'empty', 'degraded', 'unsupported'].includes(t.status) ? t.status : 'ok'
+    const goalIn = isObject(stateFile?.goal) ? stateFile.goal : {}
+    const planIn = isObject(stateFile?.plan) ? stateFile.plan : {}
+    const qIn = isObject(stateFile?.userQuestions) ? stateFile.userQuestions : {}
+    const progress = Number.isFinite(tasks.progress) ? tasks.progress : null
+    return {
+      source: 'v2',
+      status,
+      reason:
+        status === 'degraded'
+          ? Array.isArray(stateFile?.degraded)
+            ? clip(stateFile.degraded.join(','), 160)
+            : 'degraded'
+          : null,
+      enabled: t.enabled !== false,
+      team: {
+        status,
+        members: { total: asCount(members.total), active: asCount(members.active), failed: asCount(members.failed) },
+        tasks: {
+          total: asCount(tasks.total),
+          pending: asCount(tasks.pending),
+          in_progress: asCount(tasks.in_progress),
+          completed: asCount(tasks.completed),
+          blocked: asCount(tasks.blocked),
+          ready: asCount(tasks.ready),
+          progress
+        },
+        updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : null
+      },
+      goal: {
+        active: Boolean(goalIn.active),
+        status: typeof goalIn.status === 'string' ? goalIn.status : null,
+        roundsStarted: Number.isFinite(goalIn.roundsStarted) ? goalIn.roundsStarted : null
+      },
+      plan: { active: Boolean(planIn.active), pending: asCount(planIn.pending) },
+      userQuestions: { active: asCount(qIn.active), sentCount: asCount(qIn.sentCount) }
+    }
+  }
+
+  // ② host 只读 fallback（createHostBridge 已归一为同构；不可用 → 未启用/降级）
+  if (isObject(hostSnapshot)) {
+    const status = ['ok', 'empty', 'degraded', 'unsupported'].includes(hostSnapshot.status)
+      ? hostSnapshot.status
+      : 'degraded'
+    const hostTeam = isObject(hostSnapshot.team) ? hostSnapshot.team : {}
+    const hostGoal = isObject(hostSnapshot.goal) ? hostSnapshot.goal : {}
+    const hostPlan = isObject(hostSnapshot.plan) ? hostSnapshot.plan : {}
+    const hostQuestions = isObject(hostSnapshot.userQuestions) ? hostSnapshot.userQuestions : {}
+    return {
+      source: 'host',
+      status,
+      reason: typeof hostSnapshot.reason === 'string' ? hostSnapshot.reason : null,
+      enabled: status === 'ok' || status === 'empty',
+      team: {
+        status: typeof hostTeam.status === 'string' ? hostTeam.status : status,
+        members: {
+          total: asCount(hostTeam.members?.total),
+          active: asCount(hostTeam.members?.active),
+          failed: asCount(hostTeam.members?.failed)
+        },
+        tasks: {
+          total: asCount(hostTeam.tasks?.total),
+          pending: asCount(hostTeam.tasks?.pending),
+          in_progress: asCount(hostTeam.tasks?.in_progress),
+          completed: asCount(hostTeam.tasks?.completed),
+          blocked: asCount(hostTeam.tasks?.blocked),
+          ready: asCount(hostTeam.tasks?.ready),
+          progress: Number.isFinite(hostTeam.tasks?.progress) ? hostTeam.tasks.progress : null
+        },
+        updatedAt: typeof hostTeam.updatedAt === 'string' ? hostTeam.updatedAt : null
+      },
+      goal: {
+        active: Boolean(hostGoal.active),
+        status: typeof hostGoal.status === 'string' ? hostGoal.status : null,
+        roundsStarted: Number.isFinite(hostGoal.roundsStarted) ? hostGoal.roundsStarted : null
+      },
+      plan: { active: Boolean(hostPlan.active), pending: asCount(hostPlan.pending) },
+      userQuestions: { active: asCount(hostQuestions.active), sentCount: asCount(hostQuestions.sentCount) }
+    }
+  }
+
+  return base
+}
+
+/**
+ * 给可能挂起的宿主调用加超时（task-58：投影/会话服务在未就绪时不许阻塞面板）。
+ * @template T
+ * @param {Promise<T>|T} value promise 或同步值
+ * @param {number} ms 超时毫秒
+ * @param {T} fallback 超时/异常时的回退值
+ * @returns {Promise<T>}
+ */
+async function withTimeout(value, ms, fallback) {
+  let timer
+  try {
+    return await Promise.race([
+      Promise.resolve(value).catch(() => fallback),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * host 侧只读团队数据桥（task-58）：`ctx.sessionProjections.snapshot()` + `sessionController.list()`。
+ * 服务通过 `ctx.inject(['sessionController','sessionProjections'], scope => bridge.setScope(scope))` 注入；
+ * **10s 缓存、低频只读、不写盘**；服务缺失/异常一律返回 status=unsupported/degraded，绝不抛错。
+ * @param {any} log logger
+ * @returns {{setScope: (scope:any)=>void, teamInfo: (opts?: {currentSessionId?: string|null}) => Promise<object>}}
+ */
+function createHostBridge(log, evidenceDir) {
+  const cache = { at: 0, key: null, value: null }
+  const TTL = 10000
+  let scopeRef = null
+  const memberActive = (status) =>
+    ['in_progress', 'active', 'working', 'running'].includes(String(status || '').toLowerCase())
+  /** 调试证据：桥失败时写下服务形状（仅属性名，不含数据/隐私），供 verifier 定位。 */
+  const shape = (obj) => {
+    try {
+      const names = new Set()
+      let current = obj
+      let depth = 0
+      while (current && depth < 2) {
+        Object.getOwnPropertyNames(current).forEach((name) => names.add(name))
+        current = Object.getPrototypeOf(current)
+        depth += 1
+      }
+      return [...names].slice(0, 80)
+    } catch {
+      return []
+    }
+  }
+  const writeDebug = (info) => {
+    if (!evidenceDir) return
+    try {
+      writeJsonAtomic(path.join(evidenceDir, 'ui-team-debug.json'), {
+        at: new Date().toISOString(),
+        ...info
+      })
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return {
+    setScope(scope) {
+      scopeRef = scope
+      cache.at = 0 // 服务就绪后立即失效缓存，下一次 state.get 走真实数据
+    },
+    async teamInfo(opts = {}) {
+      const key = String(opts.currentSessionId || '')
+      if (Date.now() - cache.at < TTL && cache.key === key) return cache.value
+      let value
+      try {
+        // 服务必须经 ctx.inject 注入后从 scope 取（直接 ctx.xxx 会报 without inject）
+        const controller =
+          (scopeRef && scopeRef.sessionController) ||
+          (typeof scopeRef?.get === 'function' ? scopeRef.get('sessionController') : null)
+        const projections =
+          (scopeRef && scopeRef.sessionProjections) ||
+          (typeof scopeRef?.get === 'function' ? scopeRef.get('sessionProjections') : null)
+        if (
+          !controller ||
+          !projections ||
+          typeof controller.list !== 'function' ||
+          typeof projections.snapshot !== 'function'
+        ) {
+          value = { status: 'unsupported', reason: 'projection-service-not-injected' }
+        } else {
+          // 优先同步读 listState 快照（client 同款 store：getSnapshot() → {byId,...}）；
+          // remote list() 在部分宿主态会挂起，仅作兜底（3s 超时）。
+          let list = null
+          let listSource = 'none'
+          try {
+            const store = controller.listState
+            const snap =
+              typeof store?.getSnapshot === 'function' ? store.getSnapshot() : (store?.state ?? store?.value ?? store)
+            if (snap && typeof snap === 'object') {
+              if (snap.byId && typeof snap.byId === 'object') list = Object.values(snap.byId)
+              else if (Array.isArray(snap)) list = snap
+              else if (Array.isArray(snap.sessions)) list = snap.sessions
+              else if (Array.isArray(snap.list)) list = snap.list
+              if (Array.isArray(list)) listSource = 'listState'
+            }
+          } catch {
+            list = null
+          }
+          let listMs = 0
+          if (!list) {
+            const listStarted = Date.now()
+            let rawList = null
+            let listFailure = null
+            try {
+              rawList = await withTimeout(controller.list(), 1200, null)
+            } catch (error) {
+              listFailure = clip(error?.message ?? String(error), 120)
+            }
+            listMs = Date.now() - listStarted
+            list = Array.isArray(rawList) ? rawList : Array.isArray(rawList?.sessions) ? rawList.sessions : []
+            if (listFailure !== null) {
+              writeDebug({
+                stage: 'list-error',
+                ms: listMs,
+                error: listFailure,
+                listStateKeys: shape(controller.listState),
+                controllerKeys: shape(controller)
+              })
+            } else if (!rawList) {
+              writeDebug({
+                stage: 'list-timeout',
+                ms: listMs,
+                listStateKeys: shape(controller.listState),
+                controllerKeys: shape(controller)
+              })
+            }
+          }
+          const session =
+            list.find((item) => item && String(item.sessionId) === key) ||
+            list.find((item) => item && item.running) ||
+            list[0]
+          if (!list || list.length === 0) {
+            value = { status: 'empty', reason: 'no-session' }
+            writeDebug({ stage: 'no-session', listSource, listMs, listStateKeys: shape(controller.listState) })
+          } else if (!session) {
+            value = { status: 'empty', reason: 'no-session' }
+            writeDebug({ stage: 'no-session', listSource, listLength: list.length })
+          } else {
+            const rawSnap = projections.snapshot(session, ['agentTeam', 'goal', 'plan', 'userQuestions'])
+            const snap = rawSnap && typeof rawSnap.then === 'function' ? await rawSnap : rawSnap
+            const values = snap?.values ?? snap ?? {}
+            const team = values.agentTeam
+            if (!isObject(team)) {
+              value = { status: 'unsupported', reason: 'agent-team-projection-missing' }
+            } else if (team.failure) {
+              value = { status: 'degraded', reason: clip(String(team.failure), 160) }
+            } else {
+              const members = Array.isArray(team.members) ? team.members : []
+              const tasks = Array.isArray(team.tasks) ? team.tasks : []
+              const byStatus = (name) => tasks.filter((task) => task && task.status === name).length
+              const completed = byStatus('completed')
+              const cumulative = {
+                total: tasks.length,
+                pending: byStatus('pending'),
+                in_progress: byStatus('in_progress'),
+                completed,
+                blocked: byStatus('blocked')
+              }
+              const ready = tasks.filter(
+                (task) =>
+                  task &&
+                  task.status === 'pending' &&
+                  Array.isArray(task.blockedBy) &&
+                  task.blockedBy.every(
+                    (id) => tasks.find((candidate) => candidate && candidate.id === id)?.status === 'completed'
+                  )
+              ).length
+              const goalRaw = values.goal
+              const goalState = isObject(goalRaw?.goal) ? goalRaw.goal : goalRaw
+              const planRaw = isObject(values.plan) ? values.plan : {}
+              const questionsRaw = isObject(values.userQuestions) ? values.userQuestions : {}
+              value = {
+                status: tasks.length === 0 && members.length <= 1 ? 'empty' : 'ok',
+                reason: null,
+                team: {
+                  status: tasks.length === 0 && members.length <= 1 ? 'empty' : 'ok',
+                  members: {
+                    total: members.length,
+                    active: members.filter((member) => memberActive(member?.status)).length,
+                    failed: members.filter((member) => String(member?.status || '').toLowerCase() === 'failed').length
+                  },
+                  tasks: { ...cumulative, ready, progress: tasks.length > 0 ? completed / tasks.length : null },
+                  updatedAt: null
+                },
+                goal: {
+                  active: Boolean(goalState && goalState.phase),
+                  status: typeof goalState?.phase === 'string' ? goalState.phase : null,
+                  roundsStarted: Number.isFinite(goalState?.roundsStarted) ? goalState.roundsStarted : null
+                },
+                plan: {
+                  active: Boolean(planRaw.active),
+                  pending: Array.isArray(planRaw.pending)
+                    ? planRaw.pending.length
+                    : Number.isFinite(planRaw.pending)
+                      ? planRaw.pending
+                      : 0
+                },
+                userQuestions: {
+                  active: Array.isArray(questionsRaw.active) ? questionsRaw.active.length : 0,
+                  sentCount: Array.isArray(questionsRaw.settled) ? questionsRaw.settled.length : 0
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        log?.warn?.(`[pet-bridge-ui] team fallback 读取失败: ${error?.message ?? error}`)
+        value = { status: 'degraded', reason: clip(error?.message ?? String(error), 160) }
+      }
+      cache.at = Date.now()
+      cache.key = key
+      cache.value = value
+      return value
+    }
+  }
+}
+
+function buildHandler(cfg, log, hostBridge = null) {
   const probeProcess = makeProcessProbe(cfg.processProbeTtlMs)
   const stateCache = { at: 0, value: null }
 
@@ -1273,10 +1628,17 @@ function buildHandler(cfg, log) {
           ? todayV2.costYuan
           : todayCost,
       estimateCostYuan: Number.isFinite(todayV2?.costYuan) ? todayV2.costYuan : todayCost,
+      // v46 三本账 + token 拆分（你的 / 团队的 / 她说话）
+      tokensUser: Number.isFinite(todayV2?.tokensUser) ? todayV2.tokensUser : null,
+      tokensAgent: Number.isFinite(todayV2?.tokensAgent) ? todayV2.tokensAgent : null,
+      costUserYuan: Number.isFinite(todayV2?.costUserYuan) ? todayV2.costUserYuan : null,
+      costAgentYuan: Number.isFinite(todayV2?.costAgentYuan) ? todayV2.costAgentYuan : null,
+      agentCalls: Number.isFinite(todayV2?.agentCalls) ? todayV2.agentCalls : null,
       ratio: 0,
       source: todayV2 ? 'v2' : 'legacy'
     }
-    todayStats.ratio = todayStats.budgetYuan > 0 ? Math.min(1, todayStats.costYuan / todayStats.budgetYuan) : 0
+    todayStats.ratio =
+      todayStats.budgetYuan > 0 ? Math.min(1, (todayStats.petLlmCostYuan || 0) / todayStats.budgetYuan) : 0
     const events = readEvents(cfg.eventsFile)
     if (Number.isFinite(stateFile?.eventsUnread)) events.unread = stateFile.eventsUnread
     const companion = readCompanion(stateFile, cfg.companionFile)
@@ -1291,6 +1653,38 @@ function buildHandler(cfg, log) {
     const guards = {
       ...GUARD_DEFAULTS,
       ...(isObject(ui?.guards) ? ui.guards : {})
+    }
+    // task-58：团队/目标/计划/等你选（v2 字段优先 → host 只读投影 fallback → 未启用；三级降级）
+    let hostTeamSnapshot = null
+    if (hostBridge && typeof hostBridge.teamInfo === 'function') {
+      try {
+        hostTeamSnapshot = await withTimeout(
+          hostBridge.teamInfo({ currentSessionId: stateFile?.currentSessionId ?? null }),
+          3000,
+          { status: 'degraded', reason: 'team-bridge-timeout' }
+        )
+      } catch {
+        hostTeamSnapshot = { status: 'degraded', reason: 'team-bridge-error' }
+      }
+    }
+    const teamFeatures = normalizeTeamFeatures(stateFile, hostTeamSnapshot)
+    // 验证用证据（M2）：host fallback 是否生效（30s 节流；只含计数/状态，无隐私字段）
+    if (hostBridge && Date.now() - (stateCache.teamEvidenceAt || 0) > 30000) {
+      stateCache.teamEvidenceAt = Date.now()
+      try {
+        writeJsonAtomic(path.join(cfg.evidenceDir, 'ui-team-preview.json'), {
+          at: new Date().toISOString(),
+          source: teamFeatures.source,
+          status: teamFeatures.status,
+          reason: teamFeatures.reason,
+          team: teamFeatures.team,
+          goal: teamFeatures.goal,
+          plan: teamFeatures.plan,
+          userQuestions: teamFeatures.userQuestions
+        })
+      } catch {
+        /* 证据写失败不影响面板 */
+      }
     }
 
     return {
@@ -1361,6 +1755,7 @@ function buildHandler(cfg, log) {
         events,
         companion,
         guards,
+        teamFeatures,
         recentSay,
         lastSayAt,
         lastLogAt: logParsed.lastLineAt,
@@ -1916,7 +2311,19 @@ export function apply(ctx, rawConfig) {
     }
   }
 
-  const handler = buildHandler(cfg, log)
+  // task-58：团队/计划数据桥（服务经 ctx.inject 注入；缺失时面板降级为「未启用」，不影响路由）
+  const hostBridge = createHostBridge(log, cfg.evidenceDir)
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['sessionController', 'sessionProjections'], (scope) => {
+        hostBridge.setScope(scope)
+        log.info('[pet-bridge-ui] team bridge ready（sessionController + sessionProjections 只读投影）')
+      })
+    } catch (error) {
+      log.warn(`[pet-bridge-ui] team bridge inject 失败（降级为未启用）: ${error?.message ?? error}`)
+    }
+  }
+  const handler = buildHandler(cfg, log, hostBridge)
 
   ctx.inject(['connection', 'webServer'], (scope) => {
     const server = scope.get('webServer')
@@ -1974,6 +2381,10 @@ export function apply(ctx, rawConfig) {
       }
     }
     log.info(`[pet-bridge-ui] route mounted ${cfg.channel}（host pid ${process.pid}）`)
+    // task-58 自检：加载后触发一次只读 state.get，验证 host 投影桥并写入 evidence/ui-team-preview.json
+    setTimeout(() => {
+      handler('state.get').catch(() => {})
+    }, 1500)
     if (typeof ctx.effect === 'function') {
       ctx.effect(() => disposeAll, 'pet-bridge-ui.web-route')
     } else if (typeof ctx.on === 'function') {
@@ -1998,6 +2409,8 @@ export const __test = {
   renderHomeHtml,
   normalizeRuntimeStatus,
   normalizeSessions,
+  normalizeTeamFeatures,
+  createHostBridge,
   RUNTIME_STATE_META,
   petSettingsToCmds,
   normalizePetSettings,

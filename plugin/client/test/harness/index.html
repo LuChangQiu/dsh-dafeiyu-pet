@@ -156,7 +156,7 @@
   const ctx = {
     slots: {
       inject: function (type, cb) { cb() },
-      register: function (spec, Component) { Panel = Component; return function () {} },
+      register: function (spec, Component) { if (spec && spec.name === 'settings.section') Panel = Component; return function () {} },
     },
   }
   mod.apply(ctx)

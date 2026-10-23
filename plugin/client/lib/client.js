@@ -573,6 +573,22 @@ window.__ModuleLoader__.load({
         const [testLine, setTestLine] = React.useState('')
         const [logs, setLogs] = React.useState(null)
         const [showRollback, setShowRollback] = React.useState(false)
+        /** 主页「今日数据卡」是否默认展开费用估算（存 localStorage；默认关）。 */
+        const [showCostDefault, setShowCostDefault] = React.useState(() => {
+          try {
+            return window.localStorage.getItem('pet-bridge-ui.showCost') === '1'
+          } catch {
+            return false
+          }
+        })
+        const setShowCostPref = (value) => {
+          setShowCostDefault(value)
+          try {
+            window.localStorage.setItem('pet-bridge-ui.showCost', value ? '1' : '0')
+          } catch {
+            /* 隐私模式等场景忽略 */
+          }
+        }
         const dirtyRef = React.useRef(false)
         const aliveRef = React.useRef(true)
         const formRef = React.useRef(form)
@@ -943,7 +959,9 @@ window.__ModuleLoader__.load({
           runtime,
           sessionList,
           companion,
-          todayStats
+          todayStats,
+          events,
+          teamFeatures
         } = state
         const rt = runtime || {
           supported: false,
@@ -1084,9 +1102,14 @@ window.__ModuleLoader__.load({
                 detail: rt.since ? '起于 ' + fmtTime(rt.since) : '—'
               }),
               h(Stat, {
-                label: 'Step / Turn',
+                label: '进度',
                 on: !rt.disconnected,
-                value: (rt.step == null ? '—' : rt.step) + ' / ' + (rt.turn == null ? '—' : rt.turn),
+                value:
+                  rt.step == null
+                    ? '—'
+                    : rt.turn == null
+                      ? '第 ' + rt.step + ' 步'
+                      : '第 ' + rt.step + ' 步 / 第 ' + rt.turn + ' 轮',
                 detail: ''
               }),
               h(Stat, {
@@ -1450,6 +1473,98 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          // ── 专注与静默（task-67：字段未到前为只读骨架，标注"待服务端"） ──
+          h(
+            Card,
+            {
+              title: '专注与静默',
+              right: h('span', { style: S.hint }, '待服务端（task-65 mode 字段）')
+            },
+            h(
+              'p',
+              { style: S.hint },
+              '她可随时「静一静 / 专注 / 下班」，减少乱走和主动演出；恢复后照常。字段到位后此处直接接线。'
+            ),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'button',
+                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
+                '静一静 30 分钟'
+              ),
+              h(
+                'button',
+                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
+                '专注 2 小时'
+              ),
+              h(
+                'button',
+                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
+                '下班到明早'
+              ),
+              h(
+                'button',
+                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
+                '恢复'
+              )
+            ),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'label',
+                { style: { flex: '0 0 170px' } },
+                h('span', { style: S.label }, '静一静默认时长（分钟）'),
+                h('input', { style: S.field, type: 'number', value: '30', disabled: true })
+              ),
+              h(
+                'label',
+                { style: { flex: '0 0 170px' } },
+                h('span', { style: S.label }, '专注默认时长（分钟）'),
+                h('input', { style: S.field, type: 'number', value: '120', disabled: true })
+              ),
+              h(
+                'label',
+                { style: { flex: '0 0 170px' } },
+                h('span', { style: S.label }, '下班恢复时间'),
+                h('input', { style: S.field, value: '08:00', disabled: true })
+              )
+            ),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '自动恢复（到点/开机后）'),
+                h(Toggle, {
+                  value: true,
+                  onChange: () => {},
+                  disabled: true,
+                  onLabel: '自动恢复',
+                  offLabel: '手动恢复'
+                })
+              ),
+              h(
+                'label',
+                { style: { flex: '1 1 220px' } },
+                h('span', { style: S.label }, '快捷键（冲突校验占位，仅提示不绑定）'),
+                h('input', {
+                  style: S.field,
+                  placeholder: '例如 Ctrl+Alt+S',
+                  disabled: true,
+                  title: '待服务端；启用后会校验与 DSH 快捷键冲突'
+                })
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '快捷键冲突校验（占位逻辑）：格式需为「修饰键+字母」；与 DSH 内置快捷键或系统快捷键冲突时提示「已被占用」，不注册全局快捷键。字段（mode.active/kind/remainMs/resumeAt + capabilities.mode）到位后改为实时倒计时显示。'
+            )
+          ),
+
           // ── 每日预算 ──
           h(
             Card,
@@ -1514,9 +1629,13 @@ window.__ModuleLoader__.load({
               h(
                 'span',
                 { style: S.hint },
-                '两本账：桌宠说话（预算环上）' +
-                  ' vs 你的 token 估算 ' +
-                  fmtMoney((todayStats && todayStats.estimateCostYuan) || today.cost) +
+                '三本账（估算）：你 ' +
+                  fmtMoney((todayStats && todayStats.costUserYuan) || 0) +
+                  ' + 团队 ' +
+                  fmtMoney((todayStats && todayStats.costAgentYuan) || 0) +
+                  ' + 她说话 ' +
+                  fmtMoney((todayStats && todayStats.petLlmCostYuan) || today.cost) +
+                  '（预算环只算她说话）' +
                   (todayStats && Number.isFinite(todayStats.riceBowls)
                     ? ' · 今天 ' +
                       todayStats.riceBowls +
@@ -1526,6 +1645,27 @@ window.__ModuleLoader__.load({
                   (todayStats && Number.isFinite(todayStats.tokens)
                     ? ' · ' + Math.round(todayStats.tokens / 1000) + 'k token'
                     : '')
+              ),
+              h(
+                'div',
+                { style: S.row },
+                h(
+                  'div',
+                  null,
+                  h('span', { style: S.label }, '主页默认显示费用估算'),
+                  h(Toggle, {
+                    value: showCostDefault,
+                    onChange: setShowCostPref,
+                    disabled: false,
+                    onLabel: '展开费用（估算可能偏高）',
+                    offLabel: '默认折叠（推荐）'
+                  })
+                )
+              ),
+              h(
+                'p',
+                { style: S.hint },
+                '费用为估算（cache 未单独计价，偏高）；白饭/token/峰谷更稳定。开关写入本机 localStorage，主页「今日数据」立即生效。'
               )
             ),
             h('p', { style: S.hint }, '达到上限后联动插件停用 LLM，回退台词池')
@@ -2064,6 +2204,211 @@ window.__ModuleLoader__.load({
               : null
           ),
 
+          // ── 兼容性与能力（task-67：让用户看到联动到了哪些能力；未知统一「未启用/未安装」） ──
+          h(
+            Card,
+            {
+              title: '兼容性与能力',
+              right: h('span', { style: S.hint }, '已联动能力 / 降级状态一览')
+            },
+            h(
+              'div',
+              { style: S.statusGrid },
+              h(Stat, {
+                label: '版本',
+                on: true,
+                value: '面板 ' + ((versions && versions.uiPlugin) || '—'),
+                detail:
+                  '联动 ' +
+                  ((versions && versions.bridgePlugin) || '—') +
+                  ' · 桌宠 ' +
+                  ((versions && versions.pet) || '—')
+              }),
+              h(Stat, {
+                label: '状态通道',
+                on: Boolean(runtime && runtime.supported),
+                unknown: !(runtime && runtime.supported),
+                value: runtime && runtime.supported ? '已联通' : '未就绪',
+                detail: rt.disconnected ? '失联（>30s 无心跳）' : '心跳正常'
+              }),
+              h(Stat, {
+                label: '状态文件',
+                on: true,
+                value: files && files.stateSource === 'v2' ? 'v2 真源' : 'legacy 兜底',
+                detail: (files && (files.stateSource === 'v2' ? files.stateV2File : files.stateFile)) || ''
+              }),
+              h(Stat, {
+                label: '多会话',
+                on: Boolean(sessionList && sessionList.supported),
+                unknown: !(sessionList && sessionList.supported),
+                value: sessionList && sessionList.supported ? sessionList.total + ' 个会话' : '单会话兼容',
+                detail:
+                  sessionList && sessionList.supported
+                    ? '真人 ' + sessionList.userActiveCount + ' · 后台 ' + sessionList.backgroundCount
+                    : ''
+              }),
+              h(Stat, {
+                label: '事件时间线',
+                on: Boolean(events && events.supported),
+                unknown: !(events && events.supported),
+                value: events && events.supported ? events.total + ' 条记录' : '未就绪',
+                detail: events && events.unread ? '未读 ' + events.unread : '无未读'
+              }),
+              h(Stat, {
+                label: '她的心情',
+                on: Boolean(companion && companion.supported),
+                unknown: !(companion && companion.supported),
+                value:
+                  companion && companion.supported
+                    ? companion.words
+                      ? companion.words.mood
+                      : companion.level || '已启用'
+                    : '未就绪',
+                detail:
+                  companion && companion.supported
+                    ? '精力 ' +
+                      (companion.words ? companion.words.energy : '—') +
+                      ' · 好感 ' +
+                      (companion.words ? companion.words.affinity : '—')
+                    : ''
+              }),
+              h(Stat, {
+                label: '团队 / 计划',
+                on: Boolean(teamFeatures && (teamFeatures.status === 'ok' || teamFeatures.status === 'empty')),
+                unknown: !teamFeatures || teamFeatures.status === 'unsupported',
+                value:
+                  teamFeatures && teamFeatures.status === 'ok'
+                    ? (teamFeatures.team.members.total || 0) +
+                      ' 人 · 任务 ' +
+                      (teamFeatures.team.tasks.completed || 0) +
+                      '/' +
+                      (teamFeatures.team.tasks.total || 0)
+                    : teamFeatures && teamFeatures.status === 'empty'
+                      ? '暂无团队/任务'
+                      : teamFeatures && teamFeatures.status === 'degraded'
+                        ? '数据异常（降级）'
+                        : '未启用（DSH 未装载 Agent Teams）',
+                detail:
+                  teamFeatures && teamFeatures.source ? '数据源 ' + teamFeatures.source : '等待 v2 字段 / 能力探测'
+              }),
+              h(Stat, {
+                label: '互动',
+                on: Boolean(capabilities && capabilities.interactions && capabilities.interactions.head),
+                unknown: !(capabilities && capabilities.interactions),
+                value:
+                  capabilities && capabilities.interactions
+                    ? [
+                        capabilities.interactions.head ? '摸头' : null,
+                        capabilities.interactions.feed ? '喂食' : null,
+                        capabilities.interactions.come ? '叫她' : null
+                      ]
+                        .filter(Boolean)
+                        .join(' / ') || '未就绪'
+                    : '未就绪',
+                detail: '互动经节流；失败看最近动作'
+              }),
+              h(Stat, {
+                label: '活跃度护栏',
+                on: true,
+                value: (state.guards && state.guards.maxActionsPerHour) || 60,
+                detail:
+                  '每小时动作上限 · ' +
+                  (state.guards && state.guards.noActionOnSameState === false ? '同状态可重复' : '同状态不重复')
+              })
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '能力探测（DSH 插件/技能/MCP/jobs/计划/上下文）待 task-66 能力地图接入；未知能力统一显示「未启用/未安装」，不谎报连接状态。'
+            )
+          ),
+
+          // ── DSH 能力地图（简版，静态矩阵；22 §2.2；待 task-66 数据接入后变活） ──
+          h(
+            Card,
+            {
+              title: 'DSH 能力地图（简版）',
+              right: h('span', { style: S.hint }, '静态矩阵 · 22 §2.2；「已联动」为实时探测')
+            },
+            h(
+              'p',
+              { style: S.hint },
+              '已联动（实时）：' +
+                [
+                  runtime && runtime.supported ? '状态通道' : null,
+                  sessionList && sessionList.supported ? '多会话' : null,
+                  events && events.supported ? '事件时间线' : null,
+                  companion && companion.supported ? '情绪' : null,
+                  teamFeatures && teamFeatures.status !== 'unsupported' ? '团队/计划' : null,
+                  capabilities && capabilities.interactions && capabilities.interactions.head ? '互动' : null,
+                  files && files.stateSource === 'v2' ? 'v2 状态文件' : null,
+                  '主页',
+                  'overlay 徽标'
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+            ),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '✅ 默认可用（base + web-app，同事默认也有）'),
+                h(
+                  'p',
+                  { style: S.hint },
+                  '会话/事件/投影/标题/token/统计/工作区/命令/slots/HTTP 路由 · Goals/Plan/Todo/Skills/Subagents/Jobs/Compaction/Session query · Schedule · Workflow（工具+运行视图）· MCP 框架（默认无服务器配置）'
+                )
+              ),
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '🧩 需 profile bundle（本机已启用）'),
+                h(
+                  'p',
+                  { style: S.hint },
+                  'Agent Teams + 任务板 · Ralph · Terminal 增强（terminal_*）· Session search · Session titles 增量 · Git worktree · 翻译/auto-review/inspector/plugin market · 子代理 CLI（codex/claude）'
+                )
+              ),
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '⚠️ 需 profile bundle（本机未启用，同事可能也没有）'),
+                h(
+                  'p',
+                  { style: S.hint },
+                  'Voice 输入 · Badge skill（未安装）· 同事缺 bundle 时：团队显示「未启用团队」、无 ralph/terminal/search 活动，不报错'
+                )
+              ),
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '🔌 第三方扩展（本机已装）'),
+                h(
+                  'p',
+                  { style: S.hint },
+                  'MCP 服务器（codegraph/context7/idea/chrome-devtools/datagrip）· memory_manager（仅计数）· IM 渠道'
+                )
+              ),
+              h(
+                'div',
+                { style: S.block },
+                h('span', { style: S.label }, '🚫 不可用 / 不显示'),
+                h(
+                  'p',
+                  { style: S.hint },
+                  'intel-status（未激活）· Web 内置桌宠（不做）· 语音/ASR/TTS、hooks、OTel/analytics 展示'
+                )
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '探测规则（22 §2.3）：服务用 ctx.get/inject 探测、投影 key 缺失=未装载、工具名探测 MCP/terminal/worktree；缺失统一「未启用」，绝不抛错。数据接入后本卡按 v2/fallback/empty 规则变活。'
+            )
+          ),
+
           // ── 测试 ──
           h(
             Card,
@@ -2175,14 +2520,48 @@ window.__ModuleLoader__.load({
 
     /**
      * 侧栏底部入口（task-51：`sidebar.footer.action`，加性安全槽）——打开大肥鱼主页。
+     * task-67：叠加状态点（运行中/等你选/空闲）与「等你选」角标，20s 轮询、hidden 暂停、失败静默。
      * @returns {any} React 元素
      */
     function FooterAction() {
+      const [dot, setDot] = React.useState(null)
+      React.useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const data = await call('state.get')
+            if (!alive) return
+            const rt = data.runtime || {}
+            const stateClass = String(rt.stateClass || '').toLowerCase()
+            const tone = rt.disconnected
+              ? TONE_COLOR.err
+              : stateClass === 'waiting'
+                ? TONE_COLOR.warn
+                : stateClass === 'error'
+                  ? TONE_COLOR.err
+                  : stateClass === 'running' || stateClass === 'busy'
+                    ? TONE_COLOR.busy
+                    : TONE_COLOR.ok
+            const waiting = (data.events && data.events.s0Unread) || 0
+            setDot({ color: tone, label: rt.label || '空闲', waiting })
+          } catch {
+            /* 离线静默 */
+          }
+        }
+        load()
+        const timer = setInterval(() => {
+          if (!document.hidden) load()
+        }, 20000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [])
       return h(
         'button',
         {
           type: 'button',
-          title: '打开大肥鱼主页',
+          title: dot ? '大肥鱼：' + dot.label + (dot.waiting ? ' · 等你选 ' + dot.waiting : '') : '打开大肥鱼主页',
           style: {
             display: 'flex',
             alignItems: 'center',
@@ -2208,9 +2587,130 @@ window.__ModuleLoader__.load({
             }
           }
         },
+        h(
+          'span',
+          {
+            style: {
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              display: 'inline-block',
+              background: dot ? dot.color : 'transparent',
+              border: dot ? 'none' : '1px solid currentColor'
+            }
+          },
+          ''
+        ),
         h('span', null, '🐋'),
-        h('span', null, '大肥鱼')
+        h('span', null, '大肥鱼'),
+        dot && dot.waiting
+          ? h(
+              'span',
+              {
+                style: {
+                  marginLeft: 'auto',
+                  fontSize: 10,
+                  color: TONE_COLOR.warn,
+                  border: '1px solid rgba(210,153,34,.5)',
+                  borderRadius: 999,
+                  padding: '0 6px'
+                }
+              },
+              '等你选 ' + dot.waiting
+            )
+          : null
       )
+    }
+
+    /**
+     * task-58：`shell.overlay` 团队徽标（加性安全槽；帧级浮层，click-through 层上的小胶囊）。
+     * 仅团队/任务/等你选存在时显示；点击打开大肥鱼主页；15s 轮询、hidden 暂停。
+     * @returns {any} React 元素或 null
+     */
+    function OverlayBadge() {
+      const [features, setFeatures] = React.useState(null)
+      React.useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const data = await call('state.get')
+            if (alive) {
+              const features = data.teamFeatures || null
+              // P0/M3：S0 未读（等你确认）并入徽标红点
+              if (features) features.eventsS0Unread = (data.events && data.events.s0Unread) || 0
+              setFeatures(features)
+            }
+          } catch {
+            /* 离线静默 */
+          }
+        }
+        load()
+        const timer = setInterval(() => {
+          if (!document.hidden) load()
+        }, 15000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [])
+      const tf = features
+      // 渲染容错：不同 DSH 版本 slot 上下文差异不应炸页面（失败→静默不显示）
+      try {
+        if (!tf || (tf.status !== 'ok' && tf.status !== 'empty')) return null
+        const members = (tf.team && tf.team.members) || {}
+        const tasks = (tf.team && tf.team.tasks) || {}
+        const questions = tf.userQuestions || {}
+        const waiting = Math.max(Number(questions.active) || 0, Number(tf.eventsS0Unread) || 0)
+        const total = Number(tasks.total) || 0
+        if (Number(members.total) <= 1 && total === 0 && waiting === 0) return null
+        const label =
+          waiting > 0
+            ? '等你选 ' + waiting
+            : total > 0
+              ? '任务 ' + (Number(tasks.completed) || 0) + '/' + total
+              : '团队 ' + (Number(members.total) || 0)
+        return h(
+          'div',
+          {
+            title: '大肥鱼 · 打开主页',
+            onClick: openHome,
+            style: {
+              position: 'fixed',
+              right: 14,
+              bottom: 14,
+              zIndex: 2147483000,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 999,
+              background: 'rgba(24,26,31,.88)',
+              color: '#e7e8ea',
+              border: '1px solid rgba(110,168,255,.45)',
+              boxShadow: '0 2px 10px rgba(0,0,0,.35)',
+              fontSize: 12,
+              cursor: 'pointer',
+              pointerEvents: 'auto',
+              userSelect: 'none'
+            }
+          },
+          h('span', null, '🐋'),
+          h('span', null, label),
+          waiting > 0
+            ? h('span', {
+                style: {
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: '#e5534b',
+                  display: 'inline-block'
+                }
+              })
+            : null
+        )
+      } catch {
+        return null
+      }
     }
 
     return {
@@ -2241,6 +2741,21 @@ window.__ModuleLoader__.load({
           )
         } catch {
           /* 旧版 DSH 无该槽时静默降级（设置页入口仍在） */
+        }
+        // task-58：帧级团队徽标（shell.overlay，加性安全槽；无团队数据时不渲染）
+        try {
+          ctx.slots.inject('shell.overlay', () =>
+            ctx.slots.register(
+              {
+                name: 'shell.overlay',
+                id: 'pet-bridge-ui-badge',
+                order: 200
+              },
+              OverlayBadge
+            )
+          )
+        } catch {
+          /* 旧版 DSH 无 shell.overlay 时静默降级 */
         }
       }
     }

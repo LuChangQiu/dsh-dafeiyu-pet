@@ -21,7 +21,19 @@ const index = await import(pathToFileURL(path.join(libDir, 'index.js')).href)
 const { buildHandler, DEFAULTS, renderHomeHtml } = index.__test
 
 const port = Number(process.argv[2]) || 3909
-const handler = buildHandler({ ...DEFAULTS }, { info() {}, warn() {} })
+/**
+ * 可选：模拟生产 host fallback 状态（harness 本身无 DSH ctx，默认 teamFeatures=unsupported）。
+ * HARNESS_HOST_STATUS=empty|ok|degraded|unsupported（可配 HARNESS_HOST_REASON）。
+ */
+let hostBridge = null
+if (process.env.HARNESS_HOST_STATUS) {
+  const status = String(process.env.HARNESS_HOST_STATUS)
+  const reason = process.env.HARNESS_HOST_REASON || (status === 'empty' ? 'no-session' : null)
+  hostBridge = {
+    teamInfo: async () => ({ status, reason })
+  }
+}
+const handler = buildHandler({ ...DEFAULTS }, { info() {}, warn() {} }, hostBridge)
 const homeHtml = renderHomeHtml()
 
 const server = http.createServer(async (req, res) => {
@@ -45,6 +57,14 @@ const server = http.createServer(async (req, res) => {
     try {
       if (endpoint === 'state.get') {
         result = await handler('state.get')
+        // 可选：注入合成 teamFeatures（截图/降级演练）；HARNESS_TEAM 为 JSON
+        if (result?.ok && process.env.HARNESS_TEAM) {
+          try {
+            result = { ok: true, data: { ...result.data, teamFeatures: JSON.parse(process.env.HARNESS_TEAM) } }
+          } catch {
+            /* ignore bad env */
+          }
+        }
       } else if (['pet.action', 'interaction', 'events.ack'].includes(endpoint)) {
         // mock：不写生产 ui-action / 不驱动真实桌宠（截图/联调用）
         result = { ok: true, data: { queued: true, mock: true, note: 'harness mock: 未触达生产' } }

@@ -438,3 +438,82 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - 真实 DSH 页面截图需用户浏览器 cookie（harness 图 = 同一 HTML + 真实数据）；
 - 团队/目标/计划/子代理/jobs/schedules 卡 = M2（task-58，等 task-57 字段或 host 侧读 `ctx.sessionProjections`）；
 - `shell.overlay` 团队徽标 demo = M2/M3；`sidebar.footer.action` 已上线（刷新页面可见）。
+---
+
+# 附录 D — task-58 M2：团队 / 目标 / 计划 / 等你选 + 团队徽标
+
+## D.1 数据层（v2 优先 → host 只读 fallback → 三级降级）
+- **v2 字段（tech-scout task-57，Phase-1.5）**：`team:{enabled,status,members:{total,active,failed},tasks:{total,pending,in_progress,completed,blocked,progress,ready},updatedAt}`、`goal:{active,operation,status,roundsStarted}`、`plan:{active,pending}`、`userQuestions:{active,sentCount}`、`degraded[]`；**无 subject/description/objective/cwd**。
+- **host 只读 fallback**：`createHostBridge()` 经 `ctx.inject(['sessionController','sessionProjections'])` 取服务；`sessionProjections.snapshot(session,['agentTeam','goal','plan','userQuestions'])`；**10s 缓存、只读、不写盘**；超时 3s；失败只降级不抛错。
+- **实测结论**：host 侧 `sessionController.list()` 在本宿主态挂起（>3s），`controller.listState` 提供 `projectionsFor/summaryFor` 等方法但同步取快照未成功；因此当前生产 fallback 状态为 `empty/no-session`（面板显示「当前对话暂无团队/任务」，属正确降级）。**等 task-57 v2 字段落地后以 v2 为准**（已向 tech-scout 要接口）。
+- 诊断证据（非用户可见）：`evidence/ui-team-preview.json`、`ui-team-debug.json`（只含计数/属性名，无隐私）。
+- `state.get` 新增 `teamFeatures`：`{source:'v2'|'host'|null,status:'ok'|'empty'|'degraded'|'unsupported',reason,enabled,team,goal,plan,userQuestions}`。
+
+## D.2 主页卡片（19 §8 / ux v4 计数版）
+- **团队卡**：成员总数/在跑/异常 chips；任务进度条（completed/total 百分比）；任务计数（进行中/待办/可开工/阻塞）；全部完成时显示「🎉 任务全部完成」；数据源标记「数据源 v2 / 投影（只读）」。
+- **目标·计划·等你选卡**：目标 phase + 轮次；计划模式 + 待选项数；等你选问题数（>0 时琥珀色提醒）。
+- **降级空态**：`unsupported` → 「团队能力未启用（DSH 未装载 Agent Teams）」；`degraded` → 「团队数据异常，已降级展示」+最后有效计数；`empty` → 「当前对话暂无团队/任务」；不报错、不弹窗。
+- 证据：`screenshots/ui-16-home-m2-team-goal-plan.png`（v2 合成数据：3 人/6 任务 50% 进度/目标 running 第 2 轮/计划待选 3/等你选 1）。
+
+## D.3 `shell.overlay` 团队徽标（加性安全槽）
+- client 插件注册 `shell.overlay`（id `pet-bridge-ui-badge`，order 200）：右下角小胶囊「🐋 任务 3/6」或「🐋 团队 3」；`userQuestions.active>0` 时显示红点 + 「等你选 N」；点击打开大肥鱼主页；15s 轮询 `state.get`、`document.hidden` 暂停、`pointerEvents:'auto'`；无团队数据时不渲染（零负担）。
+- 降级：旧版 DSH 无该槽 → try/catch 静默；团队 unsupported/degraded → 不显示徽标。
+
+## D.4 验证
+- `node test/smoke.mjs` → **59/59**（新增 4 项：v2 优先、host 四级降级、无数据不抛错、state.get 含 teamFeatures）；
+- repo lint 全绿（node --check 12/12 + Prettier 全过）；
+- 生产热组合：heartbeat 0.3.0、host pid 39484 未重启；`evidence/ui-team-preview.json` 实时反映降级状态。
+### D.5 数据源标注修正（verifier V22 反馈，已修）
+- 团队卡右上角数据源标记按**真实来源**显示：
+  - `tf.source === 'v2'` → 「数据源 v2」（仅当 v2 真有 `team` 字段时）；
+  - `tf.source === 'host'` → 「数据源 fallback（只读投影）」；
+  - 其余（v2 无字段且 host fallback 为空）→ 「数据源 empty（未接入）」。
+- evidence 截图说明：
+  - `ui-16-home-m2-team-goal-plan.png` = **合成 v2 形状数据注入**（harness `HARNESS_TEAM`，用于验渲染/布局；非生产真实 v2）；
+  - `ui-17-home-m2-degraded.png` = 降级态真实渲染（无 host bridge 时 unsupported；生产为 host empty/no-session）；
+  - 生产真实状态以 `evidence/ui-team-preview.json` 为准（当前 `source=host, status=empty, reason=no-session`，等 task-57 v2 字段）。
+- `shell.overlay` 徽标渲染已加 try/catch（失败静默不渲染，DSH 版本差异不炸页面）；真实页面可见性需用户刷新后截图。
+
+### D.6 shell.overlay 徽标 demo（视觉验收）
+- 静态 demo：`test/overlay-demo.html`（截图 `screenshots/ui-18-overlay-demo.png`）：右下角两个状态胶囊「🐋 任务 3/6」与「🐋 等你选 1 ●」；侧栏底部「🐋 大肥鱼」入口示意。
+- 真实组件：`lib/client.js` → `shell.overlay`（id `pet-bridge-ui-badge`），15s 轮询 state.get、hidden 暂停、`pointerEvents:auto`、无团队/等待数据不渲染、点击打开主页。
+---
+
+# 附录 E — task-66/67 设置页：兼容性与能力 + DSH 能力地图（静态版）
+
+## E.1 兼容性与能力卡（设置页，已上线）
+- 版本：面板/联动/桌宠；状态通道（已联通/未就绪/失联）；状态文件（v2 真源 / legacy 兜底 + 路径）；多会话（会话数/真人/后台）；事件时间线（条数/未读）；她的心情（状态词）；团队/计划（数据源 + 计数，降级文案）；互动（摸头/喂食/叫她，capabilities 门控）；活跃度护栏（每小时上限 + 同状态不重复）。
+- 原则：未知/缺失统一「未启用/未安装」，不谎报连接状态（22 §2.3）。
+
+## E.2 DSH 能力地图（简版，静态矩阵，22 §2.2）
+- 顶部「已联动（实时）」：状态通道 / 多会话 / 事件时间线 / 情绪 / 互动 / v2 状态文件 / 主页 / overlay 徽标 / 团队·计划（当 teamFeatures 非 unsupported）。
+- 静态分组：
+  - ✅ 默认可用（base + web-app）：会话/事件/投影/标题/token/统计/工作区/命令/slots/HTTP 路由；Goals/Plan/Todo/Skills/Subagents/Jobs/Compaction/Session query；Schedule；Workflow（工具+运行视图）；MCP 框架。
+  - 🧩 需 profile bundle（本机已启用）：Agent Teams + 任务板、Ralph、Terminal 增强、Session search、Session titles、Git worktree、翻译/auto-review/inspector/plugin market、子代理 CLI。
+  - ⚠️ 需 profile bundle（本机未启用）：Voice 输入、Badge skill；同事缺 bundle 时统一空态不报错。
+  - 🔌 第三方扩展（本机已装）：MCP 服务器 5 个、memory_manager（仅计数）、IM 渠道。
+  - 🚫 不可用/不显示：intel-status（未激活）、Web 内置桌宠（不做）、语音/ASR/TTS、hooks、OTel/analytics。
+- 探测规则（22 §2.3）：服务 ctx.get/inject 探测、投影 key 缺失=未装载、工具名探测 MCP/terminal/worktree；等 v2/v46 数据接入后本卡按 v2/fallback/empty 规则变活。
+- 证据：`screenshots/ui-19-settings-capability-map.png`（真实 state 快照 + 面板同款渲染）。
+
+## E.3 待接（task-67，等 bridge-dev mode 字段）
+- 顶部快捷控制组：静一静 30 分钟 / 专注 2 小时 / 下班到明早 / 恢复（倒计时）；
+- 设置页「专注与静默」分组：模式/时长/快捷键/自动恢复；
+- 快捷键配置与冲突提示（DSH 快捷键管理；不注册全局快捷键）；
+- 需要 bridge-dev 提供：`mode{active,kind:'silent'|'focus'|'off',remainMs,resumeAt}` + 命令（设置/恢复/延长）、`capabilities.mode`。
+### E.4 专注与静默（task-67 骨架，已上线）
+- 设置页新增「专注与静默」卡（**字段未到前只读/禁用 + 「待服务端」标注**）：静一静 30 分钟 / 专注 2 小时 / 下班到明早 / 恢复；默认时长（30/120/08:00）与自动恢复 Toggle、快捷键输入（冲突校验占位逻辑说明）；标题右侧标「待服务端（task-65 mode 字段）」。
+- 主页顶栏新增「静一静 / 专注 / 下班」快捷组（当前禁用 + 说明「待服务端接入」）。
+- 接线字段（bridge-dev task-65）：`mode{active,kind:'silent'|'focus'|'off',remainMs,resumeAt}` + `capabilities.mode` + 命令（设置/恢复/延长）；到位后按钮启用、显示倒计时、自动恢复生效。
+- 证据：`screenshots/ui-21-settings-focus-silent-skeleton.png`。
+
+### E.5 数据源降级映射修正（verifier V22 复测）
+- 两分法：**探测到宿主服务但无数据 → `数据源 fallback（只读投影）` + 「当前对话暂无团队/任务」**；**探不到服务 → `数据源 未接入（服务缺失）` + 「团队能力未启用（DSH 未装载 Agent Teams）」**；v2 有字段才标 `数据源 v2`。
+- harness 新增 `HARNESS_HOST_STATUS=empty|ok|degraded|unsupported` 模拟生产 host fallback，复现/截图：`screenshots/ui-20-home-modebar-fallback.png`（显示 fallback + 暂无团队/任务，符合期望）。
+- M3 同步项：时间线新增「等你选」筛选；overlay 红点叠加 `events.s0Unread`；侧栏 `sidebar.footer.action` 增加状态点（20s 轮询、hidden 暂停、失败静默）+「等你选」角标。
+### E.6 费用显示折中（lead 决策，已实现）
+- 主页「今日数据」卡**默认突出白饭 / token / 峰谷 / 轮次·工具**；费用行默认折叠为一行「费用估算 · 你的 ¥x + 团队 ¥y + 她 ¥z」+ 展开箭头。
+- 展开后显示**三本账**（v46 字段）：`costUserYuan`（你的 token 估算）/ `costAgentYuan`（团队的 token 估算）/ `petLlmCostYuan`（她说话，预算环 ¥1/天）+ 说明「估算偏高：cache 未单独计价（按 input 价计）；等 cache 分价上线后数字会下降」。
+- 展开状态跨 5s 轮询保持（`feeOpenState`）；设置页「每日费用上限」卡新增 **「主页默认显示费用估算」开关**（默认关闭，存本机 localStorage `pet-bridge-ui.showCost`，主页立即生效）。
+- 预算环口径修正：`todayStats.ratio` 改为 `petLlmCostYuan / budgetYuan`（只算她说话），不再用总 token 估算除以预算（此前会显示 100% 误报）。
+- 证据：`screenshots/ui-22-home-cost-collapsed.png`（默认折叠，白饭 754 碗突出）、`ui-23-home-cost-expanded.png`（三本账 + 偏高说明 + 跨轮询保持展开）。
