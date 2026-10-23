@@ -494,6 +494,101 @@ await testAsync('pet.nativeui 管道不可用时报错（不抛）', async () =>
   dispose()
 })
 
+// ───────────────────────── 3.6 task-36/40：快捷查看 / 双击 / 自启 ─────────────────────────
+console.log('\n[3.6] 快捷查看与双击/自启')
+
+test('PET_ACTION_CMDS 覆盖旧菜单快捷项且 balance/quit 标注待服务端', () => {
+  const cmds = index.__test.PET_ACTION_CMDS
+  for (const k of ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover', 'quietStart', 'quietEnd', 'quit']) {
+    assert.ok(cmds[k], '缺少动作 ' + k)
+  }
+  assert.equal(cmds.weather, 'cmd:weather')
+  assert.equal(cmds.quietEnd, 'cmd:quiet:off')
+  const readiness = index.__test.DEFAULT_PET_ACTION_READINESS
+  assert.equal(readiness.balance, false)
+  assert.equal(readiness.quit, false)
+  assert.equal(readiness.weather, true)
+  assert.equal(readiness.quietStart, true)
+})
+
+test('normalizePetSettings 支持 doubleClick / autoStart', () => {
+  const good = normalizePetSettings({ doubleClick: 'weather', autoStart: true })
+  assert.equal(good.error, undefined)
+  assert.equal(good.value.doubleClick, 'weather')
+  assert.equal(good.value.autoStart, true)
+  for (const bad of [{ doubleClick: 'dance' }, { autoStart: 'yes' }]) {
+    assert.ok(normalizePetSettings(bad).error, '应拒绝 ' + JSON.stringify(bad))
+  }
+})
+
+await testAsync('pet.action：未就绪动作返回 not-supported（balance）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa1', method: 'pet.action', payload: { name: 'balance' } } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'not-supported')
+  dispose()
+})
+
+await testAsync('pet.action：已就绪动作在管道不可用时返回 pipe-unavailable', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa2', method: 'pet.action', payload: { name: 'weather' } } }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'pipe-unavailable')
+  dispose()
+})
+
+await testAsync('pet.action：未知动作 invalid-argument', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa3', method: 'pet.action', payload: { name: 'explode' } } }),
+    makeRes(),
+  )
+  assert.equal(JSON.parse(res.body).result.error.code, 'invalid-argument')
+  dispose()
+})
+
+await testAsync('state.get 含 capabilities 与 petOptions（皮肤/双击/自启）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-caps', method: 'state.get' } }), makeRes())
+  const data = JSON.parse(res.body).result.data
+  assert.ok(Array.isArray(data.capabilities.petActions))
+  assert.equal(data.capabilities.petActionReadiness.weather, true)
+  assert.equal(typeof data.capabilities.doubleClick, 'boolean')
+  assert.ok(Array.isArray(data.petOptions.skins) && data.petOptions.skins.includes('大肥鱼'))
+  assert.ok(Array.isArray(data.petOptions.doubleClickOptions))
+  assert.equal(typeof data.petOptions.autoStart, 'boolean')
+  dispose()
+})
+
+await testAsync('config.set pet.doubleClick/autoStart 写入 ui-config.pet（pending）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/config.set',
+      body: { rpcId: 'r-dc', method: 'config.set', payload: { pet: { doubleClick: 'music', autoStart: true } } },
+    }),
+    makeRes(),
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  const saved = JSON.parse(fs.readFileSync(tmpCfg.uiConfigFile, 'utf8'))
+  assert.equal(saved.pet.doubleClick, 'music')
+  assert.equal(saved.pet.autoStart, true)
+  assert.ok(result.data.applied.petPendingFields.includes('doubleClick'))
+  dispose()
+})
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────
 console.log('\n[4] client bundle 契约')
 

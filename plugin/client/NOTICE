@@ -1,0 +1,40 @@
+# NOTICE — dsh-pet-bridge-ui
+
+本包（DSH Web 设置面板「大肥鱼联动」，下称“本作品”）由本仓库维护者提供，
+以 MIT 许可证发布（见 `package.json` 的 `license` 字段）。
+
+本作品是一个**桥接/管理界面**，不包含也不重新分发下列第三方作品，但运行时会与其交互；
+分发整个「大肥鱼桌宠 × DSH 联动」发行包时，请一并保留以下声明：
+
+## 1. 上游桌宠（大肥鱼桌宠）
+
+- 运行时依赖的桌宠程序 `桌宠.py` / `ui_console.py` / `assets` / `sprites` 来自上游项目的 fork
+  （见仓库根目录 `FORK.md`、`LICENSE` 与 git 历史中的 `upstream` tag）。
+- 上游项目以其原始许可证发布（本 fork 保留上游 `LICENSE` 与版权声明）。
+- 本作品不修改上游美术素材；桌宠形象/立绘/图标版权归原作者所有。
+
+## 2. PySide6 / Qt（LGPL）
+
+- 桌宠运行时（Python 侧）依赖 PySide6（Qt for Python），其许可为 **LGPL-3.0**（部分组件为 GPL）。
+- PySide6 以独立依赖安装（`requirements.txt`），不并入本仓库源码；
+  分发二进制/打包发行版时须遵守 LGPL 的动态链接与源码提供义务（Qt 源码可获取性说明）。
+
+## 3. DeepSeek Harness（DSH）插件机制
+
+- 本作品作为 DSH client/host 插件运行，通过 DSH 公开的插件接口
+  （`dsh.client` 声明、`ctx.slots` 设置页插槽、`webServer.register` 命名路由、官方 wire 协议）实现。
+- DSH 本体（`@deepseek-ai/dsh` 等）不随本仓库分发，其许可证以上游发布为准。
+
+## 4. 字体 / 图标 / 音效等素材
+
+- 仓库 `assets/`、`sprites/` 下的美术资源随上游桌宠项目提供，版权归原作者；
+- 用户自行添加的皮肤、音效、台词库不进入本仓库（见 `.gitignore` 的 `backup/`、`evidence/` 等）。
+
+## 5. 其它
+
+- 本作品不包含任何 API Key、用户数据或对话内容；运行时 sidecar（`ui-config.json`、`state.json`、
+  `ui-action.json`、日志）只存在于用户本机的 `pet-work/` 运行时目录，且已被 git 忽略。
+- 若再分发本作品，请保留本 `NOTICE` 与上游 `LICENSE`。
+
+---
+维护：DSH 大肥鱼联动项目 · 最后更新：2026-10-23

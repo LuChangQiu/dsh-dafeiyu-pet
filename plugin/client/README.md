@@ -50,7 +50,7 @@ DSH 0.2.x 的 client-connection 自身 inject 收缩为 `['credentials']`，其 
 
 ## 安装 / 接线
 
-前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `%USERPROFILE%\.dsh\profiles\web`，
+前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `C:\Users\xiqi\.dsh\profiles\web`，
 且 profile `package.json` 的 `dsh.profile.patchReload` 为 `live`（热组合，无需重启 host）。
 
 ```powershell
@@ -78,12 +78,12 @@ install.ps1 做的事（全部可回滚）：
       name: 'dsh-pet-bridge-ui'
       config:
         channel: '/pet-bridge-ui'
-        logFile: '%PET_WORK%\evidence\pet-bridge-main.log'
-        activityFile: '%PET_WORK%\activity.txt'
-        stateFile: '%PET_WORK%\state.json'
-        uiConfigFile: '%PET_WORK%\ui-config.json'
-        evidenceDir: '%PET_WORK%\evidence'
-        heartbeatFile: '%PET_WORK%\evidence\ui-route-mounted.json'
+        logFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
+        activityFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\activity.txt'
+        stateFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\state.json'
+        uiConfigFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\ui-config.json'
+        evidenceDir: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence'
+        heartbeatFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
         defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
@@ -191,10 +191,10 @@ curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "content-type: application/jso
   --data '{\"rpcId\":\"p\",\"method\":\"ping\"}' http://127.0.0.1:3080/pet-bridge-ui/ping
 
 # 激活心跳（安装脚本用它判定插件加载成功）
-Get-Content '%PET_WORK%\evidence\ui-route-mounted.json'
+Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
 
 # 联动插件日志（会显示 ui-config applied / activity preset）
-Get-Content '%PET_WORK%\evidence\pet-bridge-main.log' -Tail 20
+Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log' -Tail 20
 ```
 
 ## 已知限制
@@ -244,7 +244,7 @@ Get-Content '%PET_WORK%\evidence\pet-bridge-main.log' -Tail 20
   - 结束时 ui-config.json 逐字节恢复原样 ✅
 - 安装/回滚演练：`rollback.ps1` → 心跳消失 / 路由 405 / 包不存在；`install.ps1` → 心跳恢复 / 路由 401 / host 存活 ✅（详见 `deliverables/PLUGIN-UI.md`）
 
-## 仓库位置（产品仓 `dsh-dafeiyu-pet`，`main`；桌宠源码在 `pet/`）
+## 仓库位置（交付仓库 `大肥鱼桌宠-fork`，分支 `custom/dsh-linkage`）
 
 本包在 repo 中的路径：**`plugin/dsh-pet-bridge-ui/`**（与 `install/install.ps1` 的 `$p2` 一致）。
 `install/cordis.patch.template.yml` 由 tech-scout 维护、已含本插件 insert 块；**不要手写覆盖 patch**。
@@ -264,4 +264,14 @@ node test/make-fixture.mjs <out>    # 生成 harness 数据快照
 - **`ui-action` 已修复**：本面板排队的 `start-pet`/`stop-pet` 均被联动插件消费并 `status=done`（日志 `ui-action handled {... "status":"done"}`，`state.lastAction` 回显），**「重启桌宠」按钮可用**。
 - 联动 v0.17.0 / 桌宠 patch-v17；`ui-config.pet`、`ui-config.bubble`、`state.json`（version/petVersion/petSettings/bubble/attribution/lastAction）全部正常。
 - 测试隔离修复：`test/smoke.mjs` 的临时配置显式覆盖 `actionFile/petConfigFile/heartbeatFile`，跑测试不再触碰生产 sidecar。
+## task-36/40 补全（2026-10-23）
 
+面板现为原生菜单移除后的**唯一控制台**，新增：
+- **快捷查看**：查看余额（v19 `cmd:balance`）/ 查看天气 / 在看什么 / 今日汇总 / 显示 / 隐藏 / 回到屏幕内 / 救急恢复；
+- **免打扰快捷**：立即免打扰（N 分钟）/ 结束免打扰（`cmd:quiet`）；
+- **双击行为**：余额 / 天气 / 音乐 / 台词（`ui-config.pet.doubleClick` → v19 `cmd:config.doubleClick`）；
+- **皮肤选择**（下拉）、**静默时长**、**开机自启**（待 v20 `ui-action`）、**退出桌宠**（待 v20 `quit-pet`，与「停止联动」语义区分）；
+- Endpoint 新增：`pet.action`（`{name: balance|weather|music|summary|show|hide|snapInto|recover|quietStart|quietEnd|quit}`，`quietStart` 带 `minutes`）；
+- `state.get` 新增：`capabilities{petActions,petActionReadiness,doubleClick,autoStart,quit}`、`petOptions{skins,doubleClick,doubleClickOptions,autoStart}`；
+- 打包：`license: MIT` + `NOTICE`；`scripts/*.ps1` 全部 UTF-8 **with BOM**（PS5.1 可解析，`-DryRun` 自检通过）。
+- 验证：`node test/smoke.mjs`（31/31）、`node test/e2e-actions.mjs`（真实桌宠 9 动作 ok）。

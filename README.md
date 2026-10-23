@@ -40,7 +40,7 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 
 ## 发行包（免 Python，可选）
 - 打包：`scripts\pet-build-release.ps1 -Version 1.1.5-dsh.1` → `dafeiyu-pet-win64-<ver>.zip` + `.sha256`。
-- 分发：优先 GitHub Release；未上传时可直接发 zip（解压即用；单实例互斥会与运行中的桌宠二选一）。
+- 分发：优先 GitHub Release（https://github.com/LuChangQiu/dsh-dafeiyu-pet/releases/tag/pet-v1.1.5-dsh.1）；未上传时可直接发 zip（解压即用；单实例互斥会与运行中的桌宠二选一）。
 - 当前 zip：`dafeiyu-pet-win64-1.1.5-dsh.1.zip`，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`。
 
 ## 上游更新
@@ -48,3 +48,4 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 
 ## License
 MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游素材声明见 `NOTICE`。
+

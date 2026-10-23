@@ -86,6 +86,7 @@ const DEFAULTS = {
   attribution: { enabled: true, onlyActive: true, activeTtlMs: 1800000, bootstrapLastKnown: true, stateFile: '' },
   lifecycle: { autoStart: true, startScript: '', bootstrapScript: '', releaseZipUrl: '', bootstrapStateFile: '' },
   uiActionFile: '',
+  petConfigFile: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   bubble: {
@@ -158,7 +159,7 @@ function blocksToText(content) {
 
 function clip(s, n) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n) }
 
-export const name = 'dsh-pet-bridge-v19'
+export const name = 'dsh-pet-bridge-v25'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -177,7 +178,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v19] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v25] ' + line)
     } catch {}
   }
   const safe = (v) => { try { return JSON.stringify(v) } catch { return String(v) } }
@@ -467,7 +468,7 @@ export function apply(ctx, rawConfig) {
               const boot = cfg.lifecycle.bootstrapScript || cfg.lifecycle.startScript
               const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', boot]
               if (cfg.lifecycle.releaseZipUrl) args.push('-ReleaseUrl', cfg.lifecycle.releaseZipUrl)
-              cp.spawn('powershell.exe', args, { detached: true, stdio: 'ignore' }).unref()
+              const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] }); ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message))); ch.on('exit', (code) => log('info', 'spawn exit', { code })); ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300))); ch.unref()
               log('info', 'bootstrap pet spawned', { script: boot, release: !!cfg.lifecycle.releaseZipUrl })
             } catch (e) { log('warn', 'bootstrap spawn failed', String(e && e.message)) }
           }
@@ -512,11 +513,27 @@ export function apply(ctx, rawConfig) {
       log('info', 'pet settings pushed', out)
     }
   }
+  const runPsFile = (tag, content) => {
+    try {
+      const cp = require('node:child_process')
+      const dir = cfg.lifecycle.bootstrapStateFile ? path.dirname(cfg.lifecycle.bootstrapStateFile) : path.join(process.env.USERPROFILE || '.', 'pet-work')
+      const logs = path.join(dir, 'logs')
+      try { fs.mkdirSync(logs, { recursive: true }) } catch {}
+      const file = path.join(logs, 'ui-action-' + String(tag).replace(/[^A-Za-z0-9._-]/g, '_') + '.ps1')
+      fs.writeFileSync(file, '\ufeff' + content, 'utf8')
+      const ch = cp.spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], { detached: true, stdio: ['ignore', 'ignore', 'pipe'] })
+      ch.on('error', (e) => log('warn', 'ui-action spawn error', String(e && e.message)))
+      ch.on('exit', (code) => log('info', 'ui-action ps exit', { tag, code }))
+      if (ch.stderr) ch.stderr.on('data', (b) => log('warn', 'ui-action ps stderr', String(b).slice(0, 300)))
+      ch.unref()
+      log('info', 'ui-action ps started', { tag, file })
+    } catch (e) { log('warn', 'runPsFile failed', String(e && e.message)) }
+  }
   const spawnScript = (extraArg) => {
     const cp = require('node:child_process')
     const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', cfg.lifecycle.startScript]
     if (extraArg) args.push(extraArg)
-    try { cp.spawn('powershell.exe', args, { detached: true, stdio: 'ignore' }).unref() } catch {}
+    try { const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] }); ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message))); ch.on('exit', (code) => log('info', 'spawn exit', { code })); ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300))); ch.unref() } catch {}
   }
   const consumeUiAction = () => {
     if (!cfg.uiActionFile) return
@@ -524,14 +541,27 @@ export function apply(ctx, rawConfig) {
       const raw = fs.readFileSync(cfg.uiActionFile, 'utf8')
       const j = JSON.parse(raw)
       if (!j || !j.name || j.handledAt) return
+      const aid = String(j.id || '')
       let status = 'done', message = ''
       try {
-        if (j.name === 'restart-pet') spawnScript('-Restart')
-        else if (j.name === 'start-pet') spawnScript()
-        else if (j.name === 'stop-pet') {
-          const cp = require('node:child_process')
-          const ps = "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | Where-Object { $_.CommandLine -like '*桌宠.py*' -and $_.CommandLine -like '*pet-work*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-          cp.spawn('powershell.exe', ['-NoProfile', '-Command', ps], { detached: true, stdio: 'ignore' }).unref()
+        if (j.name === 'restart-pet') {
+          send('cmd:restart')
+        } else if (j.name === 'start-pet') {
+          spawnScript()
+        } else if (j.name === 'quit-pet' || j.name === 'stop-pet') {
+          send('cmd:exit')
+        } else if (j.name === 'enable-autostart' || j.name === 'disable-autostart') {
+          const startup = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+          const cmdFile = path.join(startup, '大肥鱼桌宠.cmd')
+          const sp = cfg.lifecycle.startScript || ''
+          if (j.name === 'enable-autostart') {
+            try {
+              fs.mkdirSync(startup, { recursive: true })
+              fs.writeFileSync(cmdFile, '@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + sp + '"\r\n', 'utf8')
+            } catch (e) { status = 'failed'; message = String(e && e.message) }
+          } else {
+            try { fs.unlinkSync(cmdFile) } catch {}
+          }
         } else { status = 'failed'; message = 'unsupported action' }
       } catch (e) { status = 'failed'; message = String(e && e.message) }
       lastAction = { id: String(j.id || ''), name: j.name, status, at: new Date().toISOString(), message }
@@ -561,13 +591,14 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.19.0',
-        petVersion: 'v1.1.5+patch-v19',
+        version: '0.25.0',
+        petVersion: 'v1.1.5+patch-v25',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
         attribution: { active: activeSessionId ? String(activeSessionId).slice(0, 16) : null, bootstrapped: attributionBootstrapped },
-        capabilities: { petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'], doubleClick: true, skin: true, quiet: true },
+        skins: (() => { try { const pc = JSON.parse(fs.readFileSync(cfg.petConfigFile, 'utf8')); return { current: pc.skin || '大肥鱼', available: ['大肥鱼'] } } catch { return { current: '大肥鱼', available: ['大肥鱼'] } } })(),
+        capabilities: { petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'], doubleClick: true, skin: true, quiet: true, quit: true, autoStart: true },
         bootstrap: (() => { try { return JSON.parse(fs.readFileSync(cfg.lifecycle.bootstrapStateFile, 'utf8')) } catch { return null } })(),
         logsRecent: [],
       }
@@ -1092,7 +1123,7 @@ export function apply(ctx, rawConfig) {
         if (raw === lastRaw) return
         lastRaw = raw
         const spec = JSON.parse(raw)
-        log('info', 'TESTHOOK event', spec)
+        log('info', 'TEST HOOK event', spec)
         if (spec.type === 'approval') {
           stats.approvals += 1
           if (cfg.walkOnApproval) send('walk:center')
@@ -1114,13 +1145,13 @@ export function apply(ctx, rawConfig) {
         }
       } catch {}
     }, 1500)
-    log('warn', 'TESTHOOK enabled (test-only)', { file: cfg.testHookFile })
+    log('warn', 'TEST HOOK enabled (test-only)', { file: cfg.testHookFile })
   }
 
   const dispose = () => { try { clearInterval(timer) } catch {}; try { clearInterval(bubbleTimer) } catch {}; try { if (hookTimer) clearInterval(hookTimer) } catch {}; sessions.clear() }
   try { if (typeof ctx.effect === 'function') ctx.effect(() => dispose); else ctx.on('dispose', dispose) } catch {}
 
-  log('info', 'loaded v19', {
+  log('info', 'loaded v25', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
@@ -1145,4 +1176,3 @@ export function apply(ctx, rawConfig) {
     logLevel: cfg.logLevel,
   })
 }
-

@@ -1,6 +1,6 @@
 {
-  "name": "dsh-pet-bridge-v19",
-  "version": "0.19.0",
+  "name": "dsh-pet-bridge-v25",
+  "version": "0.25.0",
   "private": true,
   "description": "P3: DSH session events -> dafeiyu pet protocol v2 (say/act/cmd/walk/peek/mute), P0 lines pool, receipts, rituals.",
   "type": "module",

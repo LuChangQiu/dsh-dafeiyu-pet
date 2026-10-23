@@ -1,8 +1,9 @@
 {
   "name": "dsh-pet-bridge-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "大肥鱼 × DSH 联动 — 管理界面（Web 设置面板）：运行状态 / 活跃度三档 / 总开关 / 免打扰 / 每日预算 / 最近 say / 测试按钮",
+  "license": "MIT",
+  "description": "大肥鱼 × DSH 联动 — 管理界面（Web 设置面板 · 唯一控制台）：运行状态 / 活跃度三档 / 总开关 / 免打扰 / 每日预算 / 桌宠外观与行为 / 快捷查看（余额/天气/音乐/汇总/显示隐藏/回屏内/救急）/ 双击行为 / 皮肤 / 应急控制 / 日志 / 测试",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -21,7 +22,8 @@
   },
   "files": [
     "lib",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=22.19"

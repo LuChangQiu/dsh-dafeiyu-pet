@@ -28,11 +28,43 @@ import { mountWebRoute } from './web-route.js'
 
 const runFile = promisify(execFile)
 const STARTED_AT = Date.now()
-const PLUGIN_VERSION = '0.1.0'
+const PLUGIN_VERSION = '0.2.0'
 
 export const name = 'dsh-pet-bridge-ui'
 
 const PET_ROOT = 'E:\\project\\AI提效\\tool\\pet-integration-src\\pet-work'
+
+/** task-36：快捷查看按钮 → 桌宠协议命令（余额待桌宠补丁支持）。 */
+const PET_ACTION_CMDS = {
+  balance: 'cmd:balance',
+  weather: 'cmd:weather',
+  music: 'cmd:music',
+  summary: 'cmd:summary',
+  show: 'cmd:show',
+  hide: 'cmd:hide',
+  snapInto: 'cmd:snap_into_screen',
+  recover: 'cmd:recover',
+  quietStart: 'cmd:quiet',   // 需要分钟数：实际下发 cmd:quiet:<minutes>
+  quietEnd: 'cmd:quiet:off',
+  quit: 'cmd:quit',          // 待桌宠补丁支持
+}
+
+/** 协议就绪度（false = 面板显示「待服务端」禁用；可由插件 config.petActionReadiness 覆盖）。 */
+const DEFAULT_PET_ACTION_READINESS = {
+  balance: false,
+  weather: true,
+  music: true,
+  summary: true,
+  show: true,
+  hide: true,
+  snapInto: true,
+  recover: true,
+  quietStart: true,
+  quietEnd: true,
+  quit: false,
+  doubleClick: false,
+  autoStart: false,
+}
 
 const DEFAULTS = {
   channel: '/pet-bridge-ui',
@@ -54,6 +86,8 @@ const DEFAULTS = {
   processProbeTtlMs: 15000,
   stateFileTtlMs: 60000,
   pipeProbeTimeoutMs: 700,
+  /** 快捷动作协议就绪度（可由 patch config 覆盖；balance 等 tech-scout 加 cmd:balance 后设 true）。 */
+  petActionReadiness: DEFAULT_PET_ACTION_READINESS,
   /** 「恢复默认配置」时写回的桌宠设置默认值（来源：task-32 映射表 §D；size 按 v15 用户偏好 0.36）。 */
   petDefaults: {
     size: 0.36,
@@ -73,6 +107,8 @@ const DEFAULTS = {
     city: '汕头',
     quietMinutes: 30,
     bubbleMs: 5000,
+    doubleClick: 'balance',
+    autoStart: false,
   },
 }
 
@@ -82,10 +118,12 @@ const MODE_LEVELS = ['wander', 'follow', 'still']
 const LINE_FREQ_LEVELS = ['安静', '正常', '话多', '话痨']
 const LAYER_LEVELS = ['top', 'bottom', 'normal']
 const BUBBLE_STYLE_LEVELS = ['auto', 'light', 'dark']
-/** cmd:config 批量下发的 pet 字段白名单（task-32 映射表 §C）。 */
+const DOUBLE_CLICK_LEVELS = ['balance', 'weather', 'music', 'lines']
+/** cmd:config 批量下发的 pet 字段白名单（task-32 映射表 §C + task-36 doubleClick）。 */
 const PET_CONFIG_FIELDS = [
   'size', 'opacity', 'mode', 'lineFreq', 'bubbleStyle', 'passthrough', 'locked',
   'topmost', 'snap', 'layer', 'skin', 'soundOn', 'volume', 'musicLink', 'city', 'quietMinutes',
+  'doubleClick',
 ]
 
 // ────────────────────────────── 小工具 ──────────────────────────────
@@ -286,7 +324,26 @@ function readPetConfig(file) {
     locked: typeof raw.locked === 'boolean' ? raw.locked : null,
     topmost: typeof raw.topmost === 'boolean' ? raw.topmost : null,
     snap: typeof raw.snap_on === 'boolean' ? raw.snap_on : null,
+    doubleClick: DOUBLE_CLICK_LEVELS.includes(raw.double_click) ? raw.double_click : null,
+    autoStart: typeof raw.autostart === 'boolean' ? raw.autostart : null,
   }
+}
+
+/** 读桌宠形象库（config.json → skin_library）：返回可用形象名列表（内置 + 库）。 */
+function readSkinOptions(file) {
+  const builtin = ['大肥鱼', '小鲸鱼挂件']
+  const raw = readJson(file, null)
+  const out = [...builtin]
+  if (isObject(raw) && isObject(raw.skin_library)) {
+    for (const kind of ['pet', 'widget']) {
+      const list = Array.isArray(raw.skin_library[kind]) ? raw.skin_library[kind] : []
+      for (const item of list) {
+        const name = item && typeof item.name === 'string' ? item.name.trim() : ''
+        if (name && !out.includes(name)) out.push(name)
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -361,7 +418,13 @@ export function normalizePetSettings(input, base = {}) {
     if (s.length > 20) return { error: '城市名过长（≤20 字）' }
     out.city = s
   }
-  for (const key of ['musicLink', 'soundOn', 'passthrough', 'locked', 'topmost', 'snap']) {
+  if (input.doubleClick !== undefined) {
+    if (!DOUBLE_CLICK_LEVELS.includes(input.doubleClick)) {
+      return { error: `双击行为只能是 ${DOUBLE_CLICK_LEVELS.join(' / ')}` }
+    }
+    out.doubleClick = input.doubleClick
+  }
+  for (const key of ['musicLink', 'soundOn', 'passthrough', 'locked', 'topmost', 'snap', 'autoStart']) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== 'boolean') return { error: `${key} 必须是布尔值` }
       out[key] = input[key]
@@ -398,6 +461,8 @@ function resolvePetSettings({ stateFile, savedPet, petConfig, defaults }) {
     musicLink: pick('musicLink', defaults.musicLink),
     city: pick('city', defaults.city),
     quietMinutes: pick('quietMinutes', defaults.quietMinutes),
+    doubleClick: pick('doubleClick', defaults.doubleClick),
+    autoStart: pick('autoStart', defaults.autoStart),
     bubbleMs: pick('bubbleMs', defaults.bubbleMs),
   }
 }
@@ -416,10 +481,12 @@ function buildBubbleConfig(bubbleMs) {
 
 /**
  * 各 pet 设置项的通道：cmd:config 批量下发即时生效（task-32 §C）；
- * bubbleMs 属插件侧气泡参数（say3/normalMs），由联动插件应用。
+ * bubbleMs 属插件侧气泡参数（say3/normalMs）；doubleClick 待桌宠补丁把
+ * `doubleClick` 加进 cmd:config 白名单（task-36 已与 tech-scout 约定）。
  */
 const PET_FIELD_CHANNEL = Object.fromEntries(
-  PET_CONFIG_FIELDS.map((key) => [key, 'immediate']).concat([['bubbleMs', 'pending-plugin']]),
+  PET_CONFIG_FIELDS.map((key) => [key, 'immediate'])
+    .concat([['bubbleMs', 'pending-plugin'], ['doubleClick', 'pending-plugin'], ['autoStart', 'pending-plugin']]),
 )
 
 // ────────────────────────────── 在线探测 ──────────────────────────────
@@ -490,6 +557,54 @@ export function sendPipeLine(pipe, line, timeoutMs = 900) {
       })
     })
     sock.on('error', (err) => finish(false, wrote ? null : (err?.code ?? String(err))))
+  })
+}
+
+/**
+ * 往命名管道发一条命令并读回执（桌宠会回 `cmd:<name>` / `unknowncmd:<name>` / `-fail`）。
+ * 用于 task-36 的快捷查看按钮：既能执行，也能据回执判断协议是否就绪。
+ */
+export function sendPipeCommand(pipe, line, timeoutMs = 1800) {
+  return new Promise((resolve) => {
+    const payload = `${line}\n`
+    const chunks = []
+    let settled = false
+    let wrote = false
+    let connected = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      try {
+        sock.destroy()
+      } catch {
+        /* ignore */
+      }
+      // 桌宠对部分 cmd 可能不回包就关连接（EPIPE/无 data）——只要连上且写成功就视为已执行，
+      // 回执仅用于识别 unknowncmd / -fail（见 petAction）。
+      resolve({
+        ok: connected && wrote,
+        reply: chunks.join('').replace(/\s+/g, ' ').trim(),
+        error: error ?? null,
+      })
+    }
+    const sock = net.connect(pipe)
+    sock.setTimeout(timeoutMs, () => finish('timeout'))
+    sock.on('data', (b) => chunks.push(String(b)))
+    sock.on('connect', () => {
+      connected = true
+      sock.write(payload, (err) => {
+        if (err) {
+          finish(err?.code ?? String(err))
+          return
+        }
+        wrote = true
+        // 写完半关闭：桌宠回包后连接会自然结束；无回包的实现也能尽早 settle
+        setTimeout(() => finish(null), 260)
+      })
+    })
+    sock.on('end', () => finish(null))
+    sock.on('close', () => finish(null))
+    sock.on('error', (err) => finish(err?.code ?? String(err)))
   })
 }
 
@@ -626,6 +741,27 @@ function buildHandler(cfg, log) {
     }
   }
 
+  /** 协议就绪度：默认值 + patch 覆盖 + 联动插件 state.json.capabilities（最新）。 */
+  function effectiveReadiness() {
+    const readiness = {
+      ...DEFAULT_PET_ACTION_READINESS,
+      ...(isObject(cfg.petActionReadiness) ? cfg.petActionReadiness : {}),
+    }
+    const stateFile = loadStateFile()
+    if (isObject(stateFile?.capabilities)) {
+      const caps = stateFile.capabilities
+      if (Array.isArray(caps.petActions)) {
+        for (const key of Object.keys(readiness)) {
+          if (caps.petActions.includes(key)) readiness[key] = true
+        }
+      }
+      for (const key of ['doubleClick', 'autoStart', 'quit']) {
+        if (typeof caps[key] === 'boolean') readiness[key] = caps[key]
+      }
+    }
+    return readiness
+  }
+
   async function collectState() {
     const [pipeProbe, processInfo] = await Promise.all([
       probePipe(cfg.pipe, cfg.pipeProbeTimeoutMs),
@@ -702,6 +838,10 @@ function buildHandler(cfg, log) {
     const bubble = isObject(stateFile?.bubble)
       ? stateFile.bubble
       : buildBubbleConfig(saved?.pet?.bubbleMs ?? cfg.petDefaults.bubbleMs)
+    const petActionReadiness = effectiveReadiness()
+    const skins = Array.isArray(stateFile?.skins?.available) && stateFile.skins.available.length
+      ? stateFile.skins.available.map(String)
+      : readSkinOptions(cfg.petConfigFile)
 
     return {
       ok: true,
@@ -734,6 +874,19 @@ function buildHandler(cfg, log) {
         petSettingsChannels: PET_FIELD_CHANNEL,
         bubble,
         attribution: isObject(stateFile?.attribution) ? stateFile.attribution : null,
+        capabilities: {
+          petActions: Object.keys(PET_ACTION_CMDS).filter((k) => petActionReadiness[k] !== false),
+          petActionReadiness,
+          doubleClick: petActionReadiness.doubleClick !== false,
+          autoStart: petActionReadiness.autoStart !== false,
+          quit: petActionReadiness.quit !== false,
+        },
+        petOptions: {
+          skins,
+          doubleClick: petSettings.doubleClick,
+          doubleClickOptions: DOUBLE_CLICK_LEVELS,
+          autoStart: petSettings.autoStart,
+        },
         versions: {
           uiPlugin: PLUGIN_VERSION,
           bridgePlugin: typeof stateFile?.version === 'string' ? stateFile.version : null,
@@ -926,7 +1079,11 @@ function buildHandler(cfg, log) {
 
   /** 应急动作请求：写 ui-action.json，由联动插件 watcher 消费（结果写 state.json.lastAction）。 */
   function requestAction(payload) {
-    const SUPPORTED = ['restart-pet', 'start-pet', 'stop-pet']
+    const SUPPORTED = [
+      'restart-pet', 'start-pet', 'stop-pet',
+      // task-40：自启/退出语义（tech-scout v20 消费）
+      'enable-autostart', 'disable-autostart', 'quit-pet',
+    ]
     const name = String(payload?.name ?? '')
     if (!SUPPORTED.includes(name)) {
       return { ok: false, error: { code: 'invalid-argument', message: `不支持的动作：${name}（支持 ${SUPPORTED.join(' / ')}）` } }
@@ -958,6 +1115,46 @@ function buildHandler(cfg, log) {
         note: '联动插件 ≤20s 轮询消费；结果写入 state.json.lastAction（面板会显示）',
       },
     }
+  }
+
+  /**
+   * task-36 快捷查看：把协议命令发到桌宠并读回执。
+   * 回执 `cmd:<name>` = 成功；`unknowncmd:<name>` = 桌宠协议未支持（待服务端）；
+   * `<...>-fail` = 桌宠侧执行失败（如余额未配 Key）。
+   */
+  async function petAction(payload) {
+    const name = String(payload?.name ?? '').trim()
+    const minutes = Math.max(1, Math.min(240, Number(payload?.minutes) || 30))
+    // quietStart 需要分钟数；quit/autoStart 等由 readiness 控制
+    const line = name === 'quietStart' ? `cmd:quiet:${minutes}` : PET_ACTION_CMDS[name]
+    if (!line) {
+      return {
+        ok: false,
+        error: { code: 'invalid-argument', message: `未知动作：${name}（支持 ${Object.keys(PET_ACTION_CMDS).join(' / ')}）` },
+      }
+    }
+    const readiness = effectiveReadiness()
+    if (readiness[name] === false) {
+      return { ok: false, error: { code: 'not-supported', message: `桌宠协议尚未支持「${name}」（待服务端）` } }
+    }
+    const r = await sendPipeCommand(cfg.pipe, line)
+    const reply = String(r.reply ?? '')
+    if (!r.ok) {
+      return { ok: false, error: { code: 'pipe-unavailable', message: `管道不可写（${r.error ?? '未知原因'}）` } }
+    }
+    if (/^unknowncmd:/.test(reply)) {
+      log.info(`[pet-bridge-ui] pet.action ${name} not-supported reply=${clip(reply, 80)}`)
+      return {
+        ok: false,
+        error: { code: 'not-supported', message: `桌宠暂不支持该命令（${clip(reply, 80)}），待服务端升级` },
+      }
+    }
+    if (/-fail$/.test(reply)) {
+      log.info(`[pet-bridge-ui] pet.action ${name} failed reply=${clip(reply, 80)}`)
+      return { ok: false, error: { code: 'pet-error', message: `桌宠执行失败：${clip(reply, 120)}` } }
+    }
+    log.info(`[pet-bridge-ui] pet.action ${name} ok reply=${clip(reply, 80)}`)
+    return { ok: true, data: { name, cmd: line, reply } }
   }
 
   async function runTest(kind, payload) {
@@ -1001,6 +1198,8 @@ function buildHandler(cfg, log) {
         return readLogs(payload?.lines)
       case 'action.request':
         return requestAction(payload)
+      case 'pet.action':
+        return petAction(payload)
       case 'pet.nativeui': {
         // 应急：临时显示/隐藏桌宠原生菜单（v10 默认隐藏；task-32 §B 的应急通道）
         const on = payload?.on !== false
@@ -1112,10 +1311,14 @@ export const __test = {
   takeScreenshot,
   buildHandler,
   readPetConfig,
+  readSkinOptions,
   petSettingsToCmds,
   normalizePetSettings,
   resolvePetSettings,
   buildBubbleConfig,
+  sendPipeCommand,
+  PET_ACTION_CMDS,
+  DEFAULT_PET_ACTION_READINESS,
   PET_FIELD_CHANNEL,
   PET_CONFIG_FIELDS,
   DEFAULTS,
@@ -1124,4 +1327,5 @@ export const __test = {
   LINE_FREQ_LEVELS,
   LAYER_LEVELS,
   BUBBLE_STYLE_LEVELS,
+  DOUBLE_CLICK_LEVELS,
 }

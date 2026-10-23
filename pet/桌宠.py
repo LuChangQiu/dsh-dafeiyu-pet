@@ -3959,6 +3959,10 @@ class PetWindow(QWidget):
 
     # ---------- 配置 ----------
     def save_config(self):
+        try:
+            self.cfg.pop("ds_api_key", None)
+        except Exception:
+            pass
         """把当前配置写回 config.json。"""
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -10616,6 +10620,24 @@ def main():
                             _failed.append(_k)
                     print("联动桥 config:", _applied, _failed)
                     return "config:" + ",".join(_applied) + ("|fail:" + ",".join(_failed) if _failed else "")
+                elif name == "exit":
+                    try:
+                        QTimer.singleShot(0, QApplication.instance().quit)
+                    except Exception:
+                        pass
+                    return "exit"
+                elif name == "restart":
+                    try:
+                        _exe = sys.executable
+                        _script = os.path.abspath(__file__)
+                        subprocess.Popen([_exe, _script], cwd=os.path.dirname(_script), close_fds=True)
+                    except Exception:
+                        pass
+                    try:
+                        QTimer.singleShot(200, QApplication.instance().quit)
+                    except Exception:
+                        pass
+                    return "restart"
                 elif name == "nativeui":
                     on = _bridge_bool(val)
                     w._bridge_allow_native_ui = on

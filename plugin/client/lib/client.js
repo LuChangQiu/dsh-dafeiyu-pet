@@ -49,6 +49,23 @@ window.__ModuleLoader__.load({
       { value: 'light', label: '亮色' },
       { value: 'dark', label: '暗色' },
     ]
+    const DOUBLE_CLICK_META = [
+      { value: 'balance', label: '看一眼余额' },
+      { value: 'weather', label: '看一眼天气' },
+      { value: 'music', label: '看一眼在放什么' },
+      { value: 'lines', label: '说一句台词' },
+    ]
+    /** task-36 快捷查看按钮（对齐旧右键菜单项）。 */
+    const PET_ACTION_META = [
+      { name: 'balance', label: '查看余额', hint: '气泡 5 秒' },
+      { name: 'weather', label: '查看天气', hint: '当前城市' },
+      { name: 'music', label: '在看什么', hint: '当前播放' },
+      { name: 'summary', label: '今日汇总', hint: '小票最近 4 行' },
+      { name: 'show', label: '显示', hint: '叫出来' },
+      { name: 'hide', label: '隐藏', hint: '收起来' },
+      { name: 'snapInto', label: '回到屏幕内', hint: '防跑出屏幕' },
+      { name: 'recover', label: '救急恢复', hint: '回屏内+显示+置前' },
+    ]
     const KIND_LABEL = {
       turnStart: '开工',
       turnEnd: '收工',
@@ -64,6 +81,9 @@ window.__ModuleLoader__.load({
       'restart-pet': '重启桌宠',
       'start-pet': '启动桌宠',
       'stop-pet': '停止桌宠',
+      'enable-autostart': '开启开机自启',
+      'disable-autostart': '关闭开机自启',
+      'quit-pet': '退出桌宠',
     }
     const PENDING_LABEL = {
       enabled: '总开关',
@@ -81,6 +101,7 @@ window.__ModuleLoader__.load({
       'pet.snap': '贴边吸附',
       'pet.volume': '音量',
       'pet.quietMinutes': '静音时长',
+      'pet.doubleClick': '双击行为',
     }
 
     const S = {
@@ -320,7 +341,7 @@ window.__ModuleLoader__.load({
             activity: 'normal',
             quietHours: '23:30-08:00',
             budgetPerDayYuan: '1.0',
-            size: 0.72,
+            size: 0.36,
             opacity: 1.0,
             mode: 'wander',
             lineFreq: '正常',
@@ -337,6 +358,8 @@ window.__ModuleLoader__.load({
             city: '',
             musicLink: true,
             soundOn: true,
+            doubleClick: 'balance',
+            autoStart: false,
           }
         }
 
@@ -350,7 +373,7 @@ window.__ModuleLoader__.load({
             quietHours: Array.isArray(cfg.quietHours) ? cfg.quietHours.join(', ') : '23:30-08:00',
             budgetPerDayYuan: String(typeof cfg.budgetPerDayYuan === 'number' ? cfg.budgetPerDayYuan
               : (cfg.llm && typeof cfg.llm.budgetPerDayYuan === 'number' ? cfg.llm.budgetPerDayYuan : 1.0)),
-            size: typeof pet.size === 'number' ? pet.size : 0.72,
+            size: typeof pet.size === 'number' ? pet.size : 0.36,
             opacity: typeof pet.opacity === 'number' ? pet.opacity : 1.0,
             mode: MODE_META.some((m) => m.value === pet.mode) ? pet.mode : 'wander',
             lineFreq: LINE_FREQ_META.some((m) => m.value === pet.lineFreq) ? pet.lineFreq : '正常',
@@ -367,6 +390,11 @@ window.__ModuleLoader__.load({
             city: typeof pet.city === 'string' ? pet.city : '',
             musicLink: typeof pet.musicLink === 'boolean' ? pet.musicLink : true,
             soundOn: typeof pet.soundOn === 'boolean' ? pet.soundOn : true,
+            doubleClick: DOUBLE_CLICK_META.some((m) => m.value === (data.petOptions && data.petOptions.doubleClick || pet.doubleClick))
+              ? (data.petOptions && data.petOptions.doubleClick) || pet.doubleClick
+              : 'balance',
+            autoStart: typeof pet.autoStart === 'boolean' ? pet.autoStart
+              : (data.petOptions && typeof data.petOptions.autoStart === 'boolean' ? data.petOptions.autoStart : false),
           })
         }
 
@@ -428,8 +456,19 @@ window.__ModuleLoader__.load({
                 city: form.city,
                 musicLink: form.musicLink,
                 soundOn: form.soundOn,
+                doubleClick: form.doubleClick,
+                autoStart: form.autoStart,
               },
             })
+            // 开机自启：服务端就绪后改走 ui-action（v20：enable/disable-autostart）
+            try {
+              if (actionReady('autoStart') && petOptions && typeof petOptions.autoStart === 'boolean'
+                && form.autoStart !== petOptions.autoStart) {
+                await call('action.request', { name: form.autoStart ? 'enable-autostart' : 'disable-autostart' })
+              }
+            } catch (autoStartError) {
+              // 自启队列失败不回滚已保存配置（面板会显示 pending）
+            }
             dirtyRef.current = false
             setMsg({ kind: 'ok', text: '已保存 · ' + (data.note || '') })
             if (data.state) {
@@ -443,8 +482,7 @@ window.__ModuleLoader__.load({
           }
         }
 
-        const runTest = async (kind) => {
-          setBusy('test:' + kind)
+        const runTest = async (kind) => {          setBusy('test:' + kind)
           setMsg(null)
           if (kind !== 'screenshot') setShot(null)
           try {
@@ -467,8 +505,7 @@ window.__ModuleLoader__.load({
           }
         }
 
-        const loadLogs = async () => {
-          if (logs) {
+        const loadLogs = async () => {          if (logs) {
             setLogs(null)
             return
           }
@@ -478,6 +515,22 @@ window.__ModuleLoader__.load({
             setLogs(data)
           } catch (error) {
             setMsg({ kind: 'err', text: '读取日志失败：' + error.message })
+          } finally {
+            setBusy('')
+          }
+        }
+
+        /** task-36 快捷查看/免打扰即时动作：走 pet.action（管道命令 + 回执）。 */
+        const runPetAction = async (name, extra) => {
+          setBusy('pet:' + name)
+          setMsg(null)
+          try {
+            const data = await call('pet.action', Object.assign({ name }, extra || {}))
+            const label = (PET_ACTION_META.find((a) => a.name === name) || {}).label || name
+            const reply = data && data.reply ? '（' + data.reply + '）' : ''
+            setMsg({ kind: 'ok', text: '已执行：' + label + reply })
+          } catch (error) {
+            setMsg({ kind: 'err', text: '执行失败：' + error.message })
           } finally {
             setBusy('')
           }
@@ -530,7 +583,7 @@ window.__ModuleLoader__.load({
 
         const resetDefaults = async () => {
           const ok = typeof window !== 'undefined' && typeof window.confirm === 'function'
-            ? window.confirm('恢复面板默认配置？\n将重置：总开关=开、活跃度=正常、免打扰=23:30-08:00、预算=¥1.0、\n大小=中档0.72×、透明度=100%、模式=散步、语录频率=正常、气泡=5s、\n置顶/贴边=开、层级=置顶、气泡风格=自动、皮肤=大肥鱼、音效=开、音量=90%、\n音乐联动=开、城市=汕头、静音=30min、穿透/锁定=关。')
+            ? window.confirm('恢复面板默认配置？\n将重置：总开关=开、活跃度=正常、免打扰=23:30-08:00、预算=¥1.0、\n大小=特小0.36×、透明度=100%、模式=散步、语录频率=正常、气泡=5s、\n置顶/贴边=开、层级=置顶、气泡风格=自动、皮肤=大肥鱼、音效=开、音量=90%、\n音乐联动=开、城市=汕头、静音=30min、双击=看余额、自启=关、穿透/锁定=关。')
             : true
           if (!ok) return
           setBusy('reset')
@@ -559,7 +612,9 @@ window.__ModuleLoader__.load({
             h('p', { style: S.hint }, '正在读取联动状态…'))
         }
 
-        const { host, pet, pipe, config, today, quiet, recentSay, saved, pending, petSettings, versions, lastAction, files, bubble } = state
+        const { host, pet, pipe, config, today, quiet, recentSay, saved, pending, petSettings, versions, lastAction, files, bubble, capabilities, petOptions } = state
+        const caps = capabilities || {}
+        const actionReady = (name) => (caps.petActionReadiness ? caps.petActionReadiness[name] !== false : true)
         const petLabel = pet.online ? (pipe.online ? '在线' : '进程在 / 管道未响应') : '未找到'
         const petDetail = pipe.online
           ? '管道可用 · ' + (pipe.latencyMs != null ? pipe.latencyMs + 'ms' : '')
@@ -606,6 +661,22 @@ window.__ModuleLoader__.load({
                 + (lastAction.message ? ' · ' + String(lastAction.message).slice(0, 120) : ''))
               : null),
 
+          // ── 快捷查看（task-36：对齐旧右键菜单项） ──
+          h(Card, { title: '快捷查看', right: h('span', { style: S.hint }, '点击即让桌宠响应（管道即时）') },
+            h('div', { style: S.row },
+              PET_ACTION_META.map((a) => {
+                const ready = a.name === 'quietStart' || a.name === 'quietEnd' ? true : actionReady(a.name)
+                return h('button', {
+                  key: a.name,
+                  type: 'button',
+                  title: a.hint + (ready ? '' : ' · 待服务端支持'),
+                  style: Object.assign({}, S.btn, S.btnPrimary, (!ready || busyNow) ? S.btnDisabled : null),
+                  disabled: busyNow || !ready,
+                  onClick: () => runPetAction(a.name),
+                }, busy === 'pet:' + a.name ? '执行中…' : a.label + (ready ? '' : '（待服务端）'))
+              })),
+            h('p', { style: S.hint }, '余额/天气/在放什么/今日汇总 = 旧右键菜单同名入口；「待服务端」项等 v19 协议（cmd:balance 等）上线后自动启用')),
+
           // ── 总开关 ──
           h(Card, { title: '联动总开关', right: h('span', { style: S.hint }, 'enabled = ' + String(!!form.enabled)) },
             h('div', { style: S.row },
@@ -634,7 +705,21 @@ window.__ModuleLoader__.load({
                 placeholder: '23:30-08:00',
                 onChange: (e) => touch({ quietHours: e.target.value }),
               })),
-            h('p', { style: S.hint }, '当前 ' + quiet.now + ' · ' + (quiet.inQuiet ? '在免打扰时段内' : '不在免打扰时段内') + ' · 审批等待仍会提醒')),
+            h('p', { style: S.hint }, '当前 ' + quiet.now + ' · ' + (quiet.inQuiet ? '在免打扰时段内' : '不在免打扰时段内') + ' · 审批等待仍会提醒'),
+            h('div', { style: S.row },
+              h('button', {
+                type: 'button',
+                style: Object.assign({}, S.btn, busyNow ? S.btnDisabled : null),
+                disabled: busyNow,
+                onClick: () => runPetAction('quietStart', { minutes: Math.max(1, Number(form.quietMinutes) || 30) }),
+              }, busy === 'pet:quietStart' ? '设置中…' : '立即免打扰（' + (Number(form.quietMinutes) || 30) + ' 分钟）'),
+              h('button', {
+                type: 'button',
+                style: Object.assign({}, S.btn, busyNow ? S.btnDisabled : null),
+                disabled: busyNow,
+                onClick: () => runPetAction('quietEnd'),
+              }, busy === 'pet:quietEnd' ? '结束中…' : '结束免打扰'),
+              h('span', { style: S.hint }, '即时走 cmd:quiet（与旧菜单「免打扰/结束免打扰」一致）；时长用外观区「静默时长」'))),
 
           // ── 每日预算 ──
           h(Card, { title: '每日费用上限', right: h('span', { style: S.hint }, 'llm.budgetPerDayYuan') },
@@ -717,13 +802,23 @@ window.__ModuleLoader__.load({
                 h('span', { style: S.label }, '层级'),
                 h(Segmented, { value: form.layer, options: LAYER_META, disabled: busyNow, onChange: (v) => touch({ layer: v }) })),
               h('label', null,
-                h('span', { style: S.label }, '皮肤（名称）'),
-                h('input', {
-                  style: S.field,
+                h('span', { style: S.label }, '皮肤（当前形象）'),
+                h('select', {
+                  style: Object.assign({}, S.field, { colorScheme: 'dark' }),
                   value: form.skin,
-                  maxLength: 32,
-                  placeholder: '大肥鱼',
+                  disabled: busyNow,
                   onChange: (e) => touch({ skin: e.target.value }),
+                }, (petOptions && petOptions.skins && petOptions.skins.length ? petOptions.skins : ['大肥鱼']).concat(
+                  form.skin && !(petOptions && petOptions.skins || []).includes(form.skin) ? [form.skin] : [],
+                ).map((s) => h('option', { key: s, value: s, style: { backgroundColor: '#1f1f1f', color: '#f5f5f5' } }, s)))),
+              h('div', null,
+                h('span', { style: S.label }, '开机自启' + (actionReady('autoStart') ? '' : '（待服务端）')),
+                h(Toggle, {
+                  value: form.autoStart,
+                  onChange: (v) => touch({ autoStart: v }),
+                  disabled: busyNow,
+                  onLabel: '开',
+                  offLabel: '关',
                 })),
               h('div', null,
                 h('span', { style: S.label }, '音量'),
@@ -786,7 +881,15 @@ window.__ModuleLoader__.load({
                 h(Toggle, { value: form.musicLink, onChange: (v) => touch({ musicLink: v }), disabled: busyNow, onLabel: '开', offLabel: '关' })),
               h('div', null,
                 h('span', { style: S.label }, '音效'),
-                h(Toggle, { value: form.soundOn, onChange: (v) => touch({ soundOn: v }), disabled: busyNow, onLabel: '开', offLabel: '关' }))),
+                h(Toggle, { value: form.soundOn, onChange: (v) => touch({ soundOn: v }), disabled: busyNow, onLabel: '开', offLabel: '关' })),
+              h('label', null,
+                h('span', { style: S.label }, '双击行为' + (actionReady('doubleClick') ? '' : '（待服务端 v19）')),
+                h('select', {
+                  style: Object.assign({}, S.field, { colorScheme: 'dark' }),
+                  value: form.doubleClick,
+                  disabled: busyNow,
+                  onChange: (e) => touch({ doubleClick: e.target.value }),
+                }, DOUBLE_CLICK_META.map((m) => h('option', { key: m.value, value: m.value, style: { backgroundColor: '#1f1f1f', color: '#f5f5f5' } }, m.label))))),
             bubble && Number.isFinite(bubble.normalMs)
               ? h('p', { style: S.hint }, '生效气泡节奏：普通 ' + (bubble.normalMs / 1000) + 's · 内心 ' + ((bubble.innerMs || 0) / 1000) + 's · 报账 ' + ((bubble.reportMs || 0) / 1000) + 's · 审批 ' + ((bubble.approvalMs || 0) / 1000) + 's · 深夜 ' + ((bubble.nightMs || 0) / 1000) + 's')
               : null,
@@ -859,7 +962,19 @@ window.__ModuleLoader__.load({
                 disabled: busyNow,
                 onClick: () => nativeUi(false),
               }, '隐藏原生菜单'),
-              h('span', { style: S.hint }, 'v10 默认隐藏原生右键菜单/托盘；仅应急时临时显示')),
+              h('button', {
+                type: 'button',
+                title: actionReady('quit') ? '退出桌宠进程（联动/面板保留）' : '待服务端支持 cmd:quit',
+                style: Object.assign({}, S.btn, S.btnDanger, (!actionReady('quit') || busyNow) ? S.btnDisabled : null),
+                disabled: busyNow || !actionReady('quit'),
+                onClick: () => {
+                  const ok = typeof window !== 'undefined' && typeof window.confirm === 'function'
+                    ? window.confirm('退出桌宠进程？\n「停止联动」只是不再驱动桌宠，桌宠仍会留在屏幕上；「退出桌宠」才会真正关闭它。')
+                    : true
+                  if (ok) requestAction('quit-pet')
+                },
+              }, '退出桌宠' + (actionReady('quit') ? '' : '（待服务端）')),
+              h('span', { style: S.hint }, '「停止联动」= 不再根据会话驱动；「退出桌宠」= 关掉桌宠进程')),
             h('p', { style: S.hint }, '重启桌宠走 ui-action.json（联动插件消费，≤20s）；停止联动=总开关关闭；恢复默认会重置本面板全部配置'),
             showRollback
               ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
