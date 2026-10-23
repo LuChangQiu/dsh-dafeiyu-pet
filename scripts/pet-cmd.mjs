@@ -19,16 +19,22 @@ const finish = (code, payload) => {
   if (finished) return
   finished = true
   clearTimeout(timer)
-  try { sock.destroy() } catch {}
+  try {
+    sock.destroy()
+  } catch {}
   console.log(JSON.stringify(payload))
   process.exit(code)
 }
 const timer = setTimeout(() => finish(3, { ok: false, error: 'timeout', line }), 3000)
 
 sock.on('connect', () => {
-  sock.write(line + '\n', () => { written = true })
+  sock.write(line + '\n', () => {
+    written = true
+  })
 })
-sock.on('data', (d) => { out += d.toString() })
+sock.on('data', (d) => {
+  out += d.toString()
+})
 sock.on('end', () => finish(0, { ok: true, line, written, reply: out.trim() || null }))
 sock.on('close', () => finish(0, { ok: true, line, written, reply: out.trim() || null }))
 sock.on('error', (e) => {

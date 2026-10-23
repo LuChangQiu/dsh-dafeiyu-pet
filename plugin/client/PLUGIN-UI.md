@@ -1,7 +1,7 @@
 # PLUGIN-UI.md — 大肥鱼 × DSH 联动 · 管理界面（task-26 交付说明）
 
 > 交付人：plugin-ui ｜ 交付日期：2026-10-23 ｜ 状态：**已接线并运行于生产 DSH Web（未重启 host）**，E2E 真实链路已验证；真实页面截图待用户补（清单见 §9）。
-> 代码位置：`%PROJECT_ROOT%\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`%PROJECT_ROOT%\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
+> 代码位置：`E:\project\AI提效\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`E:\project\AI提效\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
 
 ---
 
@@ -337,6 +337,16 @@ curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "content-type: application/jso
 
 > 注：截图中的状态数据由 `test/make-fixture.mjs` 注入合成 runtime（真实 `status` 字段待 tech-scout v26+ 落地）；面板组件与归一逻辑为真实代码。
 
+
+### B.1.1 v26 真实状态通道验证（2026-10-23）
+
+tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（字段：`state/tool/since/step/turn/heartbeatAt/source/message`，5s 心跳）。面板侧**零改动即生效**（容错设计）：
+
+- 实时读取 `state.json.status`：实测样例 `{"state":"tool","tool":"pwsh","since":"2026-10-23T06:46:10.775Z","heartbeatAt":"2026-10-23T06:46:10.775Z","source":null,"message":""}` → 面板 runtime：`{state:"tool", label:"调工具", tool:"pwsh", elapsedMs≈8.4s, heartbeatAgeMs≈8s, disconnected:false}`；
+- 版本行显示：面板 v0.2.0 · 联动 v0.26.0 · 桌宠 v1.1.5+patch-v26；
+- `state.pet=false` 时插件写 `disconnected`，恢复写 `idle`；心跳 5s，面板 >30s 判失联；
+- 证据：`screenshots/ui-10-realtime-status-real-v26.png`（真实 v26 数据：调工具/pwsh/8.4s/心跳 8 秒前；非注入）；此前 `ui-08/ui-09` 为状态覆盖（tool/disconnected）与注入样例；
+- 面板枚举映射与 tech-scout 最终枚举一致（`waiting_approval/background/done/disconnected` 等，别名保留兼容）。
 ## B.2 代码规范（task-43 UI 侧，进行中）
 
 已做（不改变行为）：

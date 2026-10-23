@@ -44,9 +44,9 @@ const PET_ACTION_CMDS = {
   hide: 'cmd:hide',
   snapInto: 'cmd:snap_into_screen',
   recover: 'cmd:recover',
-  quietStart: 'cmd:quiet',   // 需要分钟数：实际下发 cmd:quiet:<minutes>
+  quietStart: 'cmd:quiet', // 需要分钟数：实际下发 cmd:quiet:<minutes>
   quietEnd: 'cmd:quiet:off',
-  quit: 'cmd:quit',          // 待桌宠补丁支持
+  quit: 'cmd:quit' // 待桌宠补丁支持
 }
 
 /** 协议就绪度（false = 面板显示「待服务端」禁用；可由插件 config.petActionReadiness 覆盖）。 */
@@ -63,7 +63,7 @@ const DEFAULT_PET_ACTION_READINESS = {
   quietEnd: true,
   quit: false,
   doubleClick: false,
-  autoStart: false,
+  autoStart: false
 }
 
 const DEFAULTS = {
@@ -110,8 +110,8 @@ const DEFAULTS = {
     quietMinutes: 30,
     bubbleMs: 5000,
     doubleClick: 'balance',
-    autoStart: false,
-  },
+    autoStart: false
+  }
 }
 
 const ACTIVITY_LEVELS = ['quiet', 'normal', 'lively']
@@ -135,7 +135,7 @@ const RUNTIME_STATE_META = {
   background: { label: '后台运行', tone: 'dim' },
   error: { label: '出错', tone: 'err' },
   done: { label: '完成', tone: 'ok' },
-  disconnected: { label: '失联', tone: 'err' },
+  disconnected: { label: '失联', tone: 'err' }
 }
 
 /** 状态别名归一（协议前后兼容：approval→waiting_approval、tool-call→tool 等）。 */
@@ -153,13 +153,27 @@ const RUNTIME_STATE_ALIASES = {
   fail: 'error',
   failed: 'error',
   offline: 'disconnected',
-  lost: 'disconnected',
+  lost: 'disconnected'
 }
 /** cmd:config 批量下发的 pet 字段白名单（task-32 映射表 §C + task-36 doubleClick）。 */
 const PET_CONFIG_FIELDS = [
-  'size', 'opacity', 'mode', 'lineFreq', 'bubbleStyle', 'passthrough', 'locked',
-  'topmost', 'snap', 'layer', 'skin', 'soundOn', 'volume', 'musicLink', 'city', 'quietMinutes',
-  'doubleClick',
+  'size',
+  'opacity',
+  'mode',
+  'lineFreq',
+  'bubbleStyle',
+  'passthrough',
+  'locked',
+  'topmost',
+  'snap',
+  'layer',
+  'skin',
+  'soundOn',
+  'volume',
+  'musicLink',
+  'city',
+  'quietMinutes',
+  'doubleClick'
 ]
 
 // ────────────────────────────── 小工具 ──────────────────────────────
@@ -242,13 +256,14 @@ function parseQuietRanges(list) {
 
 function isInQuietHours(ranges, now = new Date()) {
   const cur = now.getHours() * 60 + now.getMinutes()
-  return ranges.some(({ start, end }) =>
-    start <= end ? cur >= start && cur < end : cur >= start || cur < end,
-  )
+  return ranges.some(({ start, end }) => (start <= end ? cur >= start && cur < end : cur >= start || cur < end))
 }
 
 function clip(s, n) {
-  return String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
+  return String(s ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, n)
 }
 
 /**
@@ -274,7 +289,9 @@ export function normalizeRuntimeStatus(stateFile, opts = {}) {
   const raw = isObject(stateFile?.status)
     ? stateFile.status
     : isObject(stateFile?.runtime)
-      ? (isObject(stateFile.runtime.status) ? stateFile.runtime.status : stateFile.runtime)
+      ? isObject(stateFile.runtime.status)
+        ? stateFile.runtime.status
+        : stateFile.runtime
       : null
 
   const firstString = (...values) => {
@@ -285,17 +302,14 @@ export function normalizeRuntimeStatus(stateFile, opts = {}) {
   }
   const asNumber = (value) => (Number.isFinite(value) ? value : null)
 
-  const heartbeatAt = firstString(
-    raw?.heartbeatAt,
-    raw?.lastHeartbeatAt,
-    raw?.lastEventAt,
-    stateFile?.updatedAt,
-  )
+  const heartbeatAt = firstString(raw?.heartbeatAt, raw?.lastHeartbeatAt, raw?.lastEventAt, stateFile?.updatedAt)
   const heartbeatMs = heartbeatAt ? new Date(heartbeatAt).getTime() : NaN
   const heartbeatAgeMs = Number.isFinite(heartbeatMs) ? Math.max(0, now - heartbeatMs) : null
   const stale = heartbeatAgeMs === null || heartbeatAgeMs > staleMs
 
-  let state = String(raw?.state ?? raw?.status ?? '').trim().toLowerCase()
+  let state = String(raw?.state ?? raw?.status ?? '')
+    .trim()
+    .toLowerCase()
   state = RUNTIME_STATE_ALIASES[state.replace(/[^a-z_]/g, '')] ?? state
   if (!RUNTIME_STATE_META[state]) state = stale ? 'disconnected' : 'idle'
   if (stale) state = 'disconnected'
@@ -321,7 +335,7 @@ export function normalizeRuntimeStatus(stateFile, opts = {}) {
     disconnected: state === 'disconnected',
     source: firstString(raw?.source),
     message: firstString(raw?.message, raw?.detail),
-    lastEventAt: firstString(raw?.lastEventAt),
+    lastEventAt: firstString(raw?.lastEventAt)
   }
 }
 
@@ -340,7 +354,7 @@ export function parseBridgeLog(tail, limit = 10) {
     todayCalls: null,
     todayCost: null,
     loaded: null,
-    logDay: null,
+    logDay: null
   }
   if (!tail) return out
 
@@ -379,7 +393,7 @@ export function parseBridgeLog(tail, limit = 10) {
           style: obj.style ? String(obj.style) : '',
           line: clip(obj.line, 120),
           callsToday: Number.isFinite(obj.callsToday) ? obj.callsToday : null,
-          costToday: Number.isFinite(obj.costToday) ? obj.costToday : null,
+          costToday: Number.isFinite(obj.costToday) ? obj.costToday : null
         })
         if (out.lastSayAt === null) out.lastSayAt = at
         if (isToday) {
@@ -435,7 +449,7 @@ function readPetConfig(file) {
     topmost: typeof raw.topmost === 'boolean' ? raw.topmost : null,
     snap: typeof raw.snap_on === 'boolean' ? raw.snap_on : null,
     doubleClick: DOUBLE_CLICK_LEVELS.includes(raw.double_click) ? raw.double_click : null,
-    autoStart: typeof raw.autostart === 'boolean' ? raw.autostart : null,
+    autoStart: typeof raw.autostart === 'boolean' ? raw.autostart : null
   }
 }
 
@@ -505,7 +519,8 @@ export function normalizePetSettings(input, base = {}) {
     out.layer = input.layer
   }
   if (input.bubbleStyle !== undefined) {
-    if (!BUBBLE_STYLE_LEVELS.includes(input.bubbleStyle)) return { error: `气泡风格只能是 ${BUBBLE_STYLE_LEVELS.join(' / ')}` }
+    if (!BUBBLE_STYLE_LEVELS.includes(input.bubbleStyle))
+      return { error: `气泡风格只能是 ${BUBBLE_STYLE_LEVELS.join(' / ')}` }
     out.bubbleStyle = input.bubbleStyle
   }
   if (input.skin !== undefined) {
@@ -573,7 +588,7 @@ function resolvePetSettings({ stateFile, savedPet, petConfig, defaults }) {
     quietMinutes: pick('quietMinutes', defaults.quietMinutes),
     doubleClick: pick('doubleClick', defaults.doubleClick),
     autoStart: pick('autoStart', defaults.autoStart),
-    bubbleMs: pick('bubbleMs', defaults.bubbleMs),
+    bubbleMs: pick('bubbleMs', defaults.bubbleMs)
   }
 }
 
@@ -585,7 +600,7 @@ function buildBubbleConfig(bubbleMs) {
     innerMs: Math.max(3000, Math.round(normalMs * 0.6)),
     reportMs: 10000,
     approvalMs: 8000,
-    nightMs: 6000,
+    nightMs: 6000
   }
 }
 
@@ -595,8 +610,11 @@ function buildBubbleConfig(bubbleMs) {
  * `doubleClick` 加进 cmd:config 白名单（task-36 已与 tech-scout 约定）。
  */
 const PET_FIELD_CHANNEL = Object.fromEntries(
-  PET_CONFIG_FIELDS.map((key) => [key, 'immediate'])
-    .concat([['bubbleMs', 'pending-plugin'], ['doubleClick', 'pending-plugin'], ['autoStart', 'pending-plugin']]),
+  PET_CONFIG_FIELDS.map((key) => [key, 'immediate']).concat([
+    ['bubbleMs', 'pending-plugin'],
+    ['doubleClick', 'pending-plugin'],
+    ['autoStart', 'pending-plugin']
+  ])
 )
 
 // ────────────────────────────── 在线探测 ──────────────────────────────
@@ -630,7 +648,7 @@ function makeProcessProbe(ttlMs) {
     try {
       const { stdout } = await runFile('tasklist', ['/FI', 'IMAGENAME eq pythonw.exe', '/FO', 'CSV', '/NH'], {
         timeout: 4000,
-        windowsHide: true,
+        windowsHide: true
       })
       const count = stdout.split(/\r?\n/).filter((l) => /pythonw\.exe/i.test(l)).length
       cache = { at: Date.now(), count, ok: true }
@@ -701,7 +719,7 @@ export function sendPipeCommand(pipe, line, timeoutMs = 1800) {
       resolve({
         ok: connected && wrote,
         reply: chunks.join('').replace(/\s+/g, ' ').trim(),
-        error: error ?? null,
+        error: error ?? null
       })
     }
     const sock = net.connect(pipe)
@@ -753,23 +771,27 @@ Write-Output 'ok'
 `
   try {
     fs.writeFileSync(scriptFile, ps, 'utf8')
-    await runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptFile], {
-      timeout: 20000,
-      windowsHide: true,
-    })
+    await runFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptFile],
+      {
+        timeout: 20000,
+        windowsHide: true
+      }
+    )
     const buf = fs.readFileSync(outFile)
     return {
       ok: true,
       file: outFile,
       bytes: buf.length,
       at: new Date().toISOString(),
-      dataUrl: `data:image/jpeg;base64,${buf.toString('base64')}`,
+      dataUrl: `data:image/jpeg;base64,${buf.toString('base64')}`
     }
   } catch (error) {
     return {
       ok: false,
       error: 'screenshot-failed',
-      message: clip(error?.stderr || error?.message || String(error), 300),
+      message: clip(error?.stderr || error?.message || String(error), 300)
     }
   } finally {
     try {
@@ -810,12 +832,10 @@ function buildHandler(cfg, log) {
     const fromLog = {
       activity: typeof loaded.activity === 'string' ? loaded.activity : null,
       quietHours: Array.isArray(loaded.quietHours) ? loaded.quietHours : null,
-      budgetPerDayYuan: Number.isFinite(loaded?.llmLimits?.budgetPerDayYuan)
-        ? loaded.llmLimits.budgetPerDayYuan
-        : null,
+      budgetPerDayYuan: Number.isFinite(loaded?.llmLimits?.budgetPerDayYuan) ? loaded.llmLimits.budgetPerDayYuan : null,
       llmEnabled: typeof loaded.llm === 'string' ? true : null,
       model: null,
-      provider: null,
+      provider: null
     }
     if (typeof loaded.llm === 'string' && loaded.llm.includes('/')) {
       const [provider, model] = loaded.llm.split('/')
@@ -831,16 +851,19 @@ function buildHandler(cfg, log) {
           budgetPerDayYuan: Number.isFinite(stateFile.budgetPerDayYuan) ? stateFile.budgetPerDayYuan : null,
           llmEnabled: typeof stateFile.llmEnabled === 'boolean' ? stateFile.llmEnabled : null,
           model: typeof stateFile.model === 'string' ? stateFile.model : null,
-          provider: typeof stateFile.provider === 'string' ? stateFile.provider : null,
+          provider: typeof stateFile.provider === 'string' ? stateFile.provider : null
         }
       : {}
 
-    const activityFromFile = ACTIVITY_LEVELS.includes(String(activityRaw ?? '').trim().toLowerCase())
+    const activityFromFile = ACTIVITY_LEVELS.includes(
+      String(activityRaw ?? '')
+        .trim()
+        .toLowerCase()
+    )
       ? String(activityRaw).trim().toLowerCase()
       : null
 
-    const pick = (k, fallback) =>
-      fromState[k] ?? (k === 'activity' ? activityFromFile : null) ?? fromLog[k] ?? fallback
+    const pick = (k, fallback) => fromState[k] ?? (k === 'activity' ? activityFromFile : null) ?? fromLog[k] ?? fallback
 
     return {
       enabled: pick('enabled', true),
@@ -853,8 +876,8 @@ function buildHandler(cfg, log) {
       sources: {
         stateFile: Boolean(stateFile?._fresh),
         logLoaded: Boolean(logParsed.loaded),
-        activityFile: Boolean(activityFromFile),
-      },
+        activityFile: Boolean(activityFromFile)
+      }
     }
   }
 
@@ -862,7 +885,7 @@ function buildHandler(cfg, log) {
   function effectiveReadiness() {
     const readiness = {
       ...DEFAULT_PET_ACTION_READINESS,
-      ...(isObject(cfg.petActionReadiness) ? cfg.petActionReadiness : {}),
+      ...(isObject(cfg.petActionReadiness) ? cfg.petActionReadiness : {})
     }
     const stateFile = loadStateFile()
     if (isObject(stateFile?.capabilities)) {
@@ -884,10 +907,7 @@ function buildHandler(cfg, log) {
    * @returns {Promise<{ok: true, data: object}>}
    */
   async function collectState() {
-    const [pipeProbe, processInfo] = await Promise.all([
-      probePipe(cfg.pipe, cfg.pipeProbeTimeoutMs),
-      probeProcess(),
-    ])
+    const [pipeProbe, processInfo] = await Promise.all([probePipe(cfg.pipe, cfg.pipeProbeTimeoutMs), probeProcess()])
     const logParsed = parseBridgeLog(readTail(cfg.logFile, cfg.logTailBytes), cfg.recentSayLimit)
     const stateFile = loadStateFile()
     const activityRaw = readText(cfg.activityFile).trim()
@@ -896,22 +916,19 @@ function buildHandler(cfg, log) {
     const inQuiet = isInQuietHours(quietRanges)
 
     // 今日 calls/cost：优先 state.json（新鲜时），否则日志尾（仅当天 say 行）
-    const todayCalls = Number.isFinite(stateFile?.todayCalls)
-      ? stateFile.todayCalls
-      : (logParsed.todayCalls ?? 0)
-    const todayCost = Number.isFinite(stateFile?.todayCost)
-      ? stateFile.todayCost
-      : (logParsed.todayCost ?? 0)
+    const todayCalls = Number.isFinite(stateFile?.todayCalls) ? stateFile.todayCalls : (logParsed.todayCalls ?? 0)
+    const todayCost = Number.isFinite(stateFile?.todayCost) ? stateFile.todayCost : (logParsed.todayCost ?? 0)
 
-    const recentSay = Array.isArray(stateFile?.recentSay) && stateFile.recentSay.length
-      ? stateFile.recentSay.slice(-cfg.recentSayLimit).map((x) => ({
-          at: x?.at ?? null,
-          kind: String(x?.kind ?? ''),
-          source: String(x?.source ?? ''),
-          style: x?.style ? String(x.style) : '',
-          line: clip(x?.line, 120),
-        }))
-      : logParsed.recentSay
+    const recentSay =
+      Array.isArray(stateFile?.recentSay) && stateFile.recentSay.length
+        ? stateFile.recentSay.slice(-cfg.recentSayLimit).map((x) => ({
+            at: x?.at ?? null,
+            kind: String(x?.kind ?? ''),
+            source: String(x?.source ?? ''),
+            style: x?.style ? String(x.style) : '',
+            line: clip(x?.line, 120)
+          }))
+        : logParsed.recentSay
 
     const ui = loadUiConfig()
     const saved = ui
@@ -921,7 +938,7 @@ function buildHandler(cfg, log) {
           quietHours: Array.isArray(ui.quietHours) ? ui.quietHours : null,
           budgetPerDayYuan: Number.isFinite(ui?.llm?.budgetPerDayYuan) ? ui.llm.budgetPerDayYuan : null,
           pet: isObject(ui.pet) ? ui.pet : null,
-          updatedAt: ui.updatedAt ?? null,
+          updatedAt: ui.updatedAt ?? null
         }
       : null
 
@@ -930,7 +947,7 @@ function buildHandler(cfg, log) {
       stateFile,
       savedPet: saved?.pet,
       petConfig,
-      defaults: cfg.petDefaults,
+      defaults: cfg.petDefaults
     })
     const appliedPet = isObject(stateFile?.petSettings) ? stateFile.petSettings : null
 
@@ -938,8 +955,10 @@ function buildHandler(cfg, log) {
     if (saved) {
       if (saved.enabled !== null && saved.enabled !== effective.enabled) pending.push('enabled')
       if (saved.activity !== null && saved.activity !== effective.activity) pending.push('activity')
-      if (saved.quietHours !== null && JSON.stringify(saved.quietHours) !== JSON.stringify(effective.quietHours)) pending.push('quietHours')
-      if (saved.budgetPerDayYuan !== null && saved.budgetPerDayYuan !== effective.budgetPerDayYuan) pending.push('budgetPerDayYuan')
+      if (saved.quietHours !== null && JSON.stringify(saved.quietHours) !== JSON.stringify(effective.quietHours))
+        pending.push('quietHours')
+      if (saved.budgetPerDayYuan !== null && saved.budgetPerDayYuan !== effective.budgetPerDayYuan)
+        pending.push('budgetPerDayYuan')
       // 桌宠设置：有 cmd 通道的（size/opacity/mode/lineFreq/passthrough/locked）保存即已下发；
       // 其余（bubbleMs/city/musicLink/soundOn）等联动插件应用 → 用 state.json.petSettings 判断。
       if (saved.pet) {
@@ -960,9 +979,10 @@ function buildHandler(cfg, log) {
       ? stateFile.bubble
       : buildBubbleConfig(saved?.pet?.bubbleMs ?? cfg.petDefaults.bubbleMs)
     const petActionReadiness = effectiveReadiness()
-    const skins = Array.isArray(stateFile?.skins?.available) && stateFile.skins.available.length
-      ? stateFile.skins.available.map(String)
-      : readSkinOptions(cfg.petConfigFile)
+    const skins =
+      Array.isArray(stateFile?.skins?.available) && stateFile.skins.available.length
+        ? stateFile.skins.available.map(String)
+        : readSkinOptions(cfg.petConfigFile)
     // task-44：实时状态（思考/调工具/等确认/后台/出错/完成/空闲/失联），30s 无心跳判失联
     const runtime = normalizeRuntimeStatus(stateFile, { staleMs: cfg.runtimeStaleMs })
 
@@ -975,18 +995,18 @@ function buildHandler(cfg, log) {
           online: true,
           pid: process.pid,
           uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000),
-          platform: process.platform,
+          platform: process.platform
         },
         pet: {
           online: petOnline,
           processes: processInfo.count,
-          probeOk: processInfo.ok,
+          probeOk: processInfo.ok
         },
         pipe: {
           online: pipeProbe.online,
           name: cfg.pipe,
           latencyMs: pipeProbe.latencyMs,
-          error: pipeProbe.error,
+          error: pipeProbe.error
         },
         config: effective,
         saved,
@@ -1003,30 +1023,30 @@ function buildHandler(cfg, log) {
           petActionReadiness,
           doubleClick: petActionReadiness.doubleClick !== false,
           autoStart: petActionReadiness.autoStart !== false,
-          quit: petActionReadiness.quit !== false,
+          quit: petActionReadiness.quit !== false
         },
         petOptions: {
           skins,
           doubleClick: petSettings.doubleClick,
           doubleClickOptions: DOUBLE_CLICK_LEVELS,
-          autoStart: petSettings.autoStart,
+          autoStart: petSettings.autoStart
         },
         versions: {
           uiPlugin: PLUGIN_VERSION,
           bridgePlugin: typeof stateFile?.version === 'string' ? stateFile.version : null,
-          pet: typeof stateFile?.petVersion === 'string' ? stateFile.petVersion : null,
+          pet: typeof stateFile?.petVersion === 'string' ? stateFile.petVersion : null
         },
         lastAction: isObject(stateFile?.lastAction) ? stateFile.lastAction : null,
         today: {
           calls: todayCalls,
           cost: todayCost,
           budgetPerDayYuan: effective.budgetPerDayYuan,
-          ratio: effective.budgetPerDayYuan > 0 ? Math.min(1, todayCost / effective.budgetPerDayYuan) : 0,
+          ratio: effective.budgetPerDayYuan > 0 ? Math.min(1, todayCost / effective.budgetPerDayYuan) : 0
         },
         quiet: {
           inQuiet,
           ranges: quietRanges.map((r) => r.text),
-          now: hhmm(),
+          now: hhmm()
         },
         recentSay,
         lastSayAt,
@@ -1038,9 +1058,9 @@ function buildHandler(cfg, log) {
           activityFile: cfg.activityFile,
           petConfigFile: cfg.petConfigFile,
           actionFile: cfg.actionFile,
-          stateFileFresh: Boolean(stateFile?._fresh),
-        },
-      },
+          stateFileFresh: Boolean(stateFile?._fresh)
+        }
+      }
     }
   }
 
@@ -1064,7 +1084,10 @@ function buildHandler(cfg, log) {
     if (payload?.activity !== undefined) {
       const level = String(payload.activity ?? '').toLowerCase()
       if (!ACTIVITY_LEVELS.includes(level)) {
-        return { ok: false, error: { code: 'invalid-argument', message: `activity 只能是 ${ACTIVITY_LEVELS.join(' / ')}` } }
+        return {
+          ok: false,
+          error: { code: 'invalid-argument', message: `activity 只能是 ${ACTIVITY_LEVELS.join(' / ')}` }
+        }
       }
       next.activity = level
       // activity.txt 是 pet-bridge 现有热切通道（每 20s 轮询），直接写即生效
@@ -1079,11 +1102,20 @@ function buildHandler(cfg, log) {
 
     if (payload?.quietHours !== undefined) {
       if (!Array.isArray(payload.quietHours)) {
-        return { ok: false, error: { code: 'invalid-argument', message: 'quietHours 必须是字符串数组，如 ["23:30-08:00"]' } }
+        return {
+          ok: false,
+          error: { code: 'invalid-argument', message: 'quietHours 必须是字符串数组，如 ["23:30-08:00"]' }
+        }
       }
       const bad = payload.quietHours.find((r) => !QUIET_RANGE_RE.test(String(r ?? '').trim()))
       if (bad !== undefined) {
-        return { ok: false, error: { code: 'invalid-argument', message: `时段格式应为 HH:MM-HH:MM（收到 ${JSON.stringify(String(bad))}）` } }
+        return {
+          ok: false,
+          error: {
+            code: 'invalid-argument',
+            message: `时段格式应为 HH:MM-HH:MM（收到 ${JSON.stringify(String(bad))}）`
+          }
+        }
       }
       next.quietHours = payload.quietHours.map((r) => String(r).trim())
     }
@@ -1118,7 +1150,7 @@ function buildHandler(cfg, log) {
         next.bubble = buildBubbleConfig(payload.pet.bubbleMs)
       }
       const pendingPet = Object.keys(PET_FIELD_CHANNEL).filter(
-        (k) => PET_FIELD_CHANNEL[k] === 'pending-plugin' && payload.pet[k] !== undefined,
+        (k) => PET_FIELD_CHANNEL[k] === 'pending-plugin' && payload.pet[k] !== undefined
       )
       if (pendingPet.length > 0) applied.petPendingFields = pendingPet
     }
@@ -1143,8 +1175,8 @@ function buildHandler(cfg, log) {
         saved: true,
         applied,
         note: 'activity 写 activity.txt 即时生效；大小/透明度/模式/语录频率/穿透/锁定 已管道即时下发；enabled/quietHours/预算/城市/音乐/音效/气泡时长 由联动插件 watcher 应用',
-        state: await collectState(),
-      },
+        state: await collectState()
+      }
     }
   }
 
@@ -1162,7 +1194,7 @@ function buildHandler(cfg, log) {
       quietHours: ['23:30-08:00'],
       llm: { budgetPerDayYuan: cfg.defaultBudgetPerDayYuan },
       pet,
-      bubble: buildBubbleConfig(pet.bubbleMs),
+      bubble: buildBubbleConfig(pet.bubbleMs)
     }
     try {
       writeJsonAtomic(cfg.uiConfigFile, next)
@@ -1185,8 +1217,8 @@ function buildHandler(cfg, log) {
         pet,
         applied: { activity: 'immediate', pet: results },
         note: '已恢复面板默认值并即时下发可管道项；城市/音乐/音效/气泡时长待联动插件应用',
-        state: await collectState(),
-      },
+        state: await collectState()
+      }
     }
   }
 
@@ -1201,34 +1233,41 @@ function buildHandler(cfg, log) {
         file: cfg.logFile,
         totalRead: all.length,
         lines: all.slice(-want).map((l) => clip(l, 400)),
-        now: new Date().toISOString(),
-      },
+        now: new Date().toISOString()
+      }
     }
   }
 
   /** 应急动作请求：写 ui-action.json，由联动插件 watcher 消费（结果写 state.json.lastAction）。 */
   function requestAction(payload) {
     const SUPPORTED = [
-      'restart-pet', 'start-pet', 'stop-pet',
+      'restart-pet',
+      'start-pet',
+      'stop-pet',
       // task-40：自启/退出语义（tech-scout v20 消费）
-      'enable-autostart', 'disable-autostart', 'quit-pet',
+      'enable-autostart',
+      'disable-autostart',
+      'quit-pet'
     ]
     const name = String(payload?.name ?? '')
     if (!SUPPORTED.includes(name)) {
-      return { ok: false, error: { code: 'invalid-argument', message: `不支持的动作：${name}（支持 ${SUPPORTED.join(' / ')}）` } }
+      return {
+        ok: false,
+        error: { code: 'invalid-argument', message: `不支持的动作：${name}（支持 ${SUPPORTED.join(' / ')}）` }
+      }
     }
     const existing = readJson(cfg.actionFile, null)
     if (isObject(existing) && existing.id && !existing.handledAt) {
       return {
         ok: false,
-        error: { code: 'busy', message: `上一条动作尚未执行完成（${existing.name ?? '?'}），请稍后再试` },
+        error: { code: 'busy', message: `上一条动作尚未执行完成（${existing.name ?? '?'}），请稍后再试` }
       }
     }
     const request = {
       id: 'act-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
       name,
       requestedAt: new Date().toISOString(),
-      requestedBy: 'dsh-pet-bridge-ui',
+      requestedBy: 'dsh-pet-bridge-ui'
     }
     try {
       writeJsonAtomic(cfg.actionFile, request)
@@ -1241,8 +1280,8 @@ function buildHandler(cfg, log) {
       data: {
         queued: true,
         request,
-        note: '联动插件 ≤20s 轮询消费；结果写入 state.json.lastAction（面板会显示）',
-      },
+        note: '联动插件 ≤20s 轮询消费；结果写入 state.json.lastAction（面板会显示）'
+      }
     }
   }
 
@@ -1259,7 +1298,10 @@ function buildHandler(cfg, log) {
     if (!line) {
       return {
         ok: false,
-        error: { code: 'invalid-argument', message: `未知动作：${name}（支持 ${Object.keys(PET_ACTION_CMDS).join(' / ')}）` },
+        error: {
+          code: 'invalid-argument',
+          message: `未知动作：${name}（支持 ${Object.keys(PET_ACTION_CMDS).join(' / ')}）`
+        }
       }
     }
     const readiness = effectiveReadiness()
@@ -1275,7 +1317,7 @@ function buildHandler(cfg, log) {
       log.info(`[pet-bridge-ui] pet.action ${name} not-supported reply=${clip(reply, 80)}`)
       return {
         ok: false,
-        error: { code: 'not-supported', message: `桌宠暂不支持该命令（${clip(reply, 80)}），待服务端升级` },
+        error: { code: 'not-supported', message: `桌宠暂不支持该命令（${clip(reply, 80)}），待服务端升级` }
       }
     }
     if (/-fail$/.test(reply)) {
@@ -1306,9 +1348,7 @@ function buildHandler(cfg, log) {
     if (kind === 'screenshot') {
       const shot = await takeScreenshot(cfg.evidenceDir)
       log.info(`[pet-bridge-ui] test screenshot ok=${shot.ok}${shot.ok ? ` bytes=${shot.bytes}` : ''}`)
-      return shot.ok
-        ? { ok: true, data: shot }
-        : { ok: false, error: { code: shot.error, message: shot.message } }
+      return shot.ok ? { ok: true, data: shot } : { ok: false, error: { code: shot.error, message: shot.message } }
     }
     return { ok: false, error: { code: 'unknown-endpoint', message: `未知测试动作：${kind}` } }
   }
@@ -1389,7 +1429,7 @@ export function apply(ctx, rawConfig) {
       } catch {
         /* ignore */
       }
-    },
+    }
   }
 
   const handler = buildHandler(cfg, log)
@@ -1402,7 +1442,7 @@ export function apply(ctx, rawConfig) {
       connection,
       channel: cfg.channel,
       handler,
-      log,
+      log
     })
     if (dispose === null) {
       log.warn('[pet-bridge-ui] webServer.register 不可用，设置面板将无法取数')
@@ -1415,7 +1455,7 @@ export function apply(ctx, rawConfig) {
         pid: process.pid,
         channel: cfg.channel,
         version: PLUGIN_VERSION,
-        plugin: name,
+        plugin: name
       })
     } catch {
       /* 心跳失败不影响路由 */
@@ -1469,5 +1509,5 @@ export const __test = {
   LINE_FREQ_LEVELS,
   LAYER_LEVELS,
   BUBBLE_STYLE_LEVELS,
-  DOUBLE_CLICK_LEVELS,
+  DOUBLE_CLICK_LEVELS
 }

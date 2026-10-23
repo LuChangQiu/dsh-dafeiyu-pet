@@ -36,9 +36,7 @@ export function endpointFromPath(channel, pathname) {
   if (!pathname.startsWith(`${channel}/`)) return undefined
   const endpoint = pathname.slice(channel.length + 1)
   if (
-    endpoint.split('/').some(
-      (seg) => seg === '' || seg === '.' || seg === '..' || !ENDPOINT_SEGMENT_PATTERN.test(seg),
-    )
+    endpoint.split('/').some((seg) => seg === '' || seg === '.' || seg === '..' || !ENDPOINT_SEGMENT_PATTERN.test(seg))
   ) {
     return undefined
   }
@@ -106,7 +104,7 @@ export function mountWebRoute({
   channel,
   handler,
   log = console,
-  maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
+  maxBodyBytes = DEFAULT_MAX_BODY_BYTES
 }) {
   if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') {
     return null
@@ -174,20 +172,28 @@ export function mountWebRoute({
       const rpcId = typeof body?.rpcId === 'string' ? body.rpcId : INVALID_REQUEST_RPC_ID
       const method = typeof body?.method === 'string' ? body.method : null
       if (rpcId === INVALID_REQUEST_RPC_ID || method === null) {
-        sendJson(res, 200, serverResponseJson(INVALID_REQUEST_RPC_ID, {
-          ok: false,
-          error: { code: 'bad-request', message: 'invalid client-request message' },
-        }))
+        sendJson(
+          res,
+          200,
+          serverResponseJson(INVALID_REQUEST_RPC_ID, {
+            ok: false,
+            error: { code: 'bad-request', message: 'invalid client-request message' }
+          })
+        )
         return
       }
       if (method !== endpoint) {
-        sendJson(res, 200, serverResponseJson(rpcId, {
-          ok: false,
-          error: {
-            code: 'bad-request',
-            message: `method ${JSON.stringify(method)} does not match endpoint ${JSON.stringify(endpoint)}`,
-          },
-        }))
+        sendJson(
+          res,
+          200,
+          serverResponseJson(rpcId, {
+            ok: false,
+            error: {
+              code: 'bad-request',
+              message: `method ${JSON.stringify(method)} does not match endpoint ${JSON.stringify(endpoint)}`
+            }
+          })
+        )
         return
       }
 
@@ -200,7 +206,7 @@ export function mountWebRoute({
         log?.warn?.(`[pet-bridge-ui] rpc ${endpoint} 失败: ${error?.stack ?? error}`)
         sendText(res, 500, `handler failure: ${String(error)}`)
       }
-    },
+    }
   }
 
   const registered = webServer.register(route)
