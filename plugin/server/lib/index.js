@@ -92,6 +92,8 @@ const DEFAULTS = {
   eventsFile: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
+  guards: { maxActionsPerHour: 60, noActionOnSameState: true, startleDelayMinMs: 900, startleDelayMaxMs: 1500 },
+  costModel: { ricePriceYuan: 0.5 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -186,7 +188,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v36'
+export const name = 'dsh-pet-bridge-v37'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -205,7 +207,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v36] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v37] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -542,7 +544,19 @@ export function apply(ctx, rawConfig) {
   let toolActionSeq = 0
   let lastLongStepAt = 0
   let lastSkitAt = 0
+  let hourActKey = ''
+  let hourlyActions = 0
   const act = (name) => {
+    const hk = new Date().toDateString() + new Date().getHours()
+    if (hk !== hourActKey) {
+      hourActKey = hk
+      hourlyActions = 0
+    }
+    const g = cfg.guards || {}
+    if (g.noActionOnSameState && statusState.lastActionState === statusState.state) return
+    if (hourlyActions >= (g.maxActionsPerHour || 60)) return
+    hourlyActions += 1
+    statusState.lastActionState = statusState.state
     if (!cfg.enabled || !cfg.actions?.enabled) return
     send('act:' + name)
     log('debug', 'act', { name })
@@ -821,6 +835,7 @@ export function apply(ctx, rawConfig) {
   // ---------- task-44 状态通道（state:<json>） ----------
   const statusState = {
     state: 'idle',
+    lastActionState: null,
     tool: null,
     toolType: null,
     phase: null,
@@ -1009,6 +1024,8 @@ export function apply(ctx, rawConfig) {
     today.calls = llmDay.calls
     today.costYuan = Number(llmDay.cost.toFixed(4))
     today.budgetYuan = cfg.llm.budgetPerDayYuan || 1
+    today.riceBowls = Number((llmDay.cost / (cfg.costModel?.ricePriceYuan || 0.5)).toFixed(1))
+    today.period = new Date().getHours() >= 0 && new Date().getHours() < 8 ? '低谷' : '高峰'
   }
 
   const writeState = () => {
@@ -1031,8 +1048,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.36.0',
-        petVersion: 'v1.1.5+patch-v36',
+        version: '0.37.0',
+        petVersion: 'v1.1.5+patch-v37',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1116,6 +1133,10 @@ export function apply(ctx, rawConfig) {
       if (j.pet && typeof j.pet === 'object') {
         applyPetSettings(j.pet)
         applied.pet = Object.keys(j.pet)
+      }
+      if (j.guards && typeof j.guards === 'object') {
+        cfg.guards = { ...(cfg.guards || {}), ...j.guards }
+        applied.guards = j.guards
       }
       if (j.bubble && typeof j.bubble === 'object') {
         const b = cfg.bubble || {}
@@ -1715,16 +1736,22 @@ export function apply(ctx, rawConfig) {
       }
       if (cfg.events.turnStart && canSpeak('turnStart')) {
         const fresh = pregen.text && Date.now() - pregen.at < (cfg.llm.pregenTtlMs || 600000)
-        if (fresh) {
-          const cached = pregen.text
-          pregen.text = ''
-          log('info', 'use pregen line', { kind: 'turnStart' })
-          speak('turnStart', cached, { force: true, source: 'llm-pregen' })
-        } else {
-          void generate('turnStart', s).then((g) =>
-            speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
-          )
-        }
+        const g0 = cfg.guards || {}
+        const startleMs =
+          g0.startleDelayMinMs +
+          Math.floor(Math.random() * Math.max(1, (g0.startleDelayMaxMs || 1500) - (g0.startleDelayMinMs || 900)))
+        setTimeout(() => {
+          if (fresh) {
+            const cached = pregen.text
+            pregen.text = ''
+            log('info', 'use pregen line', { kind: 'turnStart' })
+            speak('turnStart', cached, { force: true, source: 'llm-pregen' })
+          } else {
+            void generate('turnStart', s).then((g) =>
+              speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
+            )
+          }
+        }, startleMs)
       }
       return
     }
@@ -1787,7 +1814,10 @@ export function apply(ctx, rawConfig) {
       ) {
         reportState.turnsSince = 0
         reportState.lastAt = Date.now()
-        const numbers = `turns=${stats.turns} tokens=${stats.tokens} cost=${llmDay.cost.toFixed(4)}元`
+        const rice = (llmDay.cost / (cfg.costModel?.ricePriceYuan || 0.5)).toFixed(1)
+        const hourNow = new Date().getHours()
+        const period = hourNow >= 0 && hourNow < 8 ? '低谷' : '高峰'
+        const numbers = `turns=${stats.turns} tokens=${stats.tokens} cost=${llmDay.cost.toFixed(4)}元 rice=${rice}碗 period=${period}`
         void generate('report', s, { outcome: '成功', durBucket, numbers }).then((g) => {
           if (
             speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
@@ -2020,7 +2050,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v36', {
+  log('info', 'loaded v37', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',

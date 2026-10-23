@@ -48,3 +48,9 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 ## 5. 通知分级与后续（F3/F4 实现时填充）
 - S0：approval / 严重错误 / 预算 100%；S1：完成（节流）、长任务>10min、预算 80%；S2：预算 50%/里程碑；S3：工具细节/background。
 - 待补（v36+）：`kind=cost`（payload=`budget-50/80/100`）、`kind=long_task`（payload=`>10min`）事件；面板时间线直接消费 `events.json`。
+
+## 6. v37 新增（Phase-1 P0：白饭报账 / 三态护栏 / 愣一拍）
+- `bridge-state-v2.json.today` 增 `riceBowls`（费用换算白饭碗数，默认 ¥0.5/碗）与 `period`（高峰/低谷，00:00–08:00 低谷简化口径）。
+- 报告（report 台词）numbers 上下文增 `rice=…碗 period=…`，LLM/池化报账显示白饭口径；小票 receipt 同源数据。
+- **三态护栏（可配置）**：`ui-config.guards={maxActionsPerHour,noActionOnSameState}`；插件侧动作计数与"状态不变不演出"，默认 60 次/小时、开启；`ui-config.guards` 热更新（`ui-config applied` 日志）。
+- **愣一拍**：turnStart 先空拍 `guards.startleDelayMinMs~MaxMs`（默认 900~1500ms）再冒泡；不改变状态时序。
