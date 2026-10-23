@@ -228,7 +228,10 @@ await testAsync('state.get 返回聚合状态（日志回退路径）', async ()
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r2', method: 'state.get' } }),
+    makeReq({
+      url: '/pet-bridge-ui/state.get',
+      body: { rpcId: 'r2', method: 'state.get' }
+    }),
     makeRes()
   )
   assert.equal(res.status, 200)
@@ -281,7 +284,10 @@ await testAsync('config.set 拒绝非法时段 / 非法 activity', async () => {
   for (const payload of [{ quietHours: ['25:99-26:00'] }, { activity: 'hyper' }, { enabled: 'yes' }]) {
     const res = await invoke(
       routes,
-      makeReq({ url: '/pet-bridge-ui/config.set', body: { rpcId: 'r4', method: 'config.set', payload } }),
+      makeReq({
+        url: '/pet-bridge-ui/config.set',
+        body: { rpcId: 'r4', method: 'config.set', payload }
+      }),
       makeRes()
     )
     const result = JSON.parse(res.body).result
@@ -292,7 +298,9 @@ await testAsync('config.set 拒绝非法时段 / 非法 activity', async () => {
 })
 
 await testAsync('鉴权栅栏：requestRejection 返回 403 时拒绝', async () => {
-  const { routes, dispose } = mount('/pet-bridge-ui', { requestRejection: () => 403 })
+  const { routes, dispose } = mount('/pet-bridge-ui', {
+    requestRejection: () => 403
+  })
   const res = await invoke(routes, makeReq({ body: { rpcId: 'r5', method: 'ping' } }), makeRes())
   assert.equal(res.status, 403)
   assert.equal(res.body, 'forbidden')
@@ -309,7 +317,10 @@ await testAsync('无 connection 时 loopback 同源放行、非 POST 405、非 J
 
   const badType = await invoke(
     routes,
-    makeReq({ body: { rpcId: 'r7', method: 'ping' }, headers: { 'content-type': 'text/plain' } }),
+    makeReq({
+      body: { rpcId: 'r7', method: 'ping' },
+      headers: { 'content-type': 'text/plain' }
+    }),
     makeRes()
   )
   assert.equal(badType.status, 415)
@@ -320,7 +331,10 @@ await testAsync('method 与 endpoint 不一致 → ok:false', async () => {
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r8', method: 'config.set' } }),
+    makeReq({
+      url: '/pet-bridge-ui/state.get',
+      body: { rpcId: 'r8', method: 'config.set' }
+    }),
     makeRes()
   )
   const result = JSON.parse(res.body).result
@@ -333,7 +347,10 @@ await testAsync('测试动作用不存在管道 → pipe-unavailable（不抛异
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/test.jump', body: { rpcId: 'r9', method: 'test.jump' } }),
+    makeReq({
+      url: '/pet-bridge-ui/test.jump',
+      body: { rpcId: 'r9', method: 'test.jump' }
+    }),
     makeRes()
   )
   const result = JSON.parse(res.body).result
@@ -486,7 +503,10 @@ await testAsync('logs.get 返回日志尾部行', async () => {
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/logs.get', body: { rpcId: 'r-log', method: 'logs.get', payload: { lines: 3 } } }),
+    makeReq({
+      url: '/pet-bridge-ui/logs.get',
+      body: { rpcId: 'r-log', method: 'logs.get', payload: { lines: 3 } }
+    }),
     makeRes()
   )
   const result = JSON.parse(res.body).result
@@ -502,7 +522,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
     routes,
     makeReq({
       url: '/pet-bridge-ui/action.request',
-      body: { rpcId: 'r-act', method: 'action.request', payload: { name: 'restart-pet' } }
+      body: {
+        rpcId: 'r-act',
+        method: 'action.request',
+        payload: { name: 'restart-pet' }
+      }
     }),
     makeRes()
   )
@@ -519,7 +543,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
     routes,
     makeReq({
       url: '/pet-bridge-ui/action.request',
-      body: { rpcId: 'r-act2', method: 'action.request', payload: { name: 'stop-pet' } }
+      body: {
+        rpcId: 'r-act2',
+        method: 'action.request',
+        payload: { name: 'stop-pet' }
+      }
     }),
     makeRes()
   )
@@ -535,7 +563,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
     routes,
     makeReq({
       url: '/pet-bridge-ui/action.request',
-      body: { rpcId: 'r-act3', method: 'action.request', payload: { name: 'stop-pet' } }
+      body: {
+        rpcId: 'r-act3',
+        method: 'action.request',
+        payload: { name: 'stop-pet' }
+      }
     }),
     makeRes()
   )
@@ -546,7 +578,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
     routes,
     makeReq({
       url: '/pet-bridge-ui/action.request',
-      body: { rpcId: 'r-act4', method: 'action.request', payload: { name: 'format-c' } }
+      body: {
+        rpcId: 'r-act4',
+        method: 'action.request',
+        payload: { name: 'format-c' }
+      }
     }),
     makeRes()
   )
@@ -559,7 +595,10 @@ await testAsync('config.reset 恢复默认值（含完整 pet 默认表 + bubble
   fs.writeFileSync(tmpCfg.uiConfigFile, JSON.stringify({ pet: { size: 0.2 }, activity: 'quiet' }), 'utf8')
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/config.reset', body: { rpcId: 'r-reset', method: 'config.reset' } }),
+    makeReq({
+      url: '/pet-bridge-ui/config.reset',
+      body: { rpcId: 'r-reset', method: 'config.reset' }
+    }),
     makeRes()
   )
   const result = JSON.parse(res.body).result
@@ -622,7 +661,10 @@ test('PET_ACTION_CMDS 覆盖旧菜单快捷项且 balance/quit 标注待服务�
 })
 
 test('normalizePetSettings 支持 doubleClick / autoStart', () => {
-  const good = normalizePetSettings({ doubleClick: 'weather', autoStart: true })
+  const good = normalizePetSettings({
+    doubleClick: 'weather',
+    autoStart: true
+  })
   assert.equal(good.error, undefined)
   assert.equal(good.value.doubleClick, 'weather')
   assert.equal(good.value.autoStart, true)
@@ -637,7 +679,11 @@ await testAsync('pet.action：未就绪动作返回 not-supported（balance）',
     routes,
     makeReq({
       url: '/pet-bridge-ui/pet.action',
-      body: { rpcId: 'r-pa1', method: 'pet.action', payload: { name: 'balance' } }
+      body: {
+        rpcId: 'r-pa1',
+        method: 'pet.action',
+        payload: { name: 'balance' }
+      }
     }),
     makeRes()
   )
@@ -653,7 +699,11 @@ await testAsync('pet.action：已就绪动作在管道不可用时返回 pipe-un
     routes,
     makeReq({
       url: '/pet-bridge-ui/pet.action',
-      body: { rpcId: 'r-pa2', method: 'pet.action', payload: { name: 'weather' } }
+      body: {
+        rpcId: 'r-pa2',
+        method: 'pet.action',
+        payload: { name: 'weather' }
+      }
     }),
     makeRes()
   )
@@ -669,7 +719,11 @@ await testAsync('pet.action：未知动作 invalid-argument', async () => {
     routes,
     makeReq({
       url: '/pet-bridge-ui/pet.action',
-      body: { rpcId: 'r-pa3', method: 'pet.action', payload: { name: 'explode' } }
+      body: {
+        rpcId: 'r-pa3',
+        method: 'pet.action',
+        payload: { name: 'explode' }
+      }
     }),
     makeRes()
   )
@@ -681,7 +735,10 @@ await testAsync('state.get 含 capabilities 与 petOptions（皮肤/双击/自�
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-caps', method: 'state.get' } }),
+    makeReq({
+      url: '/pet-bridge-ui/state.get',
+      body: { rpcId: 'r-caps', method: 'state.get' }
+    }),
     makeRes()
   )
   const data = JSON.parse(res.body).result.data
@@ -700,7 +757,11 @@ await testAsync('config.set pet.doubleClick/autoStart 写入 ui-config.pet（pen
     routes,
     makeReq({
       url: '/pet-bridge-ui/config.set',
-      body: { rpcId: 'r-dc', method: 'config.set', payload: { pet: { doubleClick: 'music', autoStart: true } } }
+      body: {
+        rpcId: 'r-dc',
+        method: 'config.set',
+        payload: { pet: { doubleClick: 'music', autoStart: true } }
+      }
     }),
     makeRes()
   )
@@ -780,7 +841,16 @@ test('无 status 字段：supported=false 且按 state.json.updatedAt 兜底判�
 test('容错：runtime.status / 顶层 runtime 两种形状都读；tool/step/turn/since 解析', () => {
   const a = normalizeRuntimeStatus(
     {
-      runtime: { status: { state: 'tool', tool: 'bash', step: 3, turn: 2, since: iso(45000), heartbeatAt: iso(2000) } }
+      runtime: {
+        status: {
+          state: 'tool',
+          tool: 'bash',
+          step: 3,
+          turn: 2,
+          since: iso(45000),
+          heartbeatAt: iso(2000)
+        }
+      }
     },
     { now: NOW }
   )
@@ -798,7 +868,10 @@ await testAsync('state.get 返回 runtime 字段（当前环境无 status → �
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-rt', method: 'state.get' } }),
+    makeReq({
+      url: '/pet-bridge-ui/state.get',
+      body: { rpcId: 'r-rt', method: 'state.get' }
+    }),
     makeRes()
   )
   const data = JSON.parse(res.body).result.data
@@ -809,6 +882,171 @@ await testAsync('state.get 返回 runtime 字段（当前环境无 status → �
   assert.equal(data.runtime.staleAfterMs, 30000)
   dispose()
 })
+
+// ───────────────────────── 3.8 task-46：多会话（工作区分组） ─────────────────────────
+console.log('\n[3.8] 多会话视图（sessions[]）')
+
+const { normalizeSessions } = index.__test
+const SESS_NOW = Date.parse('2026-10-23T07:10:00.000Z')
+const sessAgo = (ms) => new Date(SESS_NOW - ms).toISOString()
+
+test('无 sessions 字段 → 单会话兼容模式', () => {
+  const rt = {
+    state: 'idle',
+    label: '空闲',
+    tone: 'dim',
+    tool: null,
+    heartbeatAt: sessAgo(2000),
+    heartbeatAgeMs: 2000
+  }
+  const r = normalizeSessions({ currentSessionId: 's1', activeSessionCount: 1 }, rt, { now: SESS_NOW })
+  assert.equal(r.supported, false)
+  assert.equal(r.total, 1)
+  assert.equal(r.othersCount, 0)
+  assert.equal(r.groups.length, 1)
+  assert.equal(r.groups[0].sessions[0].isCurrent, true)
+  assert.equal(r.groups[0].sessions[0].label, '空闲')
+})
+
+test('多工作区：当前会话所在组排最前，组内按最近活动排序', () => {
+  const r = normalizeSessions(
+    {
+      currentSessionId: 's-cur',
+      activeSessionCount: 3,
+      sessions: [
+        {
+          sessionId: 's-a',
+          workspace: 'proj-a',
+          title: 'A 任务',
+          state: 'thinking',
+          lastSeenAt: sessAgo(3000)
+        },
+        {
+          sessionId: 's-b',
+          workspace: 'proj-b',
+          title: 'B 任务',
+          state: 'tool',
+          tool: 'pwsh',
+          lastSeenAt: sessAgo(1000)
+        },
+        {
+          sessionId: 's-cur',
+          workspace: 'proj-b',
+          title: 'B 当前',
+          state: 'thinking',
+          lastSeenAt: sessAgo(8000)
+        }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  assert.equal(r.supported, true)
+  assert.equal(r.total, 3)
+  assert.equal(r.othersCount, 2)
+  assert.equal(r.groups.length, 2)
+  assert.equal(r.groups[0].workspace, 'proj-b')
+  assert.equal(r.groups[0].isCurrentGroup, true)
+  assert.equal(r.groups[0].sessions[0].sessionId, 's-cur')
+  assert.equal(r.groups[0].sessions[0].isCurrent, true)
+  assert.equal(r.groups[1].workspace, 'proj-a')
+})
+
+test('同一工作区多对话并列展示', () => {
+  const r = normalizeSessions(
+    {
+      currentSessionId: 's1',
+      activeSessionCount: 2,
+      sessions: [
+        {
+          sessionId: 's1',
+          workspace: 'w',
+          title: '一',
+          state: 'idle',
+          lastSeenAt: sessAgo(5000)
+        },
+        {
+          sessionId: 's2',
+          workspace: 'w',
+          title: '二',
+          state: 'tool',
+          tool: 'bash',
+          lastSeenAt: sessAgo(1000)
+        }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  assert.equal(r.groups.length, 1)
+  assert.equal(r.groups[0].sessions.length, 2)
+  assert.equal(r.groups[0].sessions[0].sessionId, 's1')
+  assert.equal(r.groups[0].sessions[0].isCurrent, true)
+  assert.equal(r.groups[0].isCurrentGroup, true)
+})
+
+test('role/state 后台标记 + 别名归一', () => {
+  const r = normalizeSessions(
+    {
+      currentSessionId: 'main',
+      activeSessionCount: 3,
+      sessions: [
+        {
+          sessionId: 'main',
+          workspace: 'w',
+          title: '主',
+          state: 'thinking',
+          role: 'main',
+          lastSeenAt: sessAgo(1000)
+        },
+        {
+          sessionId: 'sub',
+          workspace: 'w',
+          title: '子代理',
+          state: 'running',
+          role: 'subagent',
+          lastSeenAt: sessAgo(2000)
+        },
+        {
+          sessionId: 'tm',
+          workspace: 'w',
+          title: '队友',
+          state: 'background',
+          role: 'team',
+          lastSeenAt: sessAgo(3000)
+        }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  const rows = r.groups[0].sessions
+  assert.equal(rows[0].isCurrent, true)
+  const sub = rows.find((s) => s.sessionId === 'sub')
+  assert.equal(sub.isBackground, true)
+  assert.equal(sub.state, 'background')
+  const tm = rows.find((s) => s.sessionId === 'tm')
+  assert.equal(tm.isBackground, true)
+})
+
+await testAsync('state.get 返回 sessionList（无 sessions → supported=false 单会话兜底）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/state.get',
+      body: { rpcId: 'r-sess', method: 'state.get' }
+    }),
+    makeRes()
+  )
+  const data = JSON.parse(res.body).result.data
+  assert.ok(data.sessionList && typeof data.sessionList === 'object')
+  assert.equal(typeof data.sessionList.supported, 'boolean')
+  assert.equal(typeof data.sessionList.othersCount, 'number')
+  assert.ok(Array.isArray(data.sessionList.groups))
+  dispose()
+})
+
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────
 console.log('\n[4] client bundle 契约')
 

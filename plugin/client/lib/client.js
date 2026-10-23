@@ -86,7 +86,13 @@ window.__ModuleLoader__.load({
       'quit-pet': '退出桌宠'
     }
     /** task-44 状态色调（与样式主题一致的语义色）。 @type {Record<string,string>} */
-    const TONE_COLOR = { ok: '#3fb950', busy: '#6ea8ff', warn: '#d29922', err: '#e5534b', dim: '#9aa0a6' }
+    const TONE_COLOR = {
+      ok: '#3fb950',
+      busy: '#6ea8ff',
+      warn: '#d29922',
+      err: '#e5534b',
+      dim: '#9aa0a6'
+    }
 
     const PENDING_LABEL = {
       enabled: '总开关',
@@ -108,7 +114,14 @@ window.__ModuleLoader__.load({
     }
 
     const S = {
-      wrap: { display: 'flex', flexDirection: 'column', gap: 16, fontSize: 13, lineHeight: 1.6, maxWidth: 800 },
+      wrap: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 16,
+        fontSize: 13,
+        lineHeight: 1.6,
+        maxWidth: 800
+      },
       header: { display: 'flex', flexDirection: 'column', gap: 2 },
       h1: { fontSize: 16, fontWeight: 600, margin: 0 },
       hint: { fontSize: 12, opacity: 0.6, margin: 0 },
@@ -120,13 +133,27 @@ window.__ModuleLoader__.load({
         flexDirection: 'column',
         gap: 10
       },
-      cardHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      cardHead: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap'
+      },
       cardTitle: { fontSize: 13, fontWeight: 600, margin: 0 },
       row: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
       grow: { flex: '1 1 220px', minWidth: 0 },
       block: { minWidth: 0 },
-      grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 },
-      statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 },
+      grid2: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+        gap: 10
+      },
+      statusGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: 8
+      },
       statBox: {
         border: '1px solid rgba(128,128,128,.22)',
         borderRadius: 6,
@@ -137,8 +164,19 @@ window.__ModuleLoader__.load({
         minWidth: 0
       },
       statLabel: { fontSize: 11, opacity: 0.55 },
-      statValue: { fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 },
-      statDetail: { fontSize: 11, opacity: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+      statValue: {
+        fontSize: 13,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6
+      },
+      statDetail: {
+        fontSize: 11,
+        opacity: 0.5,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      },
       dotOn: { color: '#3fb950' },
       dotOff: { color: '#e5534b' },
       dotUnknown: { color: '#d29922' },
@@ -181,7 +219,10 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         lineHeight: 1.5
       },
-      btnPrimary: { background: 'rgba(90,150,255,.16)', borderColor: 'rgba(90,150,255,.5)' },
+      btnPrimary: {
+        background: 'rgba(90,150,255,.16)',
+        borderColor: 'rgba(90,150,255,.5)'
+      },
       btnDanger: { borderColor: 'rgba(229,83,75,.55)', color: '#e5534b' },
       btnDisabled: { opacity: 0.45, cursor: 'not-allowed' },
       seg: {
@@ -214,7 +255,10 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         lineHeight: 1.5
       },
-      chipActive: { background: 'rgba(90,150,255,.18)', borderColor: 'rgba(90,150,255,.5)' },
+      chipActive: {
+        background: 'rgba(90,150,255,.18)',
+        borderColor: 'rgba(90,150,255,.5)'
+      },
       toggle: {
         border: '1px solid rgba(128,128,128,.4)',
         borderRadius: 999,
@@ -225,10 +269,24 @@ window.__ModuleLoader__.load({
         background: 'transparent',
         color: 'inherit'
       },
-      toggleOn: { background: 'rgba(63,185,80,.18)', borderColor: 'rgba(63,185,80,.55)', color: '#3fb950' },
+      toggleOn: {
+        background: 'rgba(63,185,80,.18)',
+        borderColor: 'rgba(63,185,80,.55)',
+        color: '#3fb950'
+      },
       ok: { fontSize: 12, color: '#3fb950', margin: 0 },
-      err: { fontSize: 12, color: '#e5534b', whiteSpace: 'pre-wrap', margin: 0 },
-      warn: { fontSize: 12, color: '#d29922', margin: 0, whiteSpace: 'pre-wrap' },
+      err: {
+        fontSize: 12,
+        color: '#e5534b',
+        whiteSpace: 'pre-wrap',
+        margin: 0
+      },
+      warn: {
+        fontSize: 12,
+        color: '#d29922',
+        margin: 0,
+        whiteSpace: 'pre-wrap'
+      },
       mono: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 11,
@@ -236,7 +294,14 @@ window.__ModuleLoader__.load({
         wordBreak: 'break-all',
         margin: 0
       },
-      list: { display: 'flex', flexDirection: 'column', gap: 5, margin: 0, padding: 0, listStyle: 'none' },
+      list: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 5,
+        margin: 0,
+        padding: 0,
+        listStyle: 'none'
+      },
       listItem: {
         display: 'flex',
         gap: 8,
@@ -260,11 +325,75 @@ window.__ModuleLoader__.load({
         width: '100%'
       },
       progressBar: { height: '100%', borderRadius: 3, transition: 'width .3s' },
-      stateHead: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+      stateHead: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap'
+      },
       stateDot: { fontSize: 22, lineHeight: 1 },
       stateName: { fontSize: 18, fontWeight: 700, lineHeight: 1.2 },
-      stateDisconnected: { fontSize: 12, color: '#e5534b', margin: 0, fontWeight: 600 },
-      img: { maxWidth: '100%', borderRadius: 6, border: '1px solid rgba(128,128,128,.3)', display: 'block' },
+      stateDisconnected: {
+        fontSize: 12,
+        color: '#e5534b',
+        margin: 0,
+        fontWeight: 600
+      },
+      sessionGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        marginBottom: 2
+      },
+      sessionGroupHead: {
+        fontSize: 11,
+        opacity: 0.55,
+        letterSpacing: '.02em',
+        marginTop: 2
+      },
+      sessionRow: {
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 8,
+        flexWrap: 'wrap',
+        border: '1px solid rgba(128,128,128,.18)',
+        borderRadius: 6,
+        padding: '5px 8px'
+      },
+      sessionRowCurrent: {
+        borderColor: 'rgba(90,150,255,.55)',
+        background: 'rgba(90,150,255,.10)'
+      },
+      sessionDot: { fontSize: 12, lineHeight: 1 },
+      sessionTitle: { fontSize: 13, fontWeight: 600, minWidth: 0 },
+      sessionMeta: { fontSize: 11, opacity: 0.62 },
+      sessionId: {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: 10,
+        opacity: 0.38
+      },
+      sessionBadge: {
+        fontSize: 10,
+        padding: '0 6px',
+        borderRadius: 999,
+        border: '1px solid rgba(90,150,255,.6)',
+        color: '#6ea8ff',
+        lineHeight: 1.6
+      },
+      sessionBadgeBg: {
+        fontSize: 10,
+        padding: '0 6px',
+        borderRadius: 999,
+        border: '1px solid rgba(128,128,128,.35)',
+        color: '#9aa0a6',
+        lineHeight: 1.6
+      },
+      img: {
+        maxWidth: '100%',
+        borderRadius: 6,
+        border: '1px solid rgba(128,128,128,.3)',
+        display: 'block'
+      },
       pre: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 11,
@@ -596,7 +725,9 @@ window.__ModuleLoader__.load({
                 typeof petOptions.autoStart === 'boolean' &&
                 form.autoStart !== petOptions.autoStart
               ) {
-                await call('action.request', { name: form.autoStart ? 'enable-autostart' : 'disable-autostart' })
+                await call('action.request', {
+                  name: form.autoStart ? 'enable-autostart' : 'disable-autostart'
+                })
               }
             } catch (autoStartError) {
               // 自启队列失败不回滚已保存配置（面板会显示 pending）
@@ -629,7 +760,10 @@ window.__ModuleLoader__.load({
             } else {
               const data = await call('test.screenshot')
               setShot(data)
-              setMsg({ kind: 'ok', text: '截图完成 ' + Math.round(data.bytes / 1024) + ' KB（未写日志）' })
+              setMsg({
+                kind: 'ok',
+                text: '截图完成 ' + Math.round(data.bytes / 1024) + ' KB（未写日志）'
+              })
             }
           } catch (error) {
             setMsg({ kind: 'err', text: '测试失败：' + error.message })
@@ -693,7 +827,10 @@ window.__ModuleLoader__.load({
           try {
             const data = await call('config.set', { enabled: false })
             dirtyRef.current = false
-            setMsg({ kind: 'ok', text: '已停止联动（enabled=false，≤20s 生效；桌宠进程保留）' })
+            setMsg({
+              kind: 'ok',
+              text: '已停止联动（enabled=false，≤20s 生效；桌宠进程保留）'
+            })
             if (data.state) {
               setState(data.state)
               syncForm(data.state)
@@ -710,7 +847,10 @@ window.__ModuleLoader__.load({
           setMsg(null)
           try {
             await call('pet.nativeui', { on })
-            setMsg({ kind: 'ok', text: on ? '已临时显示桌宠原生菜单（用完建议隐藏）' : '已隐藏原生菜单' })
+            setMsg({
+              kind: 'ok',
+              text: on ? '已临时显示桌宠原生菜单（用完建议隐藏）' : '已隐藏原生菜单'
+            })
           } catch (error) {
             setMsg({ kind: 'err', text: '操作失败：' + error.message })
           } finally {
@@ -731,7 +871,10 @@ window.__ModuleLoader__.load({
           try {
             const data = await call('config.reset')
             dirtyRef.current = false
-            setMsg({ kind: 'ok', text: '已恢复默认配置 · ' + (data.note || '') })
+            setMsg({
+              kind: 'ok',
+              text: '已恢复默认配置 · ' + (data.note || '')
+            })
             if (data.state) {
               setState(data.state)
               syncForm(data.state)
@@ -775,7 +918,8 @@ window.__ModuleLoader__.load({
           bubble,
           capabilities,
           petOptions,
-          runtime
+          runtime,
+          sessionList
         } = state
         const rt = runtime || {
           supported: false,
@@ -784,6 +928,33 @@ window.__ModuleLoader__.load({
           tone: 'dim',
           disconnected: true,
           staleAfterMs: 30000
+        }
+        // task-46：多会话视图（无 sessionList 时按当前运行时兜底单会话）
+        const sl = sessionList || {
+          supported: false,
+          currentSessionId: null,
+          activeSessionCount: 1,
+          total: 1,
+          othersCount: 0,
+          groups: [
+            {
+              workspace: '当前工作区',
+              isCurrentGroup: true,
+              sessions: [
+                {
+                  sessionId: null,
+                  title: '(当前会话)',
+                  state: rt.state,
+                  label: rt.label,
+                  tone: rt.tone,
+                  tool: rt.tool,
+                  isCurrent: true,
+                  isBackground: false,
+                  lastSeenAgeMs: rt.heartbeatAgeMs
+                }
+              ]
+            }
+          ]
         }
         const caps = capabilities || {}
         const actionReady = (name) => (caps.petActionReadiness ? caps.petActionReadiness[name] !== false : true)
@@ -812,7 +983,15 @@ window.__ModuleLoader__.load({
             h('p', { style: S.hint }, 'DSH × 大肥鱼桌宠 · 唯一控制台（状态 / 基础设置 / 应急 / 日志 / 测试）')
           ),
 
-          msg ? h('p', { style: msg.kind === 'err' ? S.err : msg.kind === 'warn' ? S.warn : S.ok }, msg.text) : null,
+          msg
+            ? h(
+                'p',
+                {
+                  style: msg.kind === 'err' ? S.err : msg.kind === 'warn' ? S.warn : S.ok
+                },
+                msg.text
+              )
+            : null,
           pending && pending.length > 0
             ? h(
                 'p',
@@ -833,7 +1012,11 @@ window.__ModuleLoader__.load({
               { style: S.stateHead },
               h(
                 'span',
-                { style: Object.assign({}, S.stateDot, { color: TONE_COLOR[rt.tone] || TONE_COLOR.dim }) },
+                {
+                  style: Object.assign({}, S.stateDot, {
+                    color: TONE_COLOR[rt.tone] || TONE_COLOR.dim
+                  })
+                },
                 rt.disconnected ? '⚠' : '●'
               ),
               h('span', { style: S.stateName }, rt.label || '未知'),
@@ -886,10 +1069,77 @@ window.__ModuleLoader__.load({
                 )
           ),
 
+          // ── 运行中的对话（task-46：多工作区 / 同工作区多对话） ──
+          h(
+            Card,
+            {
+              title: '运行中的对话',
+              right: h(
+                'span',
+                { style: S.hint },
+                sl.othersCount > 0
+                  ? '另有 ' + sl.othersCount + ' 个对话在跑'
+                  : sl.supported
+                    ? '仅当前会话'
+                    : '单会话兼容模式'
+              )
+            },
+            sl.supported
+              ? null
+              : h(
+                  'p',
+                  { style: S.hint },
+                  '多会话字段未就绪：当前按单会话显示（tech-scout task-46 `sessions[]` 上线后自动切换为按工作区分组）'
+                ),
+            sl.groups.map((group) =>
+              h(
+                'div',
+                { key: 'g-' + group.workspace, style: S.sessionGroup },
+                h(
+                  'div',
+                  { style: S.sessionGroupHead },
+                  (group.isCurrentGroup ? '▸ ' : '· ') + group.workspace + '（' + group.sessions.length + ' 个对话）'
+                ),
+                group.sessions.map((sess, index) =>
+                  h(
+                    'div',
+                    {
+                      key: (sess.sessionId || 'session') + '-' + index,
+                      style: Object.assign({}, S.sessionRow, sess.isCurrent ? S.sessionRowCurrent : null)
+                    },
+                    h(
+                      'span',
+                      {
+                        style: Object.assign({}, S.sessionDot, {
+                          color: TONE_COLOR[sess.tone] || TONE_COLOR.dim
+                        })
+                      },
+                      '●'
+                    ),
+                    sess.isCurrent ? h('span', { style: S.sessionBadge }, '跟随中') : null,
+                    sess.isBackground ? h('span', { style: S.sessionBadgeBg }, '后台') : null,
+                    h('span', { style: S.sessionTitle }, sess.title || '(未命名会话)'),
+                    h('span', { style: S.sessionMeta }, sess.label || sess.state),
+                    sess.tool ? h('span', { style: S.sessionMeta }, '工具 ' + sess.tool) : null,
+                    h(
+                      'span',
+                      { style: S.sessionMeta },
+                      sess.lastSeenAgeMs == null ? '无活动时间' : '最后活动 ' + fmtAge(sess.lastSeenAgeMs)
+                    ),
+                    sess.sessionId ? h('span', { style: S.sessionId }, String(sess.sessionId).slice(0, 18)) : null
+                  )
+                )
+              )
+            )
+          ),
+
           // ── 运行状态 ──
           h(
             Card,
-            { title: '运行状态', right: h('span', { style: S.hint }, '刷新于 ' + fmtTime(state.now)) },
+            {
+              title: '运行状态',
+              right: h('span', { style: S.hint }, '刷新于 ' + fmtTime(state.now))
+            },
             h(
               'div',
               { style: S.statusGrid },
@@ -966,7 +1216,10 @@ window.__ModuleLoader__.load({
           // ── 快捷查看（task-36：对齐旧右键菜单项） ──
           h(
             Card,
-            { title: '快捷查看', right: h('span', { style: S.hint }, '点击即让桌宠响应（管道即时）') },
+            {
+              title: '快捷查看',
+              right: h('span', { style: S.hint }, '点击即让桌宠响应（管道即时）')
+            },
             h(
               'div',
               { style: S.row },
@@ -996,7 +1249,10 @@ window.__ModuleLoader__.load({
           // ── 总开关 ──
           h(
             Card,
-            { title: '联动总开关', right: h('span', { style: S.hint }, 'enabled = ' + String(!!form.enabled)) },
+            {
+              title: '联动总开关',
+              right: h('span', { style: S.hint }, 'enabled = ' + String(!!form.enabled))
+            },
             h(
               'div',
               { style: S.row },
@@ -1019,11 +1275,17 @@ window.__ModuleLoader__.load({
           // ── 活跃度 ──
           h(
             Card,
-            { title: '活跃度', right: h('span', { style: S.hint }, '写 activity.txt · 即时生效（≤20s）') },
+            {
+              title: '活跃度',
+              right: h('span', { style: S.hint }, '写 activity.txt · 即时生效（≤20s）')
+            },
             h(Segmented, {
               value: form.activity,
               disabled: busyNow,
-              options: Object.keys(ACTIVITY_META).map((k) => ({ value: k, label: ACTIVITY_META[k].label })),
+              options: Object.keys(ACTIVITY_META).map((k) => ({
+                value: k,
+                label: ACTIVITY_META[k].label
+              })),
               onChange: (v) => touch({ activity: v })
             }),
             h('p', { style: S.hint }, (ACTIVITY_META[form.activity] || ACTIVITY_META.normal).desc)
@@ -1062,7 +1324,10 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   style: Object.assign({}, S.btn, busyNow ? S.btnDisabled : null),
                   disabled: busyNow,
-                  onClick: () => runPetAction('quietStart', { minutes: Math.max(1, Number(form.quietMinutes) || 30) })
+                  onClick: () =>
+                    runPetAction('quietStart', {
+                      minutes: Math.max(1, Number(form.quietMinutes) || 30)
+                    })
                 },
                 busy === 'pet:quietStart' ? '设置中…' : '立即免打扰（' + (Number(form.quietMinutes) || 30) + ' 分钟）'
               ),
@@ -1087,7 +1352,10 @@ window.__ModuleLoader__.load({
           // ── 每日预算 ──
           h(
             Card,
-            { title: '每日费用上限', right: h('span', { style: S.hint }, 'llm.budgetPerDayYuan') },
+            {
+              title: '每日费用上限',
+              right: h('span', { style: S.hint }, 'llm.budgetPerDayYuan')
+            },
             h(
               'div',
               { style: S.row },
@@ -1111,7 +1379,14 @@ window.__ModuleLoader__.load({
             ),
             h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' } },
+              {
+                style: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  flex: '1 1 240px'
+                }
+              },
               h(
                 'div',
                 { style: S.progressTrack },
@@ -1142,7 +1417,10 @@ window.__ModuleLoader__.load({
           // ── 桌宠外观 ──
           h(
             Card,
-            { title: '桌宠外观', right: h('span', { style: S.hint }, '大小/透明度即时生效') },
+            {
+              title: '桌宠外观',
+              right: h('span', { style: S.hint }, '大小/透明度即时生效')
+            },
             h(
               'div',
               { style: S.block },
@@ -1300,7 +1578,18 @@ window.__ModuleLoader__.load({
                       form.skin && !((petOptions && petOptions.skins) || []).includes(form.skin) ? [form.skin] : []
                     )
                     .map((s) =>
-                      h('option', { key: s, value: s, style: { backgroundColor: '#1f1f1f', color: '#f5f5f5' } }, s)
+                      h(
+                        'option',
+                        {
+                          key: s,
+                          value: s,
+                          style: {
+                            backgroundColor: '#1f1f1f',
+                            color: '#f5f5f5'
+                          }
+                        },
+                        s
+                      )
                     )
                 )
               ),
@@ -1356,7 +1645,10 @@ window.__ModuleLoader__.load({
           // ── 语录与气泡 ──
           h(
             Card,
-            { title: '语录与气泡', right: h('span', { style: S.hint }, '语录频率即时生效') },
+            {
+              title: '语录与气泡',
+              right: h('span', { style: S.hint }, '语录频率即时生效')
+            },
             h(
               'div',
               { style: S.grid2 },
@@ -1451,7 +1743,11 @@ window.__ModuleLoader__.load({
                   DOUBLE_CLICK_META.map((m) =>
                     h(
                       'option',
-                      { key: m.value, value: m.value, style: { backgroundColor: '#1f1f1f', color: '#f5f5f5' } },
+                      {
+                        key: m.value,
+                        value: m.value,
+                        style: { backgroundColor: '#1f1f1f', color: '#f5f5f5' }
+                      },
                       m.label
                     )
                   )
@@ -1485,7 +1781,10 @@ window.__ModuleLoader__.load({
           // ── 最近 say ──
           h(
             Card,
-            { title: '最近 say 记录', right: h('span', { style: S.hint }, '最近 ' + (recentSay || []).length + ' 条') },
+            {
+              title: '最近 say 记录',
+              right: h('span', { style: S.hint }, '最近 ' + (recentSay || []).length + ' 条')
+            },
             sayNewestFirst.length === 0
               ? h('p', { style: S.hint }, '暂无记录（日志里还没有 say 行）')
               : h(
@@ -1522,7 +1821,9 @@ window.__ModuleLoader__.load({
             logs
               ? h(
                   'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                  {
+                    style: { display: 'flex', flexDirection: 'column', gap: 6 }
+                  },
                   h('pre', { style: S.pre }, (logs.lines || []).join('\n')),
                   h('p', { style: S.mono }, logs.file)
                 )
@@ -1532,7 +1833,10 @@ window.__ModuleLoader__.load({
           // ── 应急控制 ──
           h(
             Card,
-            { title: '应急控制', right: h('span', { style: S.badgeWarn }, '高风险操作') },
+            {
+              title: '应急控制',
+              right: h('span', { style: S.badgeWarn }, '高风险操作')
+            },
             h(
               'div',
               { style: S.row },
@@ -1629,7 +1933,9 @@ window.__ModuleLoader__.load({
             showRollback
               ? h(
                   'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                  {
+                    style: { display: 'flex', flexDirection: 'column', gap: 6 }
+                  },
                   h('p', { style: S.warn }, '回滚设置面板（不影响桌宠/联动插件）：'),
                   h(
                     'pre',
@@ -1649,7 +1955,10 @@ window.__ModuleLoader__.load({
               'div',
               { style: S.row },
               h('input', {
-                style: Object.assign({}, S.field, { flex: '1 1 220px', width: 'auto' }),
+                style: Object.assign({}, S.field, {
+                  flex: '1 1 220px',
+                  width: 'auto'
+                }),
                 value: testLine,
                 placeholder: '自定义台词（可空，默认：测试一下：我在这儿呢。）',
                 maxLength: 60,
@@ -1689,8 +1998,14 @@ window.__ModuleLoader__.load({
             shot
               ? h(
                   'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-                  h('img', { style: S.img, src: shot.dataUrl, alt: '桌面截图' }),
+                  {
+                    style: { display: 'flex', flexDirection: 'column', gap: 6 }
+                  },
+                  h('img', {
+                    style: S.img,
+                    src: shot.dataUrl,
+                    alt: '桌面截图'
+                  }),
                   h('p', { style: S.mono }, '截图文件：' + shot.file)
                 )
               : h('p', { style: S.hint }, '说一句/跳一下走命名管道协议；截图抓当前桌面（仅本次点击，不写日志）')
@@ -1699,7 +2014,14 @@ window.__ModuleLoader__.load({
           // ── 底部 ──
           h(
             'div',
-            { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            {
+              style: {
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                flexWrap: 'wrap'
+              }
+            },
             h(
               'button',
               {

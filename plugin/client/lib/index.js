@@ -339,6 +339,144 @@ export function normalizeRuntimeStatus(stateFile, opts = {}) {
   }
 }
 
+/** 会话角色归一：团队/子代理/后台统一标「后台」，主会话标「主会话」。 */
+const SESSION_BACKGROUND_ROLES = new Set(['team', 'teammate', 'subagent', 'child', 'background', 'agent'])
+const SESSION_IDLE_STATES = new Set(['idle', 'done', 'disconnected'])
+
+/**
+ * task-46：把 `state.json.sessions[]` 归一成按工作区分组的「运行中的对话」视图。
+ *
+ * 字段（tech-scout 协议，容错读取）：`sessionId` / `workspace`（或 `cwd`）/ `title` /
+ * `state` / `tool` / `lastUserMessageAt` / `lastSeenAt` / `role`；顶层另有
+ * `currentSessionId`、`activeSessionCount`。无 `sessions` 时退回单会话视图（supported=false）。
+ *
+ * @param {object|null} stateFile 联动插件写出的 state.json
+ * @param {ReturnType<typeof normalizeRuntimeStatus>} runtime 当前归一后的运行时状态
+ * @param {{ now?: number }} [opts]
+ * @returns {{
+ *   supported: boolean, currentSessionId: string|null, activeSessionCount: number,
+ *   total: number, othersCount: number,
+ *   groups: Array<{ workspace: string, isCurrentGroup: boolean, sessions: Array<object> }>
+ * }}
+ */
+export function normalizeSessions(stateFile, runtime, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now()
+  const raw = Array.isArray(stateFile?.sessions) ? stateFile.sessions : []
+  const currentSessionId = typeof stateFile?.currentSessionId === 'string' ? stateFile.currentSessionId : null
+  const activeSessionCount = Number.isFinite(stateFile?.activeSessionCount)
+    ? Math.max(0, stateFile.activeSessionCount)
+    : null
+
+  const firstString = (...values) => {
+    for (const value of values) if (typeof value === 'string' && value.trim()) return value.trim()
+    return null
+  }
+  const timeMs = (value) => {
+    const t = value ? new Date(value).getTime() : NaN
+    return Number.isFinite(t) ? t : null
+  }
+
+  if (raw.length === 0) {
+    // 兼容：无多会话协议时退回单会话（用 status 通道信息填充）
+    const state = runtime?.state ?? 'idle'
+    const single = {
+      sessionId: currentSessionId || runtime?.source || null,
+      workspace: firstString(stateFile?.workspace) || '当前工作区',
+      title: firstString(stateFile?.title) || '(当前会话)',
+      state,
+      tool: runtime?.tool ?? null,
+      role: 'main',
+      lastUserMessageAt: null,
+      lastSeenAt: runtime?.heartbeatAt ?? stateFile?.updatedAt ?? null,
+      lastSeenAgeMs: runtime?.heartbeatAgeMs ?? null,
+      isCurrent: true,
+      isBackground: false,
+      label: runtime?.label ?? '空闲',
+      tone: runtime?.tone ?? 'dim'
+    }
+    return {
+      supported: false,
+      currentSessionId: single.sessionId,
+      activeSessionCount: activeSessionCount ?? 1,
+      total: 1,
+      othersCount: 0,
+      groups: [
+        {
+          workspace: single.workspace,
+          isCurrentGroup: true,
+          sessions: [single]
+        }
+      ]
+    }
+  }
+
+  const sessions = raw
+    .map((item) => {
+      if (!isObject(item)) return null
+      const sid = firstString(item.sessionId, item.id, item.key)
+      const workspace = firstString(item.workspace, item.cwd, item.workdir) || '(未知工作区)'
+      const rawState = String(item.state ?? '')
+        .trim()
+        .toLowerCase()
+      const state = RUNTIME_STATE_ALIASES[rawState.replace(/[^a-z_]/g, '')] ?? rawState
+      const meta = RUNTIME_STATE_META[state] || RUNTIME_STATE_META.idle
+      const role = String(item.role ?? 'main').toLowerCase()
+      const lastSeenAt = firstString(item.lastSeenAt, item.lastEventAt, item.updatedAt)
+      const lastSeenMs = timeMs(lastSeenAt)
+      return {
+        sessionId: sid,
+        workspace,
+        title: firstString(item.title, item.name) || (sid ? sid.slice(0, 18) : '(未命名会话)'),
+        state: RUNTIME_STATE_META[state] ? state : 'idle',
+        tool: firstString(item.tool, item.toolName),
+        role,
+        lastUserMessageAt: firstString(item.lastUserMessageAt, item.lastUserMessage),
+        lastSeenAt,
+        lastSeenAgeMs: lastSeenMs === null ? null : Math.max(0, now - lastSeenMs),
+        isCurrent: Boolean(sid && currentSessionId && sid === currentSessionId),
+        isBackground: SESSION_BACKGROUND_ROLES.has(role) || state === 'background',
+        label: meta.label,
+        tone: meta.tone
+      }
+    })
+    .filter(Boolean)
+
+  // 同一工作区聚合；组内：当前会话优先 → 最近活动倒序
+  const groupMap = new Map()
+  for (const session of sessions) {
+    const key = session.workspace
+    if (!groupMap.has(key)) groupMap.set(key, [])
+    groupMap.get(key).push(session)
+  }
+  const groups = [...groupMap.entries()].map(([workspace, list]) => {
+    const sorted = list.slice().sort((a, b) => {
+      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
+      return (b.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER) < (a.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER) ? -1 : 1
+    })
+    return {
+      workspace,
+      isCurrentGroup: sorted.some((s) => s.isCurrent),
+      sessions: sorted
+    }
+  })
+  groups.sort((a, b) => {
+    if (a.isCurrentGroup !== b.isCurrentGroup) return a.isCurrentGroup ? -1 : 1
+    const aMax = Math.max(...a.sessions.map((s) => s.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER))
+    const bMax = Math.max(...b.sessions.map((s) => s.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER))
+    return aMax - bMax
+  })
+
+  const total = sessions.length
+  return {
+    supported: true,
+    currentSessionId,
+    activeSessionCount: activeSessionCount ?? total,
+    total,
+    othersCount: Math.max(0, (activeSessionCount ?? total) - (currentSessionId ? 1 : 0)),
+    groups
+  }
+}
+
 // ────────────────────────────── 日志解析 ──────────────────────────────
 
 /**
@@ -631,7 +769,11 @@ function probePipe(pipe, timeoutMs) {
       } catch {
         /* ignore */
       }
-      resolve({ online, latencyMs: Date.now() - started, error: error ?? null })
+      resolve({
+        online,
+        latencyMs: Date.now() - started,
+        error: error ?? null
+      })
     }
     const sock = net.connect(pipe)
     sock.setTimeout(timeoutMs, () => finish(false, 'timeout'))
@@ -815,7 +957,11 @@ function buildHandler(cfg, log) {
     if (isObject(raw)) {
       const at = raw.updatedAt ? new Date(raw.updatedAt) : null
       const ageMs = at && !Number.isNaN(at.getTime()) ? Date.now() - at.getTime() : null
-      value = { ...raw, _ageMs: ageMs, _fresh: ageMs !== null && ageMs < cfg.stateFileTtlMs }
+      value = {
+        ...raw,
+        _ageMs: ageMs,
+        _fresh: ageMs !== null && ageMs < cfg.stateFileTtlMs
+      }
     }
     stateCache.at = Date.now()
     stateCache.value = value
@@ -984,7 +1130,11 @@ function buildHandler(cfg, log) {
         ? stateFile.skins.available.map(String)
         : readSkinOptions(cfg.petConfigFile)
     // task-44：实时状态（思考/调工具/等确认/后台/出错/完成/空闲/失联），30s 无心跳判失联
-    const runtime = normalizeRuntimeStatus(stateFile, { staleMs: cfg.runtimeStaleMs })
+    const runtime = normalizeRuntimeStatus(stateFile, {
+      staleMs: cfg.runtimeStaleMs
+    })
+    // task-46：多会话视图（按工作区分组；无 sessions 时退回单会话）
+    const sessionList = normalizeSessions(stateFile, runtime)
 
     return {
       ok: true,
@@ -1018,6 +1168,7 @@ function buildHandler(cfg, log) {
         bubble,
         attribution: isObject(stateFile?.attribution) ? stateFile.attribution : null,
         runtime,
+        sessionList,
         capabilities: {
           petActions: Object.keys(PET_ACTION_CMDS).filter((k) => petActionReadiness[k] !== false),
           petActionReadiness,
@@ -1076,7 +1227,10 @@ function buildHandler(cfg, log) {
 
     if (payload?.enabled !== undefined) {
       if (typeof payload.enabled !== 'boolean') {
-        return { ok: false, error: { code: 'invalid-argument', message: 'enabled 必须是布尔值' } }
+        return {
+          ok: false,
+          error: { code: 'invalid-argument', message: 'enabled 必须是布尔值' }
+        }
       }
       next.enabled = payload.enabled
     }
@@ -1086,7 +1240,10 @@ function buildHandler(cfg, log) {
       if (!ACTIVITY_LEVELS.includes(level)) {
         return {
           ok: false,
-          error: { code: 'invalid-argument', message: `activity 只能是 ${ACTIVITY_LEVELS.join(' / ')}` }
+          error: {
+            code: 'invalid-argument',
+            message: `activity 只能是 ${ACTIVITY_LEVELS.join(' / ')}`
+          }
         }
       }
       next.activity = level
@@ -1104,7 +1261,10 @@ function buildHandler(cfg, log) {
       if (!Array.isArray(payload.quietHours)) {
         return {
           ok: false,
-          error: { code: 'invalid-argument', message: 'quietHours 必须是字符串数组，如 ["23:30-08:00"]' }
+          error: {
+            code: 'invalid-argument',
+            message: 'quietHours 必须是字符串数组，如 ["23:30-08:00"]'
+          }
         }
       }
       const bad = payload.quietHours.find((r) => !QUIET_RANGE_RE.test(String(r ?? '').trim()))
@@ -1123,16 +1283,28 @@ function buildHandler(cfg, log) {
     if (payload?.budgetPerDayYuan !== undefined) {
       const n = Number(payload.budgetPerDayYuan)
       if (!Number.isFinite(n) || n < 0 || n > 10000) {
-        return { ok: false, error: { code: 'invalid-argument', message: '每日上限应是 0~10000 之间的数字（元）' } }
+        return {
+          ok: false,
+          error: {
+            code: 'invalid-argument',
+            message: '每日上限应是 0~10000 之间的数字（元）'
+          }
+        }
       }
-      next.llm = { ...(isObject(next.llm) ? next.llm : {}), budgetPerDayYuan: n }
+      next.llm = {
+        ...(isObject(next.llm) ? next.llm : {}),
+        budgetPerDayYuan: n
+      }
     }
 
     if (payload?.pet !== undefined) {
       const currentPet = isObject(next.pet) ? next.pet : {}
       const norm = normalizePetSettings(payload.pet, currentPet)
       if (norm.error) {
-        return { ok: false, error: { code: 'invalid-argument', message: norm.error } }
+        return {
+          ok: false,
+          error: { code: 'invalid-argument', message: norm.error }
+        }
       }
       next.pet = norm.value
       // 协议支持即时生效的项：cmd:config 批量下发（桌宠 v10 补丁已支持）
@@ -1141,7 +1313,10 @@ function buildHandler(cfg, log) {
         const results = []
         for (const line of cmds) {
           const r = await sendPipeLine(cfg.pipe, line)
-          results.push({ cmd: line.slice(0, 80) + (line.length > 80 ? '…' : ''), ok: r.ok })
+          results.push({
+            cmd: line.slice(0, 80) + (line.length > 80 ? '…' : ''),
+            ok: r.ok
+          })
         }
         applied.pet = results
       }
@@ -1166,7 +1341,10 @@ function buildHandler(cfg, log) {
     try {
       writeJsonAtomic(cfg.uiConfigFile, next)
     } catch (error) {
-      return { ok: false, error: { code: 'write-failed', message: clip(error?.message, 200) } }
+      return {
+        ok: false,
+        error: { code: 'write-failed', message: clip(error?.message, 200) }
+      }
     }
     log.info(`[pet-bridge-ui] config saved fields=${Object.keys(payload ?? {}).join(',')}`)
     return {
@@ -1201,7 +1379,10 @@ function buildHandler(cfg, log) {
       fs.mkdirSync(path.dirname(cfg.activityFile), { recursive: true })
       fs.writeFileSync(cfg.activityFile, 'normal', 'utf8')
     } catch (error) {
-      return { ok: false, error: { code: 'write-failed', message: clip(error?.message, 200) } }
+      return {
+        ok: false,
+        error: { code: 'write-failed', message: clip(error?.message, 200) }
+      }
     }
     const cmds = petSettingsToCmds(pet)
     const results = []
@@ -1253,14 +1434,20 @@ function buildHandler(cfg, log) {
     if (!SUPPORTED.includes(name)) {
       return {
         ok: false,
-        error: { code: 'invalid-argument', message: `不支持的动作：${name}（支持 ${SUPPORTED.join(' / ')}）` }
+        error: {
+          code: 'invalid-argument',
+          message: `不支持的动作：${name}（支持 ${SUPPORTED.join(' / ')}）`
+        }
       }
     }
     const existing = readJson(cfg.actionFile, null)
     if (isObject(existing) && existing.id && !existing.handledAt) {
       return {
         ok: false,
-        error: { code: 'busy', message: `上一条动作尚未执行完成（${existing.name ?? '?'}），请稍后再试` }
+        error: {
+          code: 'busy',
+          message: `上一条动作尚未执行完成（${existing.name ?? '?'}），请稍后再试`
+        }
       }
     }
     const request = {
@@ -1272,7 +1459,10 @@ function buildHandler(cfg, log) {
     try {
       writeJsonAtomic(cfg.actionFile, request)
     } catch (error) {
-      return { ok: false, error: { code: 'write-failed', message: clip(error?.message, 200) } }
+      return {
+        ok: false,
+        error: { code: 'write-failed', message: clip(error?.message, 200) }
+      }
     }
     log.info(`[pet-bridge-ui] action queued name=${name}`)
     return {
@@ -1306,23 +1496,44 @@ function buildHandler(cfg, log) {
     }
     const readiness = effectiveReadiness()
     if (readiness[name] === false) {
-      return { ok: false, error: { code: 'not-supported', message: `桌宠协议尚未支持「${name}」（待服务端）` } }
+      return {
+        ok: false,
+        error: {
+          code: 'not-supported',
+          message: `桌宠协议尚未支持「${name}」（待服务端）`
+        }
+      }
     }
     const r = await sendPipeCommand(cfg.pipe, line)
     const reply = String(r.reply ?? '')
     if (!r.ok) {
-      return { ok: false, error: { code: 'pipe-unavailable', message: `管道不可写（${r.error ?? '未知原因'}）` } }
+      return {
+        ok: false,
+        error: {
+          code: 'pipe-unavailable',
+          message: `管道不可写（${r.error ?? '未知原因'}）`
+        }
+      }
     }
     if (/^unknowncmd:/.test(reply)) {
       log.info(`[pet-bridge-ui] pet.action ${name} not-supported reply=${clip(reply, 80)}`)
       return {
         ok: false,
-        error: { code: 'not-supported', message: `桌宠暂不支持该命令（${clip(reply, 80)}），待服务端升级` }
+        error: {
+          code: 'not-supported',
+          message: `桌宠暂不支持该命令（${clip(reply, 80)}），待服务端升级`
+        }
       }
     }
     if (/-fail$/.test(reply)) {
       log.info(`[pet-bridge-ui] pet.action ${name} failed reply=${clip(reply, 80)}`)
-      return { ok: false, error: { code: 'pet-error', message: `桌宠执行失败：${clip(reply, 120)}` } }
+      return {
+        ok: false,
+        error: {
+          code: 'pet-error',
+          message: `桌宠执行失败：${clip(reply, 120)}`
+        }
+      }
     }
     log.info(`[pet-bridge-ui] pet.action ${name} ok reply=${clip(reply, 80)}`)
     return { ok: true, data: { name, cmd: line, reply } }
@@ -1331,26 +1542,45 @@ function buildHandler(cfg, log) {
   async function runTest(kind, payload) {
     if (kind === 'say') {
       const text = clip(payload?.text ?? '测试一下：我在这儿呢。', 60)
-      if (!text) return { ok: false, error: { code: 'invalid-argument', message: '台词不能为空' } }
+      if (!text)
+        return {
+          ok: false,
+          error: { code: 'invalid-argument', message: '台词不能为空' }
+        }
       const r = await sendPipeLine(cfg.pipe, `say:${text}`)
       log.info(`[pet-bridge-ui] test say sent=${r.ok} chars=${text.length}`)
       return r.ok
         ? { ok: true, data: { sent: true, line: text } }
-        : { ok: false, error: { code: 'pipe-unavailable', message: `管道不可写（${r.error ?? '未知原因'}）` } }
+        : {
+            ok: false,
+            error: {
+              code: 'pipe-unavailable',
+              message: `管道不可写（${r.error ?? '未知原因'}）`
+            }
+          }
     }
     if (kind === 'jump') {
       const r = await sendPipeLine(cfg.pipe, 'act:jump')
       log.info(`[pet-bridge-ui] test jump sent=${r.ok}`)
       return r.ok
         ? { ok: true, data: { sent: true, action: 'jump' } }
-        : { ok: false, error: { code: 'pipe-unavailable', message: `管道不可写（${r.error ?? '未知原因'}）` } }
+        : {
+            ok: false,
+            error: {
+              code: 'pipe-unavailable',
+              message: `管道不可写（${r.error ?? '未知原因'}）`
+            }
+          }
     }
     if (kind === 'screenshot') {
       const shot = await takeScreenshot(cfg.evidenceDir)
       log.info(`[pet-bridge-ui] test screenshot ok=${shot.ok}${shot.ok ? ` bytes=${shot.bytes}` : ''}`)
       return shot.ok ? { ok: true, data: shot } : { ok: false, error: { code: shot.error, message: shot.message } }
     }
-    return { ok: false, error: { code: 'unknown-endpoint', message: `未知测试动作：${kind}` } }
+    return {
+      ok: false,
+      error: { code: 'unknown-endpoint', message: `未知测试动作：${kind}` }
+    }
   }
 
   /**
@@ -1362,7 +1592,14 @@ function buildHandler(cfg, log) {
   return async function handler(endpoint, payload) {
     switch (endpoint) {
       case 'ping':
-        return { ok: true, data: { pong: true, version: PLUGIN_VERSION, now: new Date().toISOString() } }
+        return {
+          ok: true,
+          data: {
+            pong: true,
+            version: PLUGIN_VERSION,
+            now: new Date().toISOString()
+          }
+        }
       case 'state.get':
         return collectState()
       case 'config.set':
@@ -1381,8 +1618,20 @@ function buildHandler(cfg, log) {
         const r = await sendPipeLine(cfg.pipe, `cmd:nativeui:${on ? 'on' : 'off'}`)
         log.info(`[pet-bridge-ui] nativeui ${on ? 'on' : 'off'} sent=${r.ok}`)
         return r.ok
-          ? { ok: true, data: { on, note: on ? '原生菜单已临时显示；用完建议关掉' : '原生菜单已隐藏' } }
-          : { ok: false, error: { code: 'pipe-unavailable', message: `管道不可写（${r.error ?? '未知原因'}）` } }
+          ? {
+              ok: true,
+              data: {
+                on,
+                note: on ? '原生菜单已临时显示；用完建议关掉' : '原生菜单已隐藏'
+              }
+            }
+          : {
+              ok: false,
+              error: {
+                code: 'pipe-unavailable',
+                message: `管道不可写（${r.error ?? '未知原因'}）`
+              }
+            }
       }
       case 'test.say':
         return runTest('say', payload)
@@ -1391,7 +1640,10 @@ function buildHandler(cfg, log) {
       case 'test.screenshot':
         return runTest('screenshot', payload)
       default:
-        return { ok: false, error: { code: 'unknown-endpoint', message: `未知端点：${endpoint}` } }
+        return {
+          ok: false,
+          error: { code: 'unknown-endpoint', message: `未知端点：${endpoint}` }
+        }
     }
   }
 }
@@ -1493,6 +1745,7 @@ export const __test = {
   readPetConfig,
   readSkinOptions,
   normalizeRuntimeStatus,
+  normalizeSessions,
   RUNTIME_STATE_META,
   petSettingsToCmds,
   normalizePetSettings,
