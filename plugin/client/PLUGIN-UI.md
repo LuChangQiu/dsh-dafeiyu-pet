@@ -1,7 +1,7 @@
 # PLUGIN-UI.md — 大肥鱼 × DSH 联动 · 管理界面（task-26 交付说明）
 
 > 交付人：plugin-ui ｜ 交付日期：2026-10-23 ｜ 状态：**已接线并运行于生产 DSH Web（未重启 host）**，E2E 真实链路已验证；真实页面截图待用户补（清单见 §9）。
-> 代码位置：`%PROJECT_ROOT%\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`%PROJECT_ROOT%\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
+> 代码位置：`E:\project\AI提效\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`E:\project\AI提效\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
 
 ---
 
@@ -388,3 +388,53 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - `state.get.files` 增加 `stateV2File` 与 `stateSource`（`v2` / `legacy` / `null`），面板与验证脚本可判定当前真源；
 - smoke 新增 2 项：v2 存在（版本/status/sessions 均来自 v2，`stateSource=v2`）与 v2 缺失（回退 legacy，`stateSource=legacy`）→ 合计 **47/47**；
 - 真实环境（v34）实测：`files.stateSource=v2`、`versions.bridgePlugin=0.34.0`、`runtime=idle/heartbeat 29ms`、`sessionList={userActiveCount:2, backgroundCount:5, othersCount:1, groups:2, total:7}`。
+---
+
+# 附录 C — task-51 大肥鱼主页 M1（19 §8 Phase-1）
+
+## C.1 承载与入口
+- **独立 HTML 页**：host 侧 `GET /pet-bridge-ui/home` 返回**自包含 HTML**（`lib/home.js` 生成，内联 CSS/JS、无外部 CDN/构建），同前缀/同源、沿用现有 `requestRejection` 鉴权（无 cookie 401 / 跨站 403），**不新起端口**；数据仍走既有 `POST /pet-bridge-ui/state.get` 等，无新增对外数据面。
+- **入口三处（ux v3）**：① 设置页「大肥鱼联动」顶部「打开大肥鱼主页」按钮（新标签）；② `sidebar.footer.action`「🐋 大肥鱼」（加性安全槽，已注册）；③ `shell.overlay` 徽标/红点（M2/M3，task-58）。
+- 兜底：旧版 DSH 若无 `sidebar.footer.action` 槽 → 静默降级，设置页入口仍在。
+
+## C.2 Phase-1 卡（真实 v0.44.0 数据）
+| 卡 | 内容 | 数据来源 |
+|---|---|---|
+| 顶栏 | 状态词/跟随会话/「另有 N 个对话在跑 · 后台 N」/今日大肥鱼花费/预算条/安静点/叫她过来 | `runtime/stateClass/sessionList/todayStats` |
+| 实时状态 | 状态词 + 工具名 + **工具细分图标**（命令/读文件/搜索/联网/子任务/等确认…）+ 耗时 + step/turn + 心跳 + stateClass 配色 | `state.json/v2 status` |
+| 今日数据 | **双账分开**：大肥鱼花销（`petLlmCostYuan`/预算环） vs 你的 token 估算（`costYuan` 标"估算"）；**今天 N 碗白饭**（`riceBowls`）、峰谷（`period`）、token、轮次/工具 | `v2.today` |
+| 她今天怎么样 | 仅状态词（心情/精力/好感，**不显示数字**）+ 关系/连续陪伴 | `v2.companion.words`（文件兜底） |
+| 最近发生 | 最近 5 条 say（Phase-1 事件来源） | `state.recentSay` |
+| 时间线（简版） | 最近 50 条 events + 全部/重要(S0/S1)/互动/错误筛选 + 未读角标 + 「未读确认」 | `events.json` + `v2.eventsUnread`；ack 走 `ui-action: events-ack` |
+| 运行中的对话 | workspace 分组、跟随中高亮、后台徽标、用户消息—/最后活动、sessionId | `v2.sessions/currentSessionId/userActiveCount/backgroundCount` |
+| 互动 | 摸头/喂一口/叫她过来（`capabilities.interactions` 控制启用，走 `ui-action: interact-*`）+ 今日小票/结束免打扰 | `interaction`/`pet.action` |
+| 异常/空态 | 她不在 / 失联>30s / 管道离线 / 联动停用 / 无会话 / 无事件 / 数据失败；不装死 | — |
+| 刷新 | 5s 轮询 `state.get`；`document.hidden` 暂停；无弹窗 | — |
+| 响应式 | ≥720px 双列，<720px 单列（实测 1280 / 420 宽） | — |
+
+**证据**（真实 state.get + 同一份生产 HTML，本地同源 harness 渲染）：
+- `screenshots/ui-13-home-m1-desktop.png`（1280 双列：调工具/pwsh·命令/白饭 80.05 碗/¥0.0011 花销 vs ¥16.01 估算/时间线 S1 未读/分组会话/互动）
+- `screenshots/ui-14-home-m1-mobile.png`（420 单列响应式）
+
+## C.3 新增 host 数据面（state.get）
+- `todayStats`：`{date,turns,toolCalls,longestTurnMs,calls,costYuan,budgetYuan,tokens,riceBowls,period,petLlmCostYuan,estimateCostYuan,ratio,source}`
+- `events`：`{supported,file,total,unread,items[{at,kind,level,payload,said,unread}]}`（只读 `events.json`，最多 50 条）
+- `companion`：`{supported,words{mood,energy,affinity},level,streakDays,totals,lastSeenAt,updatedAt}`（v2 优先，文件兜底）
+- `capabilities.interactions`：`{head,feed,come}`；`guards`：`{maxActionsPerHour,noActionOnSameState}`；`runtime.toolType/phase/stateClass`
+- 新 endpoint：`interaction {name:'head'|'feed'|'come'}` → 排队 `ui-action: interact-*`；`events.ack` → 排队 `ui-action: events-ack`
+- `files` 新增 `eventsFile/companionFile`
+
+## C.4 设置面板同步增强
+- 「打开大肥鱼主页」按钮（顶部）；
+- 活跃度护栏：每小时动作上限（1~600）+ 状态不变不重复演出（写 `ui-config.guards`，热更新日志 `ui-config applied ... guards`）；
+- 实时状态卡新增「她今天怎么样」状态词行；预算卡新增双账/白饭/峰谷/token 文案。
+
+## C.5 验证
+- `node test/smoke.mjs` → **55/55**（新增：readEvents 排序/未读/空态、readCompanion v2/文件、guards 校验、state.get Phase-1 字段、interaction 能力门控+排队、events.ack、主页 HTML 自包含断言）；
+- repo lint 全绿（`node --check 11/11` + Prettier 全过 + ruff All checks passed）；
+- 生产插件：heartbeat `version 0.3.0`、`POST /pet-bridge-ui/ping`=401、`GET /pet-bridge-ui/home`=401（鉴权生效）；host pid 39484 未重启。
+
+## C.6 限制/后续
+- 真实 DSH 页面截图需用户浏览器 cookie（harness 图 = 同一 HTML + 真实数据）；
+- 团队/目标/计划/子代理/jobs/schedules 卡 = M2（task-58，等 task-57 字段或 host 侧读 `ctx.sessionProjections`）；
+- `shell.overlay` 团队徽标 demo = M2/M3；`sidebar.footer.action` 已上线（刷新页面可见）。

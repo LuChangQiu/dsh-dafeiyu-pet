@@ -2173,6 +2173,46 @@ window.__ModuleLoader__.load({
       return Panel
     }
 
+    /**
+     * 侧栏底部入口（task-51：`sidebar.footer.action`，加性安全槽）——打开大肥鱼主页。
+     * @returns {any} React 元素
+     */
+    function FooterAction() {
+      return h(
+        'button',
+        {
+          type: 'button',
+          title: '打开大肥鱼主页',
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            width: '100%',
+            background: 'transparent',
+            color: 'inherit',
+            border: 'none',
+            borderRadius: 6,
+            padding: '6px 10px',
+            fontSize: 13,
+            cursor: 'pointer',
+            textAlign: 'left',
+            opacity: 0.8
+          },
+          onClick: () => {
+            try {
+              if (typeof window !== 'undefined' && typeof window.open === 'function') {
+                window.open('/pet-bridge-ui/home', '_blank', 'noopener')
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        },
+        h('span', null, '🐋'),
+        h('span', null, '大肥鱼')
+      )
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
@@ -2187,6 +2227,21 @@ window.__ModuleLoader__.load({
             makeSection()
           )
         )
+        // task-51：侧栏底部入口（加性安全槽；DSH 页面常驻可打开主页）
+        try {
+          ctx.slots.inject('sidebar.footer.action', () =>
+            ctx.slots.register(
+              {
+                name: 'sidebar.footer.action',
+                id: 'pet-bridge-ui-home',
+                order: 80
+              },
+              FooterAction
+            )
+          )
+        } catch {
+          /* 旧版 DSH 无该槽时静默降级（设置页入口仍在） */
+        }
       }
     }
   }
