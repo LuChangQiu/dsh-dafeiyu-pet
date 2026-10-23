@@ -146,6 +146,7 @@ const tmpCfg = {
   evidenceDir: tmpDir,
   // ⚠️ 隔离：actionFile / petConfigFile / heartbeatFile 必须指向临时目录，
   //    否则测试会写生产 sidecar（曾误触生产 ui-action 队列，勿再犯）。
+  stateV2File: path.join(tmpDir, 'bridge-state-v2.json'),
   actionFile: path.join(tmpDir, 'ui-action.json'),
   petConfigFile: path.join(tmpDir, 'pet-config.json'),
   heartbeatFile: path.join(tmpDir, 'heartbeat.json'),
@@ -180,6 +181,21 @@ fs.writeFileSync(
 
 const noopLog = { info() {}, warn() {} }
 const handler = buildHandler(tmpCfg, noopLog)
+
+function mountWith(handlerImpl, routePath = '/pet-bridge-ui', connection) {
+  const routes = []
+  const webServer = {
+    register(route) {
+      routes.push(route)
+      return () => {
+        const i = routes.indexOf(route)
+        if (i >= 0) routes.splice(i, 1)
+      }
+    }
+  }
+  const dispose = mountWebRoute({ webServer, connection, channel: routePath, handler: handlerImpl, log: noopLog })
+  return { routes, dispose }
+}
 
 function mount(routePath = '/pet-bridge-ui', connection) {
   const routes = []
@@ -1135,6 +1151,108 @@ await testAsync('state.get 返回 sessionList（无 sessions → supported=false
   assert.equal(typeof data.sessionList.supported, 'boolean')
   assert.equal(typeof data.sessionList.othersCount, 'number')
   assert.ok(Array.isArray(data.sessionList.groups))
+  dispose()
+})
+
+// ───────────────────────── 3.9 task-45(v33)：bridge-state-v2.json 优先级 ─────────────────────────
+console.log('\n[3.9] bridge-state-v2 读取优先级')
+
+await testAsync('v2 存在时优先读取（版本/status/sessions 均来自 v2），并标记 files.stateSource', async () => {
+  const v2 = {
+    updatedAt: new Date().toISOString(),
+    version: '9.9.9',
+    host: true,
+    pet: true,
+    pipe: true,
+    enabled: true,
+    activity: 'lively',
+    quietHours: ['23:30-08:00'],
+    todayCalls: 7,
+    todayCost: 0.0042,
+    budgetPerDayYuan: 2,
+    currentSessionId: 'v2-cur',
+    userActiveCount: 2,
+    backgroundCount: 1,
+    status: {
+      state: 'thinking',
+      tool: null,
+      since: new Date(Date.now() - 3000).toISOString(),
+      heartbeatAt: new Date().toISOString()
+    },
+    sessions: [
+      {
+        sessionId: 'v2-cur',
+        workspace: 'w-a',
+        title: 'im#v2',
+        role: 'user',
+        state: 'thinking',
+        lastSeenAt: new Date().toISOString()
+      },
+      {
+        sessionId: 'v2-b',
+        workspace: 'w-b',
+        title: 'im#b',
+        role: 'user',
+        state: 'tool',
+        tool: 'pwsh',
+        lastSeenAt: new Date().toISOString()
+      },
+      {
+        sessionId: 'v2-sub',
+        workspace: 'w-a',
+        title: 'im#sub',
+        role: 'subagent',
+        state: 'background',
+        lastSeenAt: new Date().toISOString()
+      }
+    ]
+  }
+  fs.writeFileSync(tmpCfg.stateV2File, JSON.stringify(v2), 'utf8')
+  const v2Handler = buildHandler(tmpCfg, noopLog)
+  const { routes, dispose } = mountWith(v2Handler)
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-v2', method: 'state.get' } }),
+    makeRes()
+  )
+  const data = JSON.parse(res.body).result.data
+  assert.equal(data.files.stateSource, 'v2')
+  assert.equal(data.versions.bridgePlugin, '9.9.9')
+  assert.equal(data.runtime.state, 'thinking')
+  assert.equal(data.sessionList.supported, true)
+  assert.equal(data.sessionList.userActiveCount, 2)
+  assert.equal(data.sessionList.backgroundCount, 1)
+  assert.equal(data.sessionList.othersCount, 1)
+  assert.equal(data.sessionList.groups.length, 2)
+  fs.unlinkSync(tmpCfg.stateV2File)
+  dispose()
+})
+
+await testAsync('v2 缺失时回退 state.json（legacy）', async () => {
+  fs.writeFileSync(
+    tmpCfg.stateFile,
+    JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      version: '1.2.3',
+      host: true,
+      pet: true,
+      pipe: true,
+      status: { state: 'idle', heartbeatAt: new Date().toISOString() }
+    }),
+    'utf8'
+  )
+  const legacyHandler = buildHandler(tmpCfg, noopLog)
+  const { routes, dispose } = mountWith(legacyHandler)
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-leg', method: 'state.get' } }),
+    makeRes()
+  )
+  const data = JSON.parse(res.body).result.data
+  assert.equal(data.files.stateSource, 'legacy')
+  assert.equal(data.versions.bridgePlugin, '1.2.3')
+  assert.equal(data.runtime.state, 'idle')
+  assert.equal(data.sessionList.supported, false)
   dispose()
 })
 

@@ -72,6 +72,8 @@ const DEFAULTS = {
   logFile: path.join(PET_ROOT, 'evidence', 'pet-bridge-main.log'),
   activityFile: path.join(PET_ROOT, 'activity.txt'),
   stateFile: path.join(PET_ROOT, 'state.json'),
+  /** v33+ 实时状态真源（旧 state.json 有泄漏定时器持续覆盖，仅作兜底；可由 patch config 覆盖）。 */
+  stateV2File: path.join(PET_ROOT, 'bridge-state-v2.json'),
   uiConfigFile: path.join(PET_ROOT, 'ui-config.json'),
   petConfigFile: path.join(PET_ROOT, 'pet', 'config.json'),
   actionFile: path.join(PET_ROOT, 'ui-action.json'),
@@ -968,18 +970,31 @@ function buildHandler(cfg, log) {
   const probeProcess = makeProcessProbe(cfg.processProbeTtlMs)
   const stateCache = { at: 0, value: null }
 
+  /**
+   * 读联动插件状态快照：**`bridge-state-v2.json`（v33+ 真源）优先 → `state.json` 兜底**。
+   * 旧 state.json 曾在 v26~v31 泄漏定时器持续覆盖，故仅在 v2 缺失时回退。
+   * @returns {object|null} 归一后的状态对象（附 `_source`/`_file`/`_fresh`/`_ageMs`）
+   */
   function loadStateFile() {
     if (Date.now() - stateCache.at < 2000) return stateCache.value
-    const raw = readJson(cfg.stateFile, null)
     let value = null
-    if (isObject(raw)) {
+    const candidates = [
+      ['v2', cfg.stateV2File],
+      ['legacy', cfg.stateFile]
+    ]
+    for (const [source, file] of candidates) {
+      const raw = readJson(file, null)
+      if (!isObject(raw)) continue
       const at = raw.updatedAt ? new Date(raw.updatedAt) : null
       const ageMs = at && !Number.isNaN(at.getTime()) ? Date.now() - at.getTime() : null
       value = {
         ...raw,
         _ageMs: ageMs,
-        _fresh: ageMs !== null && ageMs < cfg.stateFileTtlMs
+        _fresh: ageMs !== null && ageMs < cfg.stateFileTtlMs,
+        _source: source,
+        _file: file
       }
+      break
     }
     stateCache.at = Date.now()
     stateCache.value = value
@@ -1227,6 +1242,8 @@ function buildHandler(cfg, log) {
           activityFile: cfg.activityFile,
           petConfigFile: cfg.petConfigFile,
           actionFile: cfg.actionFile,
+          stateV2File: cfg.stateV2File,
+          stateSource: stateFile?._source ?? null,
           stateFileFresh: Boolean(stateFile?._fresh)
         }
       }

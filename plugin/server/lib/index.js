@@ -184,7 +184,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v33'
+export const name = 'dsh-pet-bridge-v34'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -203,7 +203,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v33] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v34] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -809,12 +809,28 @@ export function apply(ctx, rawConfig) {
   const statusState = {
     state: 'idle',
     tool: null,
+    toolType: null,
+    phase: null,
     since: new Date().toISOString(),
     step: null,
     turn: null,
     heartbeatAt: new Date().toISOString(),
     source: null,
     message: ''
+  }
+  // Phase-1：工具类型细分（read/write/command/search/agent/other）→ 动作
+  const TOOL_TYPE_RULES = [
+    ['agent', /^(subagent|workflow|team|ask|spawn|task)/i],
+    ['search', /^(web_search|web_fetch|codegraph|context7|grep|glob|search)/i],
+    ['write', /^(write|edit|patch|apply_patch|create_file|rename)/i],
+    ['command', /^(bash|pwsh|exec|shell|run|process|terminal)/i],
+    ['read', /^(read|list|open|view|cat|get_file|read_file)/i]
+  ]
+  const toolTypeOf = (name) => {
+    const n = String(name || '')
+    for (const [type, re] of TOOL_TYPE_RULES) if (re.test(n)) return type
+    if (/^mcp__/i.test(n)) return 'search'
+    return 'other'
   }
   const pushStatusToPet = () => {
     if (!cfg.statusChannel?.petPush) return
@@ -841,6 +857,8 @@ export function apply(ctx, rawConfig) {
     statusState.state = st
     statusState.since = new Date().toISOString()
     if (extra.tool !== undefined) statusState.tool = extra.tool || null
+    if (extra.toolType !== undefined) statusState.toolType = extra.toolType || null
+    if (extra.phase !== undefined) statusState.phase = extra.phase || null
     if (extra.step !== undefined) statusState.step = extra.step
     if (extra.turn !== undefined) statusState.turn = extra.turn
     if (extra.source !== undefined) statusState.source = extra.source
@@ -887,14 +905,16 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.33.0',
-        petVersion: 'v1.1.5+patch-v33',
+        version: '0.34.0',
+        petVersion: 'v1.1.5+patch-v34',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
         status: {
           state: statusState.state,
           tool: statusState.tool,
+          toolType: statusState.toolType,
+          phase: statusState.phase,
           since: statusState.since,
           step: statusState.step,
           turn: statusState.turn,
@@ -1404,7 +1424,14 @@ export function apply(ctx, rawConfig) {
     const t = event.type
     const d = event.data || {}
     log('debug', 'event', { type: t, session: String(session.id || '').slice(0, 14) })
-    if (/error|failed/i.test(t)) setStatus('error', { message: t })
+    if (/error|failed/i.test(t)) {
+      setStatus('error', { message: t })
+      if (cfg.actions?.enabled) {
+        act('shake')
+        setTimeout(() => send('cmd:fx:sweat'), 400)
+        setTimeout(() => send('cmd:fx:sweat'), 1200)
+      }
+    }
 
     const hdr = session.header || {}
     const rec0 = recEarly
@@ -1491,12 +1518,14 @@ export function apply(ctx, rawConfig) {
 
     if (t === 'user/message' || t === 'system/message' || t === 'request/header') return
     if (t === 'tool/call') {
-      setStatus('tool', { tool: d.tool || d.name || 'tool', step: s.tools + 1 })
+      const toolName = d.tool || d.name || 'tool'
+      const toolType = toolTypeOf(toolName)
+      setStatus('tool', { tool: toolName, toolType, step: s.tools + 1 })
       {
         const r = sessionRegistry.get(String(session.id))
         if (r) {
           r.state = 'tool'
-          r.tool = d.tool || d.name || 'tool'
+          r.tool = toolName
           r.step = s.tools + 1
         }
       }
@@ -1509,8 +1538,17 @@ export function apply(ctx, rawConfig) {
       ) {
         lastToolActAt = Date.now()
         toolActionSeq += 1
-        act('peek') // 转头
-        setTimeout(() => walkNear(), 450) // 小跑两步
+        if (toolType === 'read') act('peek')
+        else if (toolType === 'write') act('jump')
+        else if (toolType === 'command') {
+          act('peek')
+          setTimeout(() => walkNear(), 450)
+        } else if (toolType === 'search') {
+          act('peek')
+          setTimeout(() => act('peek'), 500)
+        } else if (toolType === 'agent') {
+          /* 后台任务不动作 */
+        }
       }
       return
     }
@@ -1803,7 +1841,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v33', {
+  log('info', 'loaded v34', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
@@ -1837,3 +1875,4 @@ export function apply(ctx, rawConfig) {
     logLevel: cfg.logLevel
   })
 }
+
