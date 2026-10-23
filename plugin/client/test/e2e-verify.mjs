@@ -62,7 +62,7 @@ try {
     activity: before.config.activity,
     size: before.petSettings.size,
     bubble: before.bubble,
-    lastAction: before.lastAction,
+    lastAction: before.lastAction
   })
 
   // 1) ui-config.pet 下发（size 0.37 + bubbleMs 5000）
@@ -74,7 +74,7 @@ try {
     ok: set1.ok,
     applied: set1.data?.applied,
     savedSize: saved1.pet && saved1.pet.size,
-    savedBubble: saved1.bubble,
+    savedBubble: saved1.bubble
   })
 
   // 等待联动插件 20s 轮询应用
@@ -87,7 +87,7 @@ try {
     stateBubble: after1.bubble,
     petSettingsSourceState: after1.petSettings.size,
     logPetSettingsPushed: pushed,
-    logUiConfigApplied: appliedLog,
+    logUiConfigApplied: appliedLog
   })
 
   // 2) 应急：cmd:nativeui on/off（真实桌宠，1.2s 后恢复隐藏）
@@ -103,7 +103,7 @@ try {
   const afterAct = (await handler('state.get')).data
   step('after action 26s', {
     lastAction: afterAct.lastAction,
-    logActions: grepLog('ui-action').slice(-4),
+    logActions: grepLog('ui-action').slice(-4)
   })
 
   // 4) 恢复：逐字节写回原 ui-config + 等联动插件回读
@@ -115,11 +115,9 @@ try {
   }
   const restored = (await handler('state.get')).data
   step('restored', {
-    uiConfigRestoredByteEqual: originalUi !== null
-      ? fs.readFileSync(uiFile, 'utf8') === originalUi
-      : null,
+    uiConfigRestoredByteEqual: originalUi !== null ? fs.readFileSync(uiFile, 'utf8') === originalUi : null,
     size: restored.petSettings.size,
-    bubble: restored.bubble,
+    bubble: restored.bubble
   })
 
   result.ok = true
@@ -130,7 +128,9 @@ try {
   // 兜底恢复
   try {
     if (originalUi !== null) fs.writeFileSync(uiFile, originalUi, 'utf8')
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 } finally {
   result.finishedAt = new Date().toISOString()
   fs.mkdirSync(path.dirname(outFile), { recursive: true })

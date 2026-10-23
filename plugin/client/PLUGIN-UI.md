@@ -355,11 +355,15 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 3. **注释/文案中文一致**：新增注释与 UI 文案全部中文；协议、端点、状态枚举均有中文说明。
 4. **PS 脚本**：`scripts/*.ps1` UTF-8 with BOM + `#Requires -Version 5.1` + 注释式帮助（PS5.1 实测 `-DryRun` exit 0）。
 
-待 tech-scout 提供根配置后执行（task-43 共享部分）：
-- 根 Prettier/ESLint 配置路径（repo `dsh-dafeiyu-pet`，尚未见 `.prettierrc`/`eslint.config.js`）；
-- 按根配置跑 `npx prettier --check "plugin/client/**/*.js"` 与 `npx eslint "plugin/client/**/*.js"`，修到 0 error；
-- 与 `docs/CODE-STYLE.md`、`scripts/lint.ps1` 联动（tech-scout 提供）。
-当前自查：`node --check` 全绿；代码风格与既有插件（dsh-submarket 等）一致（2 空格、单引号、无分号、行宽 ~120）。
+**lint 已完成（repo 配置 `ea922bc`，2026-10-23）**：
+- 根配置：`.prettierrc`（120 列/单引号/无分号/LF）、`eslint.config.js`（flat）、`scripts/lint.mjs`、`scripts/lint.ps1`、`docs/CODE-STYLE.md`；
+- 执行结果（报告 `ui-lint-report.md`）：
+  - `node scripts/lint.mjs` → **node --check 10/10 OK**
+  - `prettier --check "plugin/**/*.js" "scripts/**/*.mjs"` → **All matched files use Prettier code style**
+  - `npx eslint "plugin/client/**/*.js" "plugin/server/**/*.js"` → **0 error**
+  - `scripts/lint.ps1` → **LINT OK**（含 `ruff check pet` → All checks passed）
+- 本轮 `prettier --write` 格式化文件：`plugin/client/lib/client.js`、`plugin/client/test/{smoke,e2e-actions,e2e-verify}.mjs`、`plugin/server/lib/index.js`（仅格式，tech-scout 随下次 commit 带上）；
+- 回归：格式化后 `node --check` 全绿、smoke **37/37**、哈希 repo=源码=安装版一致（client `C71F443E91AD` / index `ED9A32C74928`）。
 
 ## B.3 旧包清理（待授权）
 

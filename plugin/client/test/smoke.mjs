@@ -22,8 +22,15 @@ const libDir = path.join(here, '..', 'lib')
 
 const index = await import(pathToFileURL(path.join(libDir, 'index.js')).href)
 const {
-  parseBridgeLog, parseQuietRanges, isInQuietHours, buildHandler, DEFAULTS,
-  petSettingsToCmds, normalizePetSettings, buildBubbleConfig, PET_CONFIG_FIELDS,
+  parseBridgeLog,
+  parseQuietRanges,
+  isInQuietHours,
+  buildHandler,
+  DEFAULTS,
+  petSettingsToCmds,
+  normalizePetSettings,
+  buildBubbleConfig,
+  PET_CONFIG_FIELDS
 } = index.__test
 const { mountWebRoute } = await import(pathToFileURL(path.join(libDir, 'web-route.js')).href)
 
@@ -58,7 +65,7 @@ const SAMPLE_LOG = [
   '[2026-10-23T05:45:04.068Z] [info] inner {"kind":"turnStart","line":"（今天要顺顺利利的呀。）"}',
   '[2026-10-23T05:46:44.663Z] [info] long task: walk two steps {"session":"session-54d9","step":1}',
   '[2026-10-23T05:47:00.000Z] [info] loaded v7 {"dryRun":false,"llm":"deepseek-official/deepseek-flash","llmLimits":{"maxTokens":200,"timeoutMs":3000,"maxCallsPerDay":300,"budgetPerDayYuan":1},"quietHours":["23:30-08:00"],"activity":"normal"}',
-  '[2026-10-23T06:00:00.000Z] [info] say {"kind":"turnEnd","source":"llm","line":"这轮收工，我尾巴都蹲僵了。","callsToday":12,"costToday":0.0068}',
+  '[2026-10-23T06:00:00.000Z] [info] say {"kind":"turnEnd","source":"llm","line":"这轮收工，我尾巴都蹲僵了。","callsToday":12,"costToday":0.0068}'
 ].join('\n')
 
 test('say 行解析出最近记录（旧→新）且只保留 limit 条', () => {
@@ -109,10 +116,7 @@ function makeReq({ method = 'POST', url = '/pet-bridge-ui/ping', body, headers =
   const req = Readable.from(payload ? [Buffer.from(payload)] : [])
   req.method = method
   req.url = url
-  req.headers = Object.assign(
-    { host: '127.0.0.1:3080', 'content-type': 'application/json' },
-    headers,
-  )
+  req.headers = Object.assign({ host: '127.0.0.1:3080', 'content-type': 'application/json' }, headers)
   return req
 }
 
@@ -127,7 +131,7 @@ function makeRes() {
     },
     end(chunk) {
       res.body = chunk === undefined ? '' : String(chunk)
-    },
+    }
   }
   return res
 }
@@ -147,16 +151,32 @@ const tmpCfg = {
   heartbeatFile: path.join(tmpDir, 'heartbeat.json'),
   pipe: '\\\\.\\pipe\\pbu-test-definitely-missing',
   pipeProbeTimeoutMs: 200,
-  processProbeTtlMs: 60000,
+  processProbeTtlMs: 60000
 }
 fs.writeFileSync(tmpCfg.logFile, SAMPLE_LOG, 'utf8')
 fs.writeFileSync(tmpCfg.activityFile, 'normal', 'utf8')
-fs.writeFileSync(tmpCfg.petConfigFile, JSON.stringify({
-  mode: 'still', size: 0.54, opacity: 0.9, line_freq: '话多', layer: 'normal',
-  bubble_style: 'dark', skin: '大肥鱼', volume: 0.5, quiet_minutes: 10,
-  city: '唐山', music_link: false, sound_on: false, passthrough: true, locked: true,
-  topmost: false, snap_on: false,
-}), 'utf8')
+fs.writeFileSync(
+  tmpCfg.petConfigFile,
+  JSON.stringify({
+    mode: 'still',
+    size: 0.54,
+    opacity: 0.9,
+    line_freq: '话多',
+    layer: 'normal',
+    bubble_style: 'dark',
+    skin: '大肥鱼',
+    volume: 0.5,
+    quiet_minutes: 10,
+    city: '唐山',
+    music_link: false,
+    sound_on: false,
+    passthrough: true,
+    locked: true,
+    topmost: false,
+    snap_on: false
+  }),
+  'utf8'
+)
 
 const noopLog = { info() {}, warn() {} }
 const handler = buildHandler(tmpCfg, noopLog)
@@ -170,14 +190,14 @@ function mount(routePath = '/pet-bridge-ui', connection) {
         const i = routes.indexOf(route)
         if (i >= 0) routes.splice(i, 1)
       }
-    },
+    }
   }
   const dispose = mountWebRoute({
     webServer,
     connection,
     channel: routePath,
     handler,
-    log: noopLog,
+    log: noopLog
   })
   return { routes, dispose }
 }
@@ -206,7 +226,11 @@ await testAsync('ping 返回 server-response 信封', async () => {
 
 await testAsync('state.get 返回聚合状态（日志回退路径）', async () => {
   const { routes, dispose } = mount()
-  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r2', method: 'state.get' } }), makeRes())
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r2', method: 'state.get' } }),
+    makeRes()
+  )
   assert.equal(res.status, 200)
   const data = JSON.parse(res.body).result.data
   assert.equal(data.host.online, true)
@@ -227,9 +251,18 @@ await testAsync('config.set 写 ui-config.json + activity.txt（activity 即时�
     routes,
     makeReq({
       url: '/pet-bridge-ui/config.set',
-      body: { rpcId: 'r3', method: 'config.set', payload: { activity: 'lively', enabled: true, quietHours: ['23:30-08:00', '12:00-13:00'], budgetPerDayYuan: 0.5 } },
+      body: {
+        rpcId: 'r3',
+        method: 'config.set',
+        payload: {
+          activity: 'lively',
+          enabled: true,
+          quietHours: ['23:30-08:00', '12:00-13:00'],
+          budgetPerDayYuan: 0.5
+        }
+      }
     }),
-    makeRes(),
+    makeRes()
   )
   assert.equal(res.status, 200)
   const result = JSON.parse(res.body).result
@@ -245,15 +278,11 @@ await testAsync('config.set 写 ui-config.json + activity.txt（activity 即时�
 
 await testAsync('config.set 拒绝非法时段 / 非法 activity', async () => {
   const { routes, dispose } = mount()
-  for (const payload of [
-    { quietHours: ['25:99-26:00'] },
-    { activity: 'hyper' },
-    { enabled: 'yes' },
-  ]) {
+  for (const payload of [{ quietHours: ['25:99-26:00'] }, { activity: 'hyper' }, { enabled: 'yes' }]) {
     const res = await invoke(
       routes,
       makeReq({ url: '/pet-bridge-ui/config.set', body: { rpcId: 'r4', method: 'config.set', payload } }),
-      makeRes(),
+      makeRes()
     )
     const result = JSON.parse(res.body).result
     assert.equal(result.ok, false, JSON.stringify(payload))
@@ -281,7 +310,7 @@ await testAsync('无 connection 时 loopback 同源放行、非 POST 405、非 J
   const badType = await invoke(
     routes,
     makeReq({ body: { rpcId: 'r7', method: 'ping' }, headers: { 'content-type': 'text/plain' } }),
-    makeRes(),
+    makeRes()
   )
   assert.equal(badType.status, 415)
   dispose()
@@ -292,7 +321,7 @@ await testAsync('method 与 endpoint 不一致 → ok:false', async () => {
   const res = await invoke(
     routes,
     makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r8', method: 'config.set' } }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, false)
@@ -305,7 +334,7 @@ await testAsync('测试动作用不存在管道 → pipe-unavailable（不抛异
   const res = await invoke(
     routes,
     makeReq({ url: '/pet-bridge-ui/test.jump', body: { rpcId: 'r9', method: 'test.jump' } }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, false)
@@ -318,11 +347,25 @@ console.log('\n[3.5] 桌宠设置与应急通道')
 
 test('petSettingsToCmds 生成 cmd:config 批量行且只带白名单字段', () => {
   const cmds = petSettingsToCmds({
-    size: 0.9, opacity: 0.8, mode: 'still', lineFreq: '话多',
-    passthrough: true, locked: true, topmost: false, snap: true,
-    layer: 'bottom', bubbleStyle: 'dark', skin: '大肥鱼', soundOn: false,
-    volume: 0.5, musicLink: false, city: '汕头', quietMinutes: 15,
-    bubbleMs: 7000, hacked: 'x', __proto__x: 1,
+    size: 0.9,
+    opacity: 0.8,
+    mode: 'still',
+    lineFreq: '话多',
+    passthrough: true,
+    locked: true,
+    topmost: false,
+    snap: true,
+    layer: 'bottom',
+    bubbleStyle: 'dark',
+    skin: '大肥鱼',
+    soundOn: false,
+    volume: 0.5,
+    musicLink: false,
+    city: '汕头',
+    quietMinutes: 15,
+    bubbleMs: 7000,
+    hacked: 'x',
+    __proto__x: 1
   })
   assert.equal(cmds.length, 1)
   assert.ok(cmds[0].startsWith('cmd:config:'))
@@ -343,9 +386,20 @@ test('petSettingsToCmds 空对象返回空数组', () => {
 
 test('normalizePetSettings 校验新字段并拒绝非法值', () => {
   const good = normalizePetSettings({
-    size: 0.72, opacity: 1, volume: 0.9, mode: 'wander', lineFreq: '正常',
-    layer: 'top', bubbleStyle: 'auto', skin: '大肥鱼', quietMinutes: 30,
-    topmost: true, snap: true, passthrough: false, locked: false, city: '汕头',
+    size: 0.72,
+    opacity: 1,
+    volume: 0.9,
+    mode: 'wander',
+    lineFreq: '正常',
+    layer: 'top',
+    bubbleStyle: 'auto',
+    skin: '大肥鱼',
+    quietMinutes: 30,
+    topmost: true,
+    snap: true,
+    passthrough: false,
+    locked: false,
+    city: '汕头'
   })
   assert.equal(good.error, undefined)
   assert.equal(good.value.size, 0.72)
@@ -353,9 +407,17 @@ test('normalizePetSettings 校验新字段并拒绝非法值', () => {
   assert.equal(good.value.quietMinutes, 30)
 
   for (const bad of [
-    { size: 0.1 }, { opacity: 0.1 }, { volume: 1.5 }, { mode: 'run' },
-    { lineFreq: '超多' }, { layer: 'middle' }, { bubbleStyle: 'rainbow' },
-    { skin: '' }, { quietMinutes: 999 }, { topmost: 'yes' }, { city: 'x'.repeat(21) },
+    { size: 0.1 },
+    { opacity: 0.1 },
+    { volume: 1.5 },
+    { mode: 'run' },
+    { lineFreq: '超多' },
+    { layer: 'middle' },
+    { bubbleStyle: 'rainbow' },
+    { skin: '' },
+    { quietMinutes: 999 },
+    { topmost: 'yes' },
+    { city: 'x'.repeat(21) }
   ]) {
     const r = normalizePetSettings(bad)
     assert.ok(r.error, '应拒绝 ' + JSON.stringify(bad))
@@ -380,11 +442,32 @@ await testAsync('config.set pet → 写 ui-config.pet + bubble（管道不可用
     makeReq({
       url: '/pet-bridge-ui/config.set',
       body: {
-        rpcId: 'r-pet', method: 'config.set',
-        payload: { pet: { size: 0.9, opacity: 0.8, mode: 'still', lineFreq: '话多', passthrough: true, locked: true, topmost: true, snap: false, layer: 'bottom', bubbleStyle: 'dark', skin: '大肥鱼', volume: 0.5, musicLink: false, soundOn: false, city: '汕头', quietMinutes: 15, bubbleMs: 8000 } },
-      },
+        rpcId: 'r-pet',
+        method: 'config.set',
+        payload: {
+          pet: {
+            size: 0.9,
+            opacity: 0.8,
+            mode: 'still',
+            lineFreq: '话多',
+            passthrough: true,
+            locked: true,
+            topmost: true,
+            snap: false,
+            layer: 'bottom',
+            bubbleStyle: 'dark',
+            skin: '大肥鱼',
+            volume: 0.5,
+            musicLink: false,
+            soundOn: false,
+            city: '汕头',
+            quietMinutes: 15,
+            bubbleMs: 8000
+          }
+        }
+      }
     }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, true)
@@ -404,7 +487,7 @@ await testAsync('logs.get 返回日志尾部行', async () => {
   const res = await invoke(
     routes,
     makeReq({ url: '/pet-bridge-ui/logs.get', body: { rpcId: 'r-log', method: 'logs.get', payload: { lines: 3 } } }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, true)
@@ -417,8 +500,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act', method: 'action.request', payload: { name: 'restart-pet' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/action.request',
+      body: { rpcId: 'r-act', method: 'action.request', payload: { name: 'restart-pet' } }
+    }),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, true)
@@ -431,8 +517,11 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
   // 未消费前再请求 → busy
   const res2 = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act2', method: 'action.request', payload: { name: 'stop-pet' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/action.request',
+      body: { rpcId: 'r-act2', method: 'action.request', payload: { name: 'stop-pet' } }
+    }),
+    makeRes()
   )
   const result2 = JSON.parse(res2.body).result
   assert.equal(result2.ok, false)
@@ -444,16 +533,22 @@ await testAsync('action.request 写 ui-action.json；未完成动作时 busy', a
   fs.writeFileSync(tmpCfg.actionFile, JSON.stringify(queued), 'utf8')
   const res3 = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act3', method: 'action.request', payload: { name: 'stop-pet' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/action.request',
+      body: { rpcId: 'r-act3', method: 'action.request', payload: { name: 'stop-pet' } }
+    }),
+    makeRes()
   )
   assert.equal(JSON.parse(res3.body).result.ok, true)
 
   // 非法动作名
   const res4 = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/action.request', body: { rpcId: 'r-act4', method: 'action.request', payload: { name: 'format-c' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/action.request',
+      body: { rpcId: 'r-act4', method: 'action.request', payload: { name: 'format-c' } }
+    }),
+    makeRes()
   )
   assert.equal(JSON.parse(res4.body).result.ok, false)
   dispose()
@@ -465,7 +560,7 @@ await testAsync('config.reset 恢复默认值（含完整 pet 默认表 + bubble
   const res = await invoke(
     routes,
     makeReq({ url: '/pet-bridge-ui/config.reset', body: { rpcId: 'r-reset', method: 'config.reset' } }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, true)
@@ -485,8 +580,11 @@ await testAsync('pet.nativeui 管道不可用时报错（不抛）', async () =>
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/pet.nativeui', body: { rpcId: 'r-nui', method: 'pet.nativeui', payload: { on: true } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/pet.nativeui',
+      body: { rpcId: 'r-nui', method: 'pet.nativeui', payload: { on: true } }
+    }),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, false)
@@ -499,7 +597,19 @@ console.log('\n[3.6] 快捷查看与双击/自启')
 
 test('PET_ACTION_CMDS 覆盖旧菜单快捷项且 balance/quit 标注待服务端', () => {
   const cmds = index.__test.PET_ACTION_CMDS
-  for (const k of ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover', 'quietStart', 'quietEnd', 'quit']) {
+  for (const k of [
+    'balance',
+    'weather',
+    'music',
+    'summary',
+    'show',
+    'hide',
+    'snapInto',
+    'recover',
+    'quietStart',
+    'quietEnd',
+    'quit'
+  ]) {
     assert.ok(cmds[k], '缺少动作 ' + k)
   }
   assert.equal(cmds.weather, 'cmd:weather')
@@ -525,8 +635,11 @@ await testAsync('pet.action：未就绪动作返回 not-supported（balance）',
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa1', method: 'pet.action', payload: { name: 'balance' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/pet.action',
+      body: { rpcId: 'r-pa1', method: 'pet.action', payload: { name: 'balance' } }
+    }),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, false)
@@ -538,8 +651,11 @@ await testAsync('pet.action：已就绪动作在管道不可用时返回 pipe-un
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa2', method: 'pet.action', payload: { name: 'weather' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/pet.action',
+      body: { rpcId: 'r-pa2', method: 'pet.action', payload: { name: 'weather' } }
+    }),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, false)
@@ -551,8 +667,11 @@ await testAsync('pet.action：未知动作 invalid-argument', async () => {
   const { routes, dispose } = mount()
   const res = await invoke(
     routes,
-    makeReq({ url: '/pet-bridge-ui/pet.action', body: { rpcId: 'r-pa3', method: 'pet.action', payload: { name: 'explode' } } }),
-    makeRes(),
+    makeReq({
+      url: '/pet-bridge-ui/pet.action',
+      body: { rpcId: 'r-pa3', method: 'pet.action', payload: { name: 'explode' } }
+    }),
+    makeRes()
   )
   assert.equal(JSON.parse(res.body).result.error.code, 'invalid-argument')
   dispose()
@@ -560,7 +679,11 @@ await testAsync('pet.action：未知动作 invalid-argument', async () => {
 
 await testAsync('state.get 含 capabilities 与 petOptions（皮肤/双击/自启）', async () => {
   const { routes, dispose } = mount()
-  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-caps', method: 'state.get' } }), makeRes())
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-caps', method: 'state.get' } }),
+    makeRes()
+  )
   const data = JSON.parse(res.body).result.data
   assert.ok(Array.isArray(data.capabilities.petActions))
   assert.equal(data.capabilities.petActionReadiness.weather, true)
@@ -577,9 +700,9 @@ await testAsync('config.set pet.doubleClick/autoStart 写入 ui-config.pet（pen
     routes,
     makeReq({
       url: '/pet-bridge-ui/config.set',
-      body: { rpcId: 'r-dc', method: 'config.set', payload: { pet: { doubleClick: 'music', autoStart: true } } },
+      body: { rpcId: 'r-dc', method: 'config.set', payload: { pet: { doubleClick: 'music', autoStart: true } } }
     }),
-    makeRes(),
+    makeRes()
   )
   const result = JSON.parse(res.body).result
   assert.equal(result.ok, true)
@@ -605,7 +728,7 @@ test('各状态枚举 → 中文标签/色调', () => {
     waiting_input: ['等输入', 'warn'],
     background: ['后台运行', 'dim'],
     error: ['出错', 'err'],
-    done: ['完成', 'ok'],
+    done: ['完成', 'ok']
   }
   for (const [state, [label, tone]] of Object.entries(cases)) {
     const r = normalizeRuntimeStatus({ status: { state, heartbeatAt: iso(1000) } }, { now: NOW })
@@ -623,7 +746,7 @@ test('别名归一（approval/toolcall/running/offline…）', () => {
     ['running', 'background'],
     ['failed', 'error'],
     ['completed', 'done'],
-    ['offline', 'disconnected'],
+    ['offline', 'disconnected']
   ]
   for (const [raw, want] of pairs) {
     const r = normalizeRuntimeStatus({ status: { state: raw, heartbeatAt: iso(500) } }, { now: NOW })
@@ -655,7 +778,12 @@ test('无 status 字段：supported=false 且按 state.json.updatedAt 兜底判�
 })
 
 test('容错：runtime.status / 顶层 runtime 两种形状都读；tool/step/turn/since 解析', () => {
-  const a = normalizeRuntimeStatus({ runtime: { status: { state: 'tool', tool: 'bash', step: 3, turn: 2, since: iso(45000), heartbeatAt: iso(2000) } } }, { now: NOW })
+  const a = normalizeRuntimeStatus(
+    {
+      runtime: { status: { state: 'tool', tool: 'bash', step: 3, turn: 2, since: iso(45000), heartbeatAt: iso(2000) } }
+    },
+    { now: NOW }
+  )
   assert.equal(a.state, 'tool')
   assert.equal(a.tool, 'bash')
   assert.equal(a.step, 3)
@@ -668,7 +796,11 @@ test('容错：runtime.status / 顶层 runtime 两种形状都读；tool/step/tu
 
 await testAsync('state.get 返回 runtime 字段（当前环境无 status → 未就绪兜底）', async () => {
   const { routes, dispose } = mount()
-  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-rt', method: 'state.get' } }), makeRes())
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-rt', method: 'state.get' } }),
+    makeRes()
+  )
   const data = JSON.parse(res.body).result.data
   assert.ok(data.runtime && typeof data.runtime === 'object')
   assert.equal(typeof data.runtime.state, 'string')

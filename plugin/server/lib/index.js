@@ -33,9 +33,9 @@ const EMBEDDED = {
     turnStart: ['（我就在旁边，不吵。）', '（今天要顺顺利利的呀。）'],
     turnEndOk: ['（账记好了。）', '（悄悄松了口气。）'],
     turnEndBad: ['（不怪他，重来就好。）'],
-    approval: ['（我不走开。）'],
+    approval: ['（我不走开。）']
   },
-  report: '这轮用了 {turns} 轮里的一轮，{seconds}s、约 {tokens}k token',
+  report: '这轮用了 {turns} 轮里的一轮，{seconds}s、约 {tokens}k token'
 }
 
 const DEFAULTS = {
@@ -78,7 +78,7 @@ const DEFAULTS = {
     pregen: true,
     pregenTtlMs: 600000,
     approvalUseLlm: false,
-    includeRecentText: false, // privacy: never send raw user text
+    includeRecentText: false // privacy: never send raw user text
   },
   historyFile: '', // line de-dupe store (7 days / 300 lines)
 
@@ -91,9 +91,16 @@ const DEFAULTS = {
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
-    normalMs: 5000, innerMs: 3000, reportMs: 10000, approvalMs: 8000, nightMs: 6000,
-    queueGapMs: 300, innerDelayMinMs: 1200, innerDelayMaxMs: 1800,
-    coalesceWindowMs: 2000, maxQueue: 8,
+    normalMs: 5000,
+    innerMs: 3000,
+    reportMs: 10000,
+    approvalMs: 8000,
+    nightMs: 6000,
+    queueGapMs: 300,
+    innerDelayMinMs: 1200,
+    innerDelayMaxMs: 1800,
+    coalesceWindowMs: 2000,
+    maxQueue: 8
   },
 
   morning: { enabled: true, hour: 8, minute: 0 },
@@ -106,31 +113,38 @@ const DEFAULTS = {
   testHookFile: '', // TEST ONLY: watch a JSON file to inject演出 events (default off)
   logFile: '',
   logLevel: 'info',
-  stateFile: '',      // P3: read-only status snapshot for pet-bridge-ui (state.json)
-  uiConfigFile: '',   // P3: UI-managed config sidecar (whitelist applied without reload)
+  stateFile: '', // P3: read-only status snapshot for pet-bridge-ui (state.json)
+  uiConfigFile: '', // P3: UI-managed config sidecar (whitelist applied without reload)
 
   // P3 (A+B): animation feel / activity level / idle skit
   activity: 'normal', // quiet / normal / lively
-  activityFile: '',   // plain text or JSON {"level":...}; changes apply without reload
+  activityFile: '', // plain text or JSON {"level":...}; changes apply without reload
   actions: {
     enabled: true,
     turnStartSpinChance: 0.2, // spec：20% 旋转，其余小跳
     toolEveryMs: 20000,
     longTaskMs: 100000,
-    longTaskStepMs: 30000,
+    longTaskStepMs: 30000
   },
   idleSkit: {
     enabled: true,
-    eventGapMs: 180000,  // 至少 3 分钟没有任何会话事件才算"没人操作"
-    minMs: 180000,       // 小剧场间隔 3~6 分钟
-    maxMs: 360000,
-  },
+    eventGapMs: 180000, // 至少 3 分钟没有任何会话事件才算"没人操作"
+    minMs: 180000, // 小剧场间隔 3~6 分钟
+    maxMs: 360000
+  }
 }
 
 function merge(base, patch) {
   const out = { ...base }
   for (const [k, v] of Object.entries(patch || {})) {
-    if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) {
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      base[k] &&
+      typeof base[k] === 'object' &&
+      !Array.isArray(base[k])
+    ) {
       out[k] = { ...base[k], ...v }
     } else if (v !== undefined) out[k] = v
   }
@@ -155,10 +169,19 @@ function inRanges(now, ranges) {
 function blocksToText(content) {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
-  return content.filter((b) => b && typeof b.text === 'string').map((b) => b.text).join(' ').trim()
+  return content
+    .filter((b) => b && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join(' ')
+    .trim()
 }
 
-function clip(s, n) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n) }
+function clip(s, n) {
+  return String(s || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, n)
+}
 
 export const name = 'dsh-pet-bridge-v27'
 
@@ -182,7 +205,13 @@ export function apply(ctx, rawConfig) {
       if (level !== 'debug') console.log('[pet-bridge-v27] ' + line)
     } catch {}
   }
-  const safe = (v) => { try { return JSON.stringify(v) } catch { return String(v) } }
+  const safe = (v) => {
+    try {
+      return JSON.stringify(v)
+    } catch {
+      return String(v)
+    }
+  }
 
   // ---------- P0 pools ----------
   const pools = { kaigong: [], ganhuo: [], shougong: [], anwei: [], dengdai: [], shenye: [], inner: {} }
@@ -193,7 +222,9 @@ export function apply(ctx, rawConfig) {
         const j = JSON.parse(fs.readFileSync(path.join(cfg.poolsDir, `${name}.json`), 'utf8'))
         const lines = (j.lines || []).map((x) => String(x.text || '').trim()).filter(Boolean)
         return lines
-      } catch { return [] }
+      } catch {
+        return []
+      }
     }
     for (const k of ['kaigong', 'ganhuo', 'shougong', 'anwei', 'dengdai', 'shenye']) {
       const got = read(k)
@@ -231,7 +262,7 @@ export function apply(ctx, rawConfig) {
     approval: '任务停下来等他点确认，你想说一句让他安心、顺便提醒点一下的话',
     morning: '早上第一轮，跟他打个招呼',
     sleep: '晚上 23:30 了，跟他说一句清醒的温柔',
-    selfTalk: '没人理你，你在过自己的日子，心里嘀咕一句（心声体，短，像被偷听到的）',
+    selfTalk: '没人理你，你在过自己的日子，心里嘀咕一句（心声体，短，像被偷听到的）'
   }
 
   const hist = []
@@ -240,7 +271,8 @@ export function apply(ctx, rawConfig) {
     try {
       const arr = JSON.parse(fs.readFileSync(cfg.historyFile, 'utf8'))
       const cut = Date.now() - 7 * 86400e3
-      for (const x of Array.isArray(arr) ? arr : []) if (x && x.text && Number(x.at) >= cut) hist.push({ text: String(x.text), at: Number(x.at) })
+      for (const x of Array.isArray(arr) ? arr : [])
+        if (x && x.text && Number(x.at) >= cut) hist.push({ text: String(x.text), at: Number(x.at) })
     } catch {}
   }
   loadHist()
@@ -266,16 +298,27 @@ export function apply(ctx, rawConfig) {
   const llmDay = { day: dateKey(), calls: 0, tokens: 0, cost: 0 }
   const rollLlmDay = () => {
     const k = dateKey()
-    if (llmDay.day !== k) { llmDay.day = k; llmDay.calls = 0; llmDay.tokens = 0; llmDay.cost = 0 }
+    if (llmDay.day !== k) {
+      llmDay.day = k
+      llmDay.calls = 0
+      llmDay.tokens = 0
+      llmDay.cost = 0
+    }
   }
   const llmBudgetOk = () => {
     rollLlmDay()
     if (!cfg.llm.enabled) return false
-    if (llmDay.calls >= cfg.llm.maxCallsPerDay) { log('info', 'llm budget: maxCallsPerDay', { calls: llmDay.calls }); return false }
-    if (llmDay.cost >= cfg.llm.budgetPerDayYuan) { log('info', 'llm budget: cost', { cost: Number(llmDay.cost.toFixed(4)), limit: cfg.llm.budgetPerDayYuan }); return false }
+    if (llmDay.calls >= cfg.llm.maxCallsPerDay) {
+      log('info', 'llm budget: maxCallsPerDay', { calls: llmDay.calls })
+      return false
+    }
+    if (llmDay.cost >= cfg.llm.budgetPerDayYuan) {
+      log('info', 'llm budget: cost', { cost: Number(llmDay.cost.toFixed(4)), limit: cfg.llm.budgetPerDayYuan })
+      return false
+    }
     return true
   }
-  const estimateCost = (tokens) => (tokens || 0) / 1000 * cfg.llm.costPer1kTokensYuan
+  const estimateCost = (tokens) => ((tokens || 0) / 1000) * cfg.llm.costPer1kTokensYuan
 
   const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u
   const BANNED_RE = /(作为\s*AI|建议您|绝绝子|栓\s*Q|city\s*不\s*city|主人)/i
@@ -295,22 +338,37 @@ export function apply(ctx, rawConfig) {
 
   const timeBucket = () => {
     const h = new Date().getHours()
-    if (h < 6) return '凌晨'; if (h < 9) return '早上'; if (h < 12) return '上午'
-    if (h < 14) return '中午'; if (h < 18) return '下午'; if (h < 23) return '晚上'
+    if (h < 6) return '凌晨'
+    if (h < 9) return '早上'
+    if (h < 12) return '上午'
+    if (h < 14) return '中午'
+    if (h < 18) return '下午'
+    if (h < 23) return '晚上'
     return '深夜'
   }
   const buildPrompt = (kind, s, extra = {}) => {
     const tools = s.tools || 0
-    const toolBucket = tools === 0 ? '没动工具' : tools <= 3 ? '动了几个工具' : tools <= 10 ? '一直在动工具' : '工具没停过'
+    const toolBucket =
+      tools === 0 ? '没动工具' : tools <= 3 ? '动了几个工具' : tools <= 10 ? '一直在动工具' : '工具没停过'
     const lines = [
       `[情境] ${KIND_DESC[kind] || kind}。当前时段：${timeBucket()}，今天第 ${stats.turns} 轮。`,
-      `[抽象上下文] 这轮用了${toolBucket}；结果：${extra.outcome || '进行中'}；用时档：${extra.durBucket || '不长'}。`,
+      `[抽象上下文] 这轮用了${toolBucket}；结果：${extra.outcome || '进行中'}；用时档：${extra.durBucket || '不长'}。`
     ]
     if (extra.numbers) lines.push(`[数字槽位] ${extra.numbers}（原样使用，不要自己计算/改写）`)
     if (cfg.llm.includeRecentText && extra.recentUser) lines.push(`[最近一句] 用户：${extra.recentUser}`)
-    lines.push(`[要求] 只输出一句中文台词（不要解释、不要引号、不要列表）。≤${cfg.llm.maxChars} 字，口语，可带括号心声体。`)
-    lines.push('[输出格式] 只输出台词本身，不要解释、不要推理过程、不要任何前缀（如"我：""答："）、不要 Markdown/引号/列表。')
-    lines.push('[避免] 最近说过：' + (hist.slice(-20).map((x) => x.text).join(' / ') || '（还没有）'))
+    lines.push(
+      `[要求] 只输出一句中文台词（不要解释、不要引号、不要列表）。≤${cfg.llm.maxChars} 字，口语，可带括号心声体。`
+    )
+    lines.push(
+      '[输出格式] 只输出台词本身，不要解释、不要推理过程、不要任何前缀（如"我：""答："）、不要 Markdown/引号/列表。'
+    )
+    lines.push(
+      '[避免] 最近说过：' +
+        (hist
+          .slice(-20)
+          .map((x) => x.text)
+          .join(' / ') || '（还没有）')
+    )
     if (kind === 'sleep') lines.push('[禁忌] 不劝睡、不说教、不评价花费；可以只说"我在"。')
     if (kind === 'report') lines.push('[禁忌] 不卖惨、不评价金额高低；数字必须原样使用。')
     return lines.join('\n')
@@ -318,8 +376,15 @@ export function apply(ctx, rawConfig) {
 
   const callLlm = async (prompt, kind) => {
     let llm = null
-    try { llm = typeof ctx.get === 'function' ? ctx.get('llm') : null } catch { llm = null }
-    if (!llm || typeof llm.stream !== 'function') { log('info', 'llm unavailable'); return { text: '', latencyMs: 0, tokens: 0 } }
+    try {
+      llm = typeof ctx.get === 'function' ? ctx.get('llm') : null
+    } catch {
+      llm = null
+    }
+    if (!llm || typeof llm.stream !== 'function') {
+      log('info', 'llm unavailable')
+      return { text: '', latencyMs: 0, tokens: 0 }
+    }
     const runOnce = async (attempt) => {
       const ac = new AbortController()
       const timer = setTimeout(() => ac.abort(), cfg.llm.timeoutMs)
@@ -333,18 +398,26 @@ export function apply(ctx, rawConfig) {
           messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
           maxTokens: cfg.llm.maxTokens,
           temperature: cfg.llm.temperature,
-          signal: ac.signal,
+          signal: ac.signal
         })
         for await (const chunk of stream) {
           if (!chunk) continue
           if (chunk.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text
-          else if (chunk.type === 'reasoning-delta') { /* reasoning text is ignored, never shown/logged */ }
-          else if (chunk.type === 'finish') break
+          else if (chunk.type === 'reasoning-delta') {
+            /* reasoning text is ignored, never shown/logged */
+          } else if (chunk.type === 'finish') break
         }
       } catch (err) {
-        log('warn', 'llm failed', { kind, attempt, error: err && (err.code || err.message || String(err)), latencyMs: Date.now() - started })
+        log('warn', 'llm failed', {
+          kind,
+          attempt,
+          error: err && (err.code || err.message || String(err)),
+          latencyMs: Date.now() - started
+        })
         return { text: '', latencyMs: Date.now() - started, tokens: 0 }
-      } finally { clearTimeout(timer) }
+      } finally {
+        clearTimeout(timer)
+      }
       const tokens = Math.max(0, Math.ceil((out.length + prompt.length) / 2))
       return { text: out, latencyMs: Date.now() - started, tokens }
     }
@@ -358,19 +431,44 @@ export function apply(ctx, rawConfig) {
     llmDay.calls += 1
     llmDay.tokens += r.tokens
     llmDay.cost += estimateCost(r.tokens)
-    log('info', 'llm call', { kind, latencyMs: r.latencyMs, tokens: r.tokens, callsToday: llmDay.calls, costToday: Number(llmDay.cost.toFixed(4)) })
+    log('info', 'llm call', {
+      kind,
+      latencyMs: r.latencyMs,
+      tokens: r.tokens,
+      callsToday: llmDay.calls,
+      costToday: Number(llmDay.cost.toFixed(4))
+    })
     return r
   }
 
   const generate = async (kind, s, extra = {}) => {
     const fallback = () => {
-      const poolName = kind === 'turnStart' ? 'kaigong' : kind === 'turnEnd' ? 'shougong' : kind === 'turnEndBad' ? 'anwei' : kind === 'approval' ? 'dengdai' : kind === 'morning' ? 'kaigong' : kind === 'sleep' ? 'shenye' : kind === 'selfTalk' ? 'ganhuo' : 'shougong'
+      const poolName =
+        kind === 'turnStart'
+          ? 'kaigong'
+          : kind === 'turnEnd'
+            ? 'shougong'
+            : kind === 'turnEndBad'
+              ? 'anwei'
+              : kind === 'approval'
+                ? 'dengdai'
+                : kind === 'morning'
+                  ? 'kaigong'
+                  : kind === 'sleep'
+                    ? 'shenye'
+                    : kind === 'selfTalk'
+                      ? 'ganhuo'
+                      : 'shougong'
       return { text: pick(poolName), source: 'pool', latencyMs: 0, tokens: 0 }
     }
-    if (!llmBudgetOk()) { log('debug', 'llm fallback: budget/disabled', { kind }); return fallback() }
+    if (!llmBudgetOk()) {
+      log('debug', 'llm fallback: budget/disabled', { kind })
+      return fallback()
+    }
     const { text: raw, latencyMs, tokens } = await callLlm(buildPrompt(kind, s, extra), kind)
     const line = validateLine(raw, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
-    if (!line && raw && kind === 'report') log('info', 'report too long/invalid -> fallback', { rawChars: String(raw).length, limit: cfg.llm.maxChars })
+    if (!line && raw && kind === 'report')
+      log('info', 'report too long/invalid -> fallback', { rawChars: String(raw).length, limit: cfg.llm.maxChars })
     if (!line || isDuplicate(line)) {
       if (line) log('info', 'llm rejected: duplicate', { kind, line })
       else if (raw) log('info', 'llm rejected: constraint', { kind, raw: clip(raw, 40) })
@@ -385,20 +483,32 @@ export function apply(ctx, rawConfig) {
   const ACTIVITY_PRESETS = {
     quiet: {
       chance: { turnStart: 0.3, turnEnd: 0.3, approval: 1, report: 1, dual: 0.1 },
-      minGapMs: 45000, cooldownScale: 2.0,
-      toolEveryMs: 60000, idleMinMs: 540000, idleMaxMs: 720000, actionFactor: 0.3,
+      minGapMs: 45000,
+      cooldownScale: 2.0,
+      toolEveryMs: 60000,
+      idleMinMs: 540000,
+      idleMaxMs: 720000,
+      actionFactor: 0.3
     },
     normal: {
       // 默认"正常偏活泼"：概率 ×1.2、minGap 17s、小剧场 6~9 分钟、微动画 ×1.15
       chance: { turnStart: 0.66, turnEnd: 0.66, approval: 1, report: 1, dual: 0.66 },
-      minGapMs: 17000, cooldownScale: 0.9,
-      toolEveryMs: 12000, idleMinMs: 360000, idleMaxMs: 540000, actionFactor: 1.15,
+      minGapMs: 17000,
+      cooldownScale: 0.9,
+      toolEveryMs: 12000,
+      idleMinMs: 360000,
+      idleMaxMs: 540000,
+      actionFactor: 1.15
     },
     lively: {
       chance: { turnStart: 0.85, turnEnd: 0.85, approval: 1, report: 1, dual: 0.75 },
-      minGapMs: 10000, cooldownScale: 0.5,
-      toolEveryMs: 8000, idleMinMs: 180000, idleMaxMs: 300000, actionFactor: 1.3,
-    },
+      minGapMs: 10000,
+      cooldownScale: 0.5,
+      toolEveryMs: 8000,
+      idleMinMs: 180000,
+      idleMaxMs: 300000,
+      actionFactor: 1.3
+    }
   }
   const activityState = { level: 'normal', ...ACTIVITY_PRESETS.normal }
   let lastActivityRaw = ''
@@ -446,8 +556,13 @@ export function apply(ctx, rawConfig) {
       if (raw === lastActivityRaw) return
       lastActivityRaw = raw
       let level = raw
-      try { const j = JSON.parse(raw); level = j.level || j.activity || raw } catch {}
-      level = String(level || '').trim().toLowerCase()
+      try {
+        const j = JSON.parse(raw)
+        level = j.level || j.activity || raw
+      } catch {}
+      level = String(level || '')
+        .trim()
+        .toLowerCase()
       if (ACTIVITY_PRESETS[level]) applyActivity(level)
     } catch {}
   }
@@ -459,9 +574,19 @@ export function apply(ctx, rawConfig) {
       try {
         const s = net.connect(cfg.pipe)
         s.setTimeout(800)
-        s.on('connect', () => { ok = true; try { s.write('ping\n') } catch {}; s.destroy() })
+        s.on('connect', () => {
+          ok = true
+          try {
+            s.write('ping\n')
+          } catch {}
+          s.destroy()
+        })
         s.on('error', () => {})
-        s.on('timeout', () => { try { s.destroy() } catch {} })
+        s.on('timeout', () => {
+          try {
+            s.destroy()
+          } catch {}
+        })
         setTimeout(() => {
           if (!ok) {
             try {
@@ -469,9 +594,15 @@ export function apply(ctx, rawConfig) {
               const boot = cfg.lifecycle.bootstrapScript || cfg.lifecycle.startScript
               const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', boot]
               if (cfg.lifecycle.releaseZipUrl) args.push('-ReleaseUrl', cfg.lifecycle.releaseZipUrl)
-              const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] }); ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message))); ch.on('exit', (code) => log('info', 'spawn exit', { code })); ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300))); ch.unref()
+              const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] })
+              ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message)))
+              ch.on('exit', (code) => log('info', 'spawn exit', { code }))
+              ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300)))
+              ch.unref()
               log('info', 'bootstrap pet spawned', { script: boot, release: !!cfg.lifecycle.releaseZipUrl })
-            } catch (e) { log('warn', 'bootstrap spawn failed', String(e && e.message)) }
+            } catch (e) {
+              log('warn', 'bootstrap spawn failed', String(e && e.message))
+            }
           }
         }, 1400)
       } catch {}
@@ -486,24 +617,66 @@ export function apply(ctx, rawConfig) {
       const sock = net.connect(cfg.pipe)
       let done = false
       sock.setTimeout(500)
-      sock.on('connect', () => { petOnline = true; try { sock.write('ping\n') } catch {} })
-      sock.on('data', () => { petOnline = true })
-      sock.on('end', () => { if (!done) { done = true; petOnline = true } })
-      sock.on('error', () => { if (!done) { done = true } })
-      sock.on('timeout', () => { if (!done) { done = true }; try { sock.destroy() } catch {} })
-    } catch { petOnline = false }
+      sock.on('connect', () => {
+        petOnline = true
+        try {
+          sock.write('ping\n')
+        } catch {}
+      })
+      sock.on('data', () => {
+        petOnline = true
+      })
+      sock.on('end', () => {
+        if (!done) {
+          done = true
+          petOnline = true
+        }
+      })
+      sock.on('error', () => {
+        if (!done) {
+          done = true
+        }
+      })
+      sock.on('timeout', () => {
+        if (!done) {
+          done = true
+        }
+        try {
+          sock.destroy()
+        } catch {}
+      })
+    } catch {
+      petOnline = false
+    }
   }
   let lastAction = null
   let balanceTurns = 0
   let balanceStartupPushed = false
   let petSettingsPushed = false
-  const petCmd = (line) => { try { send(line) } catch {} }
+  const petCmd = (line) => {
+    try {
+      send(line)
+    } catch {}
+  }
   const applyPetSettings = (petCfg) => {
     if (!petCfg || typeof petCfg !== 'object') return
-    const map = { size: 'size', opacity: 'opacity', mode: 'mode', lineFreq: 'lineFreq',
-      passthrough: 'passthrough', locked: 'locked', bubbleStyle: 'bubbleStyle',
-      topmost: 'topmost', snap: 'snap', layer: 'layer', skin: 'skin',
-      soundOn: 'soundOn', volume: 'volume', musicLink: 'musicLink', doubleClick: 'doubleClick' }
+    const map = {
+      size: 'size',
+      opacity: 'opacity',
+      mode: 'mode',
+      lineFreq: 'lineFreq',
+      passthrough: 'passthrough',
+      locked: 'locked',
+      bubbleStyle: 'bubbleStyle',
+      topmost: 'topmost',
+      snap: 'snap',
+      layer: 'layer',
+      skin: 'skin',
+      soundOn: 'soundOn',
+      volume: 'volume',
+      musicLink: 'musicLink',
+      doubleClick: 'doubleClick'
+    }
     const out = {}
     for (const [k, cmdKey] of Object.entries(map)) if (petCfg[k] !== undefined) out[cmdKey] = petCfg[k]
     if (petCfg.city !== undefined) out.city = petCfg.city
@@ -517,24 +690,39 @@ export function apply(ctx, rawConfig) {
   const runPsFile = (tag, content) => {
     try {
       const cp = require('node:child_process')
-      const dir = cfg.lifecycle.bootstrapStateFile ? path.dirname(cfg.lifecycle.bootstrapStateFile) : path.join(process.env.USERPROFILE || '.', 'pet-work')
+      const dir = cfg.lifecycle.bootstrapStateFile
+        ? path.dirname(cfg.lifecycle.bootstrapStateFile)
+        : path.join(process.env.USERPROFILE || '.', 'pet-work')
       const logs = path.join(dir, 'logs')
-      try { fs.mkdirSync(logs, { recursive: true }) } catch {}
+      try {
+        fs.mkdirSync(logs, { recursive: true })
+      } catch {}
       const file = path.join(logs, 'ui-action-' + String(tag).replace(/[^A-Za-z0-9._-]/g, '_') + '.ps1')
       fs.writeFileSync(file, '\ufeff' + content, 'utf8')
-      const ch = cp.spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], { detached: true, stdio: ['ignore', 'ignore', 'pipe'] })
+      const ch = cp.spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], {
+        detached: true,
+        stdio: ['ignore', 'ignore', 'pipe']
+      })
       ch.on('error', (e) => log('warn', 'ui-action spawn error', String(e && e.message)))
       ch.on('exit', (code) => log('info', 'ui-action ps exit', { tag, code }))
       if (ch.stderr) ch.stderr.on('data', (b) => log('warn', 'ui-action ps stderr', String(b).slice(0, 300)))
       ch.unref()
       log('info', 'ui-action ps started', { tag, file })
-    } catch (e) { log('warn', 'runPsFile failed', String(e && e.message)) }
+    } catch (e) {
+      log('warn', 'runPsFile failed', String(e && e.message))
+    }
   }
   const spawnScript = (extraArg) => {
     const cp = require('node:child_process')
     const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', cfg.lifecycle.startScript]
     if (extraArg) args.push(extraArg)
-    try { const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] }); ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message))); ch.on('exit', (code) => log('info', 'spawn exit', { code })); ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300))); ch.unref() } catch {}
+    try {
+      const ch = cp.spawn('powershell.exe', args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] })
+      ch.on('error', (e) => log('warn', 'spawn error', String(e && e.message)))
+      ch.on('exit', (code) => log('info', 'spawn exit', { code }))
+      ch.stderr && ch.stderr.on('data', (b) => log('warn', 'spawn stderr', String(b).slice(0, 300)))
+      ch.unref()
+    } catch {}
   }
   const consumeUiAction = () => {
     if (!cfg.uiActionFile) return
@@ -543,16 +731,24 @@ export function apply(ctx, rawConfig) {
       const j = JSON.parse(raw)
       if (!j || !j.name || j.handledAt) return
       const aid = String(j.id || '')
-      let status = 'done', message = ''
+      let status = 'done',
+        message = ''
       try {
         const runTask = () => {
           try {
             const cp = require('node:child_process')
-            const ch = cp.spawn('schtasks.exe', ['/Run', '/TN', 'DafeiyuPetStart'], { detached: true, stdio: 'ignore', windowsHide: true })
+            const ch = cp.spawn('schtasks.exe', ['/Run', '/TN', 'DafeiyuPetStart'], {
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: true
+            })
             ch.on('error', (e) => log('warn', 'schtasks error', String(e && e.message)))
             ch.unref()
             log('info', 'pet start requested via schtasks')
-          } catch (e) { status = 'failed'; message = String(e && e.message) }
+          } catch (e) {
+            status = 'failed'
+            message = String(e && e.message)
+          }
         }
         if (j.name === 'restart-pet') {
           if (petOnline) send('cmd:restart')
@@ -562,37 +758,85 @@ export function apply(ctx, rawConfig) {
         } else if (j.name === 'quit-pet' || j.name === 'stop-pet') {
           send('cmd:exit')
         } else if (j.name === 'enable-autostart' || j.name === 'disable-autostart') {
-          const startup = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+          const startup = path.join(
+            process.env.APPDATA || '',
+            'Microsoft',
+            'Windows',
+            'Start Menu',
+            'Programs',
+            'Startup'
+          )
           const cmdFile = path.join(startup, '大肥鱼桌宠.cmd')
           const sp = cfg.lifecycle.startScript || ''
           if (j.name === 'enable-autostart') {
             try {
               fs.mkdirSync(startup, { recursive: true })
-              fs.writeFileSync(cmdFile, '@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + sp + '"\r\n', 'utf8')
-            } catch (e) { status = 'failed'; message = String(e && e.message) }
+              fs.writeFileSync(
+                cmdFile,
+                '@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + sp + '"\r\n',
+                'utf8'
+              )
+            } catch (e) {
+              status = 'failed'
+              message = String(e && e.message)
+            }
           } else {
-            try { fs.unlinkSync(cmdFile) } catch {}
+            try {
+              fs.unlinkSync(cmdFile)
+            } catch {}
           }
-        } else { status = 'failed'; message = 'unsupported action' }
-      } catch (e) { status = 'failed'; message = String(e && e.message) }
+        } else {
+          status = 'failed'
+          message = 'unsupported action'
+        }
+      } catch (e) {
+        status = 'failed'
+        message = String(e && e.message)
+      }
       lastAction = { id: String(j.id || ''), name: j.name, status, at: new Date().toISOString(), message }
-      j.handledAt = new Date().toISOString(); j.status = status
-      try { fs.writeFileSync(cfg.uiActionFile, JSON.stringify(j)) } catch {}
+      j.handledAt = new Date().toISOString()
+      j.status = status
+      try {
+        fs.writeFileSync(cfg.uiActionFile, JSON.stringify(j))
+      } catch {}
       log('info', 'ui-action handled', lastAction)
       writeState()
     } catch {}
   }
 
   // ---------- task-44 状态通道（state:<json>） ----------
-  const statusState = { state: 'idle', tool: null, since: new Date().toISOString(), step: null, turn: null, heartbeatAt: new Date().toISOString(), source: null, message: '' }
+  const statusState = {
+    state: 'idle',
+    tool: null,
+    since: new Date().toISOString(),
+    step: null,
+    turn: null,
+    heartbeatAt: new Date().toISOString(),
+    source: null,
+    message: ''
+  }
   const pushStatusToPet = () => {
     if (!cfg.statusChannel?.petPush) return
     try {
-      if (petOnline) send('state:' + JSON.stringify({ state: statusState.state, tool: statusState.tool, since: statusState.since, step: statusState.step, turn: statusState.turn, heartbeatAt: statusState.heartbeatAt }))
+      if (petOnline)
+        send(
+          'state:' +
+            JSON.stringify({
+              state: statusState.state,
+              tool: statusState.tool,
+              since: statusState.since,
+              step: statusState.step,
+              turn: statusState.turn,
+              heartbeatAt: statusState.heartbeatAt
+            })
+        )
     } catch {}
   }
   const setStatus = (st, extra = {}) => {
-    if (statusState.state === st && extra.tool === undefined) { statusState.heartbeatAt = new Date().toISOString(); return }
+    if (statusState.state === st && extra.tool === undefined) {
+      statusState.heartbeatAt = new Date().toISOString()
+      return
+    }
     statusState.state = st
     statusState.since = new Date().toISOString()
     if (extra.tool !== undefined) statusState.tool = extra.tool || null
@@ -607,8 +851,14 @@ export function apply(ctx, rawConfig) {
   if (cfg.statusChannel?.enabled) {
     setInterval(() => {
       statusState.heartbeatAt = new Date().toISOString()
-      if (!petOnline && statusState.state !== 'disconnected') { statusState.state = 'disconnected'; statusState.since = new Date().toISOString() }
-      if (petOnline && statusState.state === 'disconnected') { statusState.state = 'idle'; statusState.since = new Date().toISOString() }
+      if (!petOnline && statusState.state !== 'disconnected') {
+        statusState.state = 'disconnected'
+        statusState.since = new Date().toISOString()
+      }
+      if (petOnline && statusState.state === 'disconnected') {
+        statusState.state = 'idle'
+        statusState.since = new Date().toISOString()
+      }
       pushStatusToPet()
     }, cfg.statusChannel.heartbeatMs || 5000)
   }
@@ -637,12 +887,44 @@ export function apply(ctx, rawConfig) {
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
-        status: { state: statusState.state, tool: statusState.tool, since: statusState.since, step: statusState.step, turn: statusState.turn, heartbeatAt: statusState.heartbeatAt, source: statusState.source, message: statusState.message },
-        attribution: { active: activeSessionId ? String(activeSessionId).slice(0, 16) : null, bootstrapped: attributionBootstrapped },
-        skins: (() => { try { const pc = JSON.parse(fs.readFileSync(cfg.petConfigFile, 'utf8')); return { current: pc.skin || '大肥鱼', available: ['大肥鱼'] } } catch { return { current: '大肥鱼', available: ['大肥鱼'] } } })(),
-        capabilities: { petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'], doubleClick: true, skin: true, quiet: true, quit: true, autoStart: true },
-        bootstrap: (() => { try { return JSON.parse(fs.readFileSync(cfg.lifecycle.bootstrapStateFile, 'utf8')) } catch { return null } })(),
-        logsRecent: [],
+        status: {
+          state: statusState.state,
+          tool: statusState.tool,
+          since: statusState.since,
+          step: statusState.step,
+          turn: statusState.turn,
+          heartbeatAt: statusState.heartbeatAt,
+          source: statusState.source,
+          message: statusState.message
+        },
+        attribution: {
+          active: activeSessionId ? String(activeSessionId).slice(0, 16) : null,
+          bootstrapped: attributionBootstrapped
+        },
+        skins: (() => {
+          try {
+            const pc = JSON.parse(fs.readFileSync(cfg.petConfigFile, 'utf8'))
+            return { current: pc.skin || '大肥鱼', available: ['大肥鱼'] }
+          } catch {
+            return { current: '大肥鱼', available: ['大肥鱼'] }
+          }
+        })(),
+        capabilities: {
+          petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'],
+          doubleClick: true,
+          skin: true,
+          quiet: true,
+          quit: true,
+          autoStart: true
+        },
+        bootstrap: (() => {
+          try {
+            return JSON.parse(fs.readFileSync(cfg.lifecycle.bootstrapStateFile, 'utf8'))
+          } catch {
+            return null
+          }
+        })(),
+        logsRecent: []
       }
       fs.writeFileSync(cfg.stateFile, JSON.stringify(state), 'utf8')
     } catch {}
@@ -656,16 +938,25 @@ export function apply(ctx, rawConfig) {
       lastUiRaw = raw
       const j = JSON.parse(raw)
       const applied = {}
-      if (typeof j.enabled === 'boolean') { cfg.enabled = j.enabled; applied.enabled = j.enabled }
+      if (typeof j.enabled === 'boolean') {
+        cfg.enabled = j.enabled
+        applied.enabled = j.enabled
+      }
       if (Array.isArray(j.quietHours)) {
         const ok = j.quietHours.filter((r) => typeof r === 'string' && /^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(r))
-        if (ok.length) { cfg.quietHours = ok; applied.quietHours = ok }
+        if (ok.length) {
+          cfg.quietHours = ok
+          applied.quietHours = ok
+        }
       }
       if (j.llm && Number.isFinite(Number(j.llm.budgetPerDayYuan))) {
         cfg.llm.budgetPerDayYuan = Number(j.llm.budgetPerDayYuan)
         applied.budgetPerDayYuan = cfg.llm.budgetPerDayYuan
       }
-      if (j.pet && typeof j.pet === 'object') { applyPetSettings(j.pet); applied.pet = Object.keys(j.pet) }
+      if (j.pet && typeof j.pet === 'object') {
+        applyPetSettings(j.pet)
+        applied.pet = Object.keys(j.pet)
+      }
       if (j.bubble && typeof j.bubble === 'object') {
         const b = cfg.bubble || {}
         for (const k of ['normalMs', 'innerMs', 'reportMs', 'approvalMs', 'nightMs', 'queueGapMs']) {
@@ -678,34 +969,56 @@ export function apply(ctx, rawConfig) {
         cfg.bubble = b
         applied.bubble = { normalMs: b.normalMs, innerMs: b.innerMs, reportMs: b.reportMs }
       }
-      if (typeof j.activity === 'string' && ACTIVITY_PRESETS[j.activity]) { applyActivity(j.activity); applied.activity = j.activity }
+      if (typeof j.activity === 'string' && ACTIVITY_PRESETS[j.activity]) {
+        applyActivity(j.activity)
+        applied.activity = j.activity
+      }
       log('info', 'ui-config applied', applied)
       writeState()
     } catch {}
   }
 
-
   // ---------- pipe (short connection per line, silent failures) ----------
   function send(line) {
-    if (cfg.dryRun) { log('info', 'dryRun send', { line }); return }
+    if (cfg.dryRun) {
+      log('info', 'dryRun send', { line })
+      return
+    }
     const payload = line + '\n'
     let wrote = false
     const attempt = (n) => {
       const sock = net.connect(cfg.pipe)
       let settled = false
       sock.setTimeout(600)
-      sock.on('connect', () => { sock.write(payload); wrote = true; sock.end() })
+      sock.on('connect', () => {
+        sock.write(payload)
+        wrote = true
+        sock.end()
+      })
       sock.on('data', () => {})
-      sock.on('timeout', () => { if (!settled) { settled = true; sock.destroy(); log('warn', 'pipe timeout') } })
+      sock.on('timeout', () => {
+        if (!settled) {
+          settled = true
+          sock.destroy()
+          log('warn', 'pipe timeout')
+        }
+      })
       sock.on('error', (err) => {
         if (settled) return
         settled = true
         sock.destroy()
-        if (!wrote && n < 1) { setTimeout(() => attempt(n + 1), 60); return }
+        if (!wrote && n < 1) {
+          setTimeout(() => attempt(n + 1), 60)
+          return
+        }
         if (!wrote) log('warn', 'pipe unavailable', err.code || err.message)
       })
     }
-    try { attempt(0) } catch (e) { log('warn', 'pipe send threw', e && e.message) }
+    try {
+      attempt(0)
+    } catch (e) {
+      log('warn', 'pipe send threw', e && e.message)
+    }
   }
   // ---------- P0 v9: bubble queue (serial, coalesce, configurable durations) ----------
   const bubbleQ = []
@@ -715,7 +1028,7 @@ export function apply(ctx, rawConfig) {
   let attributionBootstrapped = false
   if (cfg.attribution?.enabled && cfg.attribution.bootstrapLastKnown !== false && cfg.attribution.stateFile) {
     try {
-      const j = JSON.parse(fs.readFileSync(cfg.attribution.stateFile, "utf8"))
+      const j = JSON.parse(fs.readFileSync(cfg.attribution.stateFile, 'utf8'))
       if (j && j.sessionId) {
         activeSessionId = j.sessionId
         activeAt = Date.now()
@@ -735,7 +1048,11 @@ export function apply(ctx, rawConfig) {
         attributionBootstrapped = true
         log('info', 'attribution bootstrap', { session: last.slice(0, 16), from: 'log' })
         try {
-          if (cfg.attribution?.stateFile) fs.writeFileSync(cfg.attribution.stateFile, JSON.stringify({ sessionId: last, at: new Date().toISOString(), source: 'log' }))
+          if (cfg.attribution?.stateFile)
+            fs.writeFileSync(
+              cfg.attribution.stateFile,
+              JSON.stringify({ sessionId: last, at: new Date().toISOString(), source: 'log' })
+            )
         } catch {}
       }
     } catch {}
@@ -764,7 +1081,17 @@ export function apply(ctx, rawConfig) {
     const t = clip(text, 60)
     if (!t || !cfg.enabled) return false
     const style = meta.style || ''
-    bubbleQ.push({ text: t, kind, style, source: meta.source || 'pool', durMs: bubbleDurFor(kind, style), prio: bubblePrio(kind, style), at: Date.now(), latencyMs: meta.latencyMs ?? null, tokens: meta.tokens ?? null })
+    bubbleQ.push({
+      text: t,
+      kind,
+      style,
+      source: meta.source || 'pool',
+      durMs: bubbleDurFor(kind, style),
+      prio: bubblePrio(kind, style),
+      at: Date.now(),
+      latencyMs: meta.latencyMs ?? null,
+      tokens: meta.tokens ?? null
+    })
     if (bubbleQ.length > (cfg.bubble?.maxQueue || 8)) bubbleQ.shift()
     log('info', 'bubble queue', { kind, style: style || 'normal', q: bubbleQ.length })
     return true
@@ -773,7 +1100,17 @@ export function apply(ctx, rawConfig) {
     const sec = Math.max(1, Math.min(30, Math.round(item.durMs / 1000)))
     recentSay.push({ at: new Date().toISOString(), kind: item.kind, source: item.source, line: item.text })
     if (recentSay.length > 10) recentSay.shift()
-    log('info', 'say', { kind: item.kind, style: item.style || 'normal', source: item.source, line: item.text, latencyMs: item.latencyMs, tokens: item.tokens, callsToday: llmDay.calls, costToday: Number(llmDay.cost.toFixed(4)), showMs: sec * 1000 })
+    log('info', 'say', {
+      kind: item.kind,
+      style: item.style || 'normal',
+      source: item.source,
+      line: item.text,
+      latencyMs: item.latencyMs,
+      tokens: item.tokens,
+      callsToday: llmDay.calls,
+      costToday: Number(llmDay.cost.toFixed(4)),
+      showMs: sec * 1000
+    })
     if (item.kind === 'inner') send('inner3:' + sec + '|' + item.text)
     else send('say3:' + sec + '|' + item.style + '|' + item.text)
     bubbleBusyUntil = Date.now() + item.durMs
@@ -808,7 +1145,10 @@ export function apply(ctx, rawConfig) {
         const lo = cfg.bubble?.innerDelayMinMs || 1200
         const hi = Math.max(lo, cfg.bubble?.innerDelayMaxMs || 1800)
         const delay = lo + Math.random() * (hi - lo)
-        setTimeout(() => { log('info', 'inner queued', { kind, delayMs: Math.round(delay) }); enqueueBubble(inner, 'inner', { source: 'pool' }) }, delay)
+        setTimeout(() => {
+          log('info', 'inner queued', { kind, delayMs: Math.round(delay) })
+          enqueueBubble(inner, 'inner', { source: 'pool' })
+        }, delay)
       }
     }
   }
@@ -822,7 +1162,10 @@ export function apply(ctx, rawConfig) {
   let dayCount = 0
   const nowCount = () => {
     const k = dateKey()
-    if (k !== dayKey) { dayKey = k; dayCount = 0 }
+    if (k !== dayKey) {
+      dayKey = k
+      dayCount = 0
+    }
     return dayCount
   }
   const hourCount = () => {
@@ -836,13 +1179,28 @@ export function apply(ctx, rawConfig) {
     if (quietNow() && !urgent) return false
     const now = Date.now()
     if (!urgent) {
-      if (!opts.ignoreMinGap && now - lastSaidAt < (activityState.minGapMs || cfg.minGapMs)) { log('debug', 'skip throttle: minGap', { kind }); return false }
+      if (!opts.ignoreMinGap && now - lastSaidAt < (activityState.minGapMs || cfg.minGapMs)) {
+        log('debug', 'skip throttle: minGap', { kind })
+        return false
+      }
       const cd = (cfg.cooldownMs[kind] || 0) * (activityState.cooldownScale || 1)
-      if (now - (lastKindAt.get(kind) || 0) < cd) { log('debug', 'skip throttle: cooldown', { kind }); return false }
+      if (now - (lastKindAt.get(kind) || 0) < cd) {
+        log('debug', 'skip throttle: cooldown', { kind })
+        return false
+      }
     }
-    if (hourCount() >= cfg.maxPerHour) { log('debug', 'skip throttle: maxPerHour', { kind }); return false }
-    if (nowCount() >= cfg.maxPerDay) { log('debug', 'skip throttle: maxPerDay', { kind }); return false }
-    if (!urgent && Math.random() > ((activityState.chance && activityState.chance[kind]) ?? cfg.chance[kind] ?? 1)) { log('debug', 'skip throttle: chance', { kind }); return false }
+    if (hourCount() >= cfg.maxPerHour) {
+      log('debug', 'skip throttle: maxPerHour', { kind })
+      return false
+    }
+    if (nowCount() >= cfg.maxPerDay) {
+      log('debug', 'skip throttle: maxPerDay', { kind })
+      return false
+    }
+    if (!urgent && Math.random() > ((activityState.chance && activityState.chance[kind]) ?? cfg.chance[kind] ?? 1)) {
+      log('debug', 'skip throttle: chance', { kind })
+      return false
+    }
     return true
   }
   const remember = (kind, text) => {
@@ -858,7 +1216,10 @@ export function apply(ctx, rawConfig) {
     const t = clip(text, 60)
     if (!t) return false
     if (!opts.force && !canSpeak(kind, opts.urgent, opts)) return false
-    if (recentLines.some((x) => x.text === t)) { log('debug', 'skip throttle: duplicate', { kind }); return false }
+    if (recentLines.some((x) => x.text === t)) {
+      log('debug', 'skip throttle: duplicate', { kind })
+      return false
+    }
     remember(kind, t)
     rememberLine(t, opts.source || 'pool')
     say(t, kind, opts)
@@ -872,12 +1233,17 @@ export function apply(ctx, rawConfig) {
     tools: 0,
     tokens: 0,
     longestMs: 0,
-    approvals: 0,
+    approvals: 0
   }
   const rollStats = () => {
     const k = dateKey()
     if (stats.day !== k) {
-      stats.day = k; stats.turns = 0; stats.tools = 0; stats.tokens = 0; stats.longestMs = 0; stats.approvals = 0
+      stats.day = k
+      stats.turns = 0
+      stats.tools = 0
+      stats.tokens = 0
+      stats.longestMs = 0
+      stats.approvals = 0
     }
   }
   const reportState = { turnsSince: 0, lastAt: 0 }
@@ -893,14 +1259,16 @@ export function apply(ctx, rawConfig) {
       `今日小票｜${d.getMonth() + 1}月${d.getDate()}日`,
       `轮次 ${stats.turns} · 工具 ${stats.tools} 次`,
       `最长一轮 ${Math.round(stats.longestMs / 1000)}s · 共 ${(stats.tokens / 1000).toFixed(1)}k token`,
-      `等你点头 ${stats.approvals} 次`,
+      `等你点头 ${stats.approvals} 次`
     ].slice(0, cfg.maxReceiptLines || 4)
     try {
       const tmp = cfg.receiptFile + '.tmp'
       fs.writeFileSync(tmp, lines.join('\n') + '\n', 'utf8')
       fs.renameSync(tmp, cfg.receiptFile)
       log('debug', 'receipt written', { lines })
-    } catch (e) { log('debug', 'receipt write failed', e && e.message) }
+    } catch (e) {
+      log('debug', 'receipt write failed', e && e.message)
+    }
   }
 
   // ---------- per-session summary ----------
@@ -941,23 +1309,36 @@ export function apply(ctx, rawConfig) {
     const hdr = session.header || {}
     if (t === 'user/message') {
       const srcKind = d.source && d.source.kind
-      const denyOrigin = hdr.origin && ['subagent', 'teammate', 'team', 'delegate', 'background', 'tool'].includes(String(hdr.origin).toLowerCase())
+      const denyOrigin =
+        hdr.origin &&
+        ['subagent', 'teammate', 'team', 'delegate', 'background', 'tool'].includes(String(hdr.origin).toLowerCase())
       if (srcKind === 'user' && !denyOrigin && (hdr.delegationDepth ?? 0) === 0) {
         setStatus('thinking', { source: String(session.id).slice(0, 16) })
         activeSessionId = session.id
         activeAt = Date.now()
         try {
-          if (cfg.attribution?.stateFile) fs.writeFileSync(cfg.attribution.stateFile, JSON.stringify({ sessionId: session.id, at: new Date().toISOString(), cwd: hdr.cwd || '' }))
+          if (cfg.attribution?.stateFile)
+            fs.writeFileSync(
+              cfg.attribution.stateFile,
+              JSON.stringify({ sessionId: session.id, at: new Date().toISOString(), cwd: hdr.cwd || '' })
+            )
         } catch {}
         log('info', 'attribution active', { session: String(session.id).slice(0, 16) })
       }
     }
     if (!attrSkipLogAt['hdr:' + String(session.id)]) {
       attrSkipLogAt['hdr:' + String(session.id)] = Date.now()
-      log('info', 'attribution header', { session: String(session.id).slice(0, 16), origin: hdr.origin ?? null, depth: hdr.delegationDepth ?? 0, cwd: hdr.cwd ? 'set' : 'none' })
+      log('info', 'attribution header', {
+        session: String(session.id).slice(0, 16),
+        origin: hdr.origin ?? null,
+        depth: hdr.delegationDepth ?? 0,
+        cwd: hdr.cwd ? 'set' : 'none'
+      })
     }
     if (cfg.attribution?.enabled && cfg.attribution.onlyActive) {
-      const denyOrigin2 = hdr.origin && ['subagent', 'teammate', 'team', 'delegate', 'background', 'tool'].includes(String(hdr.origin).toLowerCase())
+      const denyOrigin2 =
+        hdr.origin &&
+        ['subagent', 'teammate', 'team', 'delegate', 'background', 'tool'].includes(String(hdr.origin).toLowerCase())
       const sid = String(session.id)
       const aid = activeSessionId ? String(activeSessionId) : ''
       const activeMatch = !!aid && (sid === aid || sid.startsWith(aid))
@@ -965,19 +1346,32 @@ export function apply(ctx, rawConfig) {
         // 启动 bootstrap 可能来自日志里的截断 id（16 字符）；命中后升级为完整 id 并持久化
         activeSessionId = session.id
         activeAt = Date.now()
-        try { if (cfg.attribution?.stateFile) fs.writeFileSync(cfg.attribution.stateFile, JSON.stringify({ sessionId: sid, at: new Date().toISOString(), upgraded: true })) } catch {}
+        try {
+          if (cfg.attribution?.stateFile)
+            fs.writeFileSync(
+              cfg.attribution.stateFile,
+              JSON.stringify({ sessionId: sid, at: new Date().toISOString(), upgraded: true })
+            )
+        } catch {}
         log('info', 'attribution upgraded', { session: sid.slice(0, 16) })
       }
-      const okay = activeMatch && !denyOrigin2
-        && (hdr.delegationDepth ?? 0) === 0
-        && Date.now() - activeAt <= (cfg.attribution.activeTtlMs || 1800000)
+      const okay =
+        activeMatch &&
+        !denyOrigin2 &&
+        (hdr.delegationDepth ?? 0) === 0 &&
+        Date.now() - activeAt <= (cfg.attribution.activeTtlMs || 1800000)
       if (!okay) {
         const key = String(session.id)
         if (!attrSkipLogAt[key] || Date.now() - attrSkipLogAt[key] > 60000) {
           attrSkipLogAt[key] = Date.now()
-          log('info', 'attribution skip', { session: key.slice(0, 16), reason: hdr.origin ? ('origin:' + hdr.origin) : 'not-active', active: activeSessionId ? String(activeSessionId).slice(0, 16) : null })
+          log('info', 'attribution skip', {
+            session: key.slice(0, 16),
+            reason: hdr.origin ? 'origin:' + hdr.origin : 'not-active',
+            active: activeSessionId ? String(activeSessionId).slice(0, 16) : null
+          })
         }
-        if (!['thinking', 'tool', 'approval', 'waiting_approval'].includes(statusState.state)) setStatus('background', { source: String(session.id).slice(0, 16) })
+        if (!['thinking', 'tool', 'approval', 'waiting_approval'].includes(statusState.state))
+          setStatus('background', { source: String(session.id).slice(0, 16) })
         return
       }
     }
@@ -985,26 +1379,32 @@ export function apply(ctx, rawConfig) {
     if (t === 'user/message' || t === 'system/message' || t === 'request/header') return
     if (t === 'tool/call') {
       setStatus('tool', { tool: d.tool || d.name || 'tool' })
-      s.tools += 1; stats.tools += 1
-      if (cfg.actions?.enabled && activityState.level !== 'quiet'
-          && Date.now() - lastToolActAt >= (activityState.toolEveryMs || cfg.actions.toolEveryMs || 20000)) {
-        lastToolActAt = Date.now(); toolActionSeq += 1
-        act('peek')                                  // 转头
-        setTimeout(() => walkNear(), 450)            // 小跑两步
+      s.tools += 1
+      stats.tools += 1
+      if (
+        cfg.actions?.enabled &&
+        activityState.level !== 'quiet' &&
+        Date.now() - lastToolActAt >= (activityState.toolEveryMs || cfg.actions.toolEveryMs || 20000)
+      ) {
+        lastToolActAt = Date.now()
+        toolActionSeq += 1
+        act('peek') // 转头
+        setTimeout(() => walkNear(), 450) // 小跑两步
       }
       return
     }
     if (t === 'assistant/message') {
       const u = d.usage
-      if (u) s.tokens += Number(u.totalTokens ?? (Number(u.inputTokens || 0) + Number(u.outputTokens || 0))) || 0
+      if (u) s.tokens += Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
       return
     }
     if (t === 'turn/start') {
       setStatus('thinking', { turn: stats.turns + 1, tool: null })
-      s.turnStartAt = Date.now(); s.tools = 0
+      s.turnStartAt = Date.now()
+      s.tools = 0
       stats.turns += 1
       if (cfg.actions?.enabled) {
-        send('freeze:900')   // 先停步，再小跳/旋转（spec：停步 + 小跳 0.7s，20% 旋转）
+        send('freeze:900') // 先停步，再小跳/旋转（spec：停步 + 小跳 0.7s，20% 旋转）
         act(Math.random() < (cfg.actions.turnStartSpinChance ?? 0.2) ? 'spin' : 'jump')
       }
       if (cfg.events.turnStart && canSpeak('turnStart')) {
@@ -1015,14 +1415,18 @@ export function apply(ctx, rawConfig) {
           log('info', 'use pregen line', { kind: 'turnStart' })
           speak('turnStart', cached, { force: true, source: 'llm-pregen' })
         } else {
-          void generate('turnStart', s).then((g) => speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens }))
+          void generate('turnStart', s).then((g) =>
+            speak('turnStart', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
+          )
         }
       }
       return
     }
     if (t === 'turn/end') {
       setStatus('done')
-      setTimeout(() => { if (statusState.state === 'done') setStatus('idle') }, 3000)
+      setTimeout(() => {
+        if (statusState.state === 'done') setStatus('idle')
+      }, 3000)
       const dur = s.turnStartAt ? Date.now() - s.turnStartAt : 0
       const durBucket = dur < 15000 ? '很快' : dur < 60000 ? '一会儿' : '挺久'
       stats.longestMs = Math.max(stats.longestMs, dur)
@@ -1031,30 +1435,48 @@ export function apply(ctx, rawConfig) {
       const ok = String(d.reason?.kind || '') === 'completed'
       if (cfg.actions?.enabled) {
         if (ok) act('stretch')
-        else { act('shake'); setTimeout(() => send('freeze:6000'), 500); setTimeout(() => send('cmd:fx:sweat'), 900) }   // 报错：摇头 0.4s + 定格 6s + 汗滴
+        else {
+          act('shake')
+          setTimeout(() => send('freeze:6000'), 500)
+          setTimeout(() => send('cmd:fx:sweat'), 900)
+        } // 报错：摇头 0.4s + 定格 6s + 汗滴
       }
       lastLongStepAt = 0
       if (cfg.events.turnEnd && canSpeak(ok ? 'turnEnd' : 'turnEndBad')) {
         const kind = ok ? 'turnEnd' : 'turnEndBad'
-        void generate(kind, s, { outcome: ok ? '成功' : '没跑完', durBucket })
-          .then((g) => speak(kind, g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens }))
+        void generate(kind, s, { outcome: ok ? '成功' : '没跑完', durBucket }).then((g) =>
+          speak(kind, g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
+        )
         // pregenerate next turn's opening line while idle
         if (cfg.llm.pregen && cfg.llm.enabled) {
           void generate('turnStart', s).then((g) => {
-            if (g.source === 'llm') { pregen.text = g.text; pregen.at = Date.now(); log('debug', 'pregen cached', { text: g.text }) }
+            if (g.source === 'llm') {
+              pregen.text = g.text
+              pregen.at = Date.now()
+              log('debug', 'pregen cached', { text: g.text })
+            }
           })
         }
       }
       // interval report: every N turns AND at least minInterval
       reportState.turnsSince += 1
-      if (ok && cfg.report.enabled && reportState.turnsSince >= (cfg.report.everyNTurns || 5)
-          && Date.now() - reportState.lastAt >= (cfg.report.minIntervalMs || 0)
-          && s.tools >= (cfg.report.minTools || 0) && dur >= (cfg.report.minDurationMs || 0)) {
+      if (
+        ok &&
+        cfg.report.enabled &&
+        reportState.turnsSince >= (cfg.report.everyNTurns || 5) &&
+        Date.now() - reportState.lastAt >= (cfg.report.minIntervalMs || 0) &&
+        s.tools >= (cfg.report.minTools || 0) &&
+        dur >= (cfg.report.minDurationMs || 0)
+      ) {
         reportState.turnsSince = 0
         reportState.lastAt = Date.now()
         const numbers = `turns=${stats.turns} tokens=${stats.tokens} cost=${llmDay.cost.toFixed(4)}元`
-        void generate('report', s, { outcome: '成功', durBucket, numbers })
-          .then((g) => { if (speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })) setTimeout(() => send('act:stretch'), 600) })
+        void generate('report', s, { outcome: '成功', durBucket, numbers }).then((g) => {
+          if (
+            speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
+          )
+            setTimeout(() => send('act:stretch'), 600)
+        })
       }
       // 去 key：DSH 侧统计今日用量并推送余额/用量给桌宠（不依赖桌宠 key，不伪造余额）
       if (cfg.balancePush?.enabled) {
@@ -1076,7 +1498,7 @@ export function apply(ctx, rawConfig) {
       const go = () => {
         if (cfg.walkOnApproval) {
           send('walk:center')
-          setTimeout(() => send('freeze:3000'), 700)   // 走到中央后站定
+          setTimeout(() => send('freeze:3000'), 700) // 走到中央后站定
         }
         speak('approval', pick('dengdai'), { urgent: true, source: 'pool', style: 'remind' })
         writeReceipt()
@@ -1094,7 +1516,11 @@ export function apply(ctx, rawConfig) {
     try {
       const now = new Date()
       const k = dateKey(now)
-      if (ritualDone.date !== k) { ritualDone.date = k; ritualDone.morning = false; ritualDone.sleep = false }
+      if (ritualDone.date !== k) {
+        ritualDone.date = k
+        ritualDone.morning = false
+        ritualDone.sleep = false
+      }
       const m = now.getHours() * 60 + now.getMinutes()
       if (cfg.morning?.enabled && !ritualDone.morning) {
         const mm = cfg.morning.hour * 60 + cfg.morning.minute
@@ -1119,15 +1545,29 @@ export function apply(ctx, rawConfig) {
       pollActivityFile()
       pollUiConfig()
       consumeUiAction()
-      if (!petSettingsPushed) { petSettingsPushed = true; setTimeout(() => { try { applyPetSettings(cfg.petSettings) } catch {} }, 2000) }
+      if (!petSettingsPushed) {
+        petSettingsPushed = true
+        setTimeout(() => {
+          try {
+            applyPetSettings(cfg.petSettings)
+          } catch {}
+        }, 2000)
+      }
       if (!balanceStartupPushed && cfg.balancePush?.enabled && cfg.balancePush.startup) {
         balanceStartupPushed = true
-        try { send('bal:' + '不可查（走DSH渠道）' + '|' + '今日 ¥' + llmDay.cost.toFixed(4) + '（DSH统计）'); log('info', 'balance pushed (startup)', { costToday: Number(llmDay.cost.toFixed(4)) }) } catch {}
+        try {
+          send('bal:' + '不可查（走DSH渠道）' + '|' + '今日 ¥' + llmDay.cost.toFixed(4) + '（DSH统计）')
+          log('info', 'balance pushed (startup)', { costToday: Number(llmDay.cost.toFixed(4)) })
+        } catch {}
       }
       refreshPetOnline()
       writeState()
       // P3: long task -> walk two small steps every ~30s
-      if (cfg.actions?.enabled && cfg.actions.longTaskMs && Date.now() - lastLongStepAt >= (cfg.actions.longTaskStepMs || 30000)) {
+      if (
+        cfg.actions?.enabled &&
+        cfg.actions.longTaskMs &&
+        Date.now() - lastLongStepAt >= (cfg.actions.longTaskStepMs || 30000)
+      ) {
         for (const s of sessions.values()) {
           if (s.turnStartAt && Date.now() - s.turnStartAt >= cfg.actions.longTaskMs) {
             if ((s.longSteps || 0) >= 3) continue
@@ -1142,8 +1582,13 @@ export function apply(ctx, rawConfig) {
         }
       }
       // P3: idle skit — only when nobody is operating, not during quiet hours
-      if (cfg.idleSkit?.enabled && cfg.idleSkit.eventGapMs && Date.now() - lastEventAt >= cfg.idleSkit.eventGapMs
-          && !quietNow() && Date.now() >= nextSkitAt) {
+      if (
+        cfg.idleSkit?.enabled &&
+        cfg.idleSkit.eventGapMs &&
+        Date.now() - lastEventAt >= cfg.idleSkit.eventGapMs &&
+        !quietNow() &&
+        Date.now() >= nextSkitAt
+      ) {
         const s = { id: 'idle', tools: 0, tokens: 0 }
         void generate('selfTalk', s, {}).then((g) => {
           const t = validateLine(g.text, { maxChars: cfg.llm.maxChars })
@@ -1177,7 +1622,10 @@ export function apply(ctx, rawConfig) {
         if (spec.type === 'approval') {
           stats.approvals += 1
           if (cfg.walkOnApproval) send('walk:center')
-          setTimeout(() => speak('approval', spec.text || pick('dengdai'), { urgent: true }), cfg.walkOnApproval ? 120 : 0)
+          setTimeout(
+            () => speak('approval', spec.text || pick('dengdai'), { urgent: true }),
+            cfg.walkOnApproval ? 120 : 0
+          )
           writeReceipt()
         } else if (spec.type === 'turnStart') {
           speak('turnStart', spec.text || pick('kaigong'))
@@ -1198,8 +1646,22 @@ export function apply(ctx, rawConfig) {
     log('warn', 'TESTHOOK enabled (test-only)', { file: cfg.testHookFile })
   }
 
-  const dispose = () => { try { clearInterval(timer) } catch {}; try { clearInterval(bubbleTimer) } catch {}; try { if (hookTimer) clearInterval(hookTimer) } catch {}; sessions.clear() }
-  try { if (typeof ctx.effect === 'function') ctx.effect(() => dispose); else ctx.on('dispose', dispose) } catch {}
+  const dispose = () => {
+    try {
+      clearInterval(timer)
+    } catch {}
+    try {
+      clearInterval(bubbleTimer)
+    } catch {}
+    try {
+      if (hookTimer) clearInterval(hookTimer)
+    } catch {}
+    sessions.clear()
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(() => dispose)
+    else ctx.on('dispose', dispose)
+  } catch {}
 
   log('info', 'loaded v27', {
     dryRun: cfg.dryRun,
@@ -1207,7 +1669,12 @@ export function apply(ctx, rawConfig) {
     receipt: cfg.receiptFile ? 'on' : 'off',
     history: cfg.historyFile ? 'on' : 'off',
     llm: cfg.llm.enabled ? `${cfg.llm.provider}/${cfg.llm.model}` : 'off',
-    llmLimits: { maxTokens: cfg.llm.maxTokens, timeoutMs: cfg.llm.timeoutMs, maxCallsPerDay: cfg.llm.maxCallsPerDay, budgetPerDayYuan: cfg.llm.budgetPerDayYuan },
+    llmLimits: {
+      maxTokens: cfg.llm.maxTokens,
+      timeoutMs: cfg.llm.timeoutMs,
+      maxCallsPerDay: cfg.llm.maxCallsPerDay,
+      budgetPerDayYuan: cfg.llm.budgetPerDayYuan
+    },
     report: cfg.report,
     dualLayer: cfg.dualLayer,
     activity: activityState.level,
@@ -1216,14 +1683,17 @@ export function apply(ctx, rawConfig) {
     activityFile: cfg.activityFile ? 'on' : 'off',
     attribution: cfg.attribution,
     attributionBootstrapped,
-    lifecycle: { autoStart: cfg.lifecycle.autoStart, bootstrap: !!cfg.lifecycle.bootstrapScript, release: !!cfg.lifecycle.releaseZipUrl },
+    lifecycle: {
+      autoStart: cfg.lifecycle.autoStart,
+      bootstrap: !!cfg.lifecycle.bootstrapScript,
+      release: !!cfg.lifecycle.releaseZipUrl
+    },
     uiActionFile: cfg.uiActionFile ? 'on' : 'off',
     bubble: cfg.bubble,
     stateFile: cfg.stateFile ? 'on' : 'off',
     uiConfigFile: cfg.uiConfigFile ? 'on' : 'off',
     quietHours: cfg.quietHours,
     rituals: { morning: cfg.morning, sleep: cfg.sleep },
-    logLevel: cfg.logLevel,
+    logLevel: cfg.logLevel
   })
 }
-

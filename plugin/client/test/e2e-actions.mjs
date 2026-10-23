@@ -30,7 +30,7 @@ async function run(name, payload) {
     ok: r.ok,
     reply: r.ok ? r.data.reply : null,
     error: r.ok ? null : r.error,
-    at: new Date().toISOString(),
+    at: new Date().toISOString()
   }
   result.actions.push(row)
   console.log(name, '->', JSON.stringify(row))
@@ -43,7 +43,7 @@ try {
     petOnline: state.pet.online,
     pipeOnline: state.pipe.online,
     actionsReady: state.capabilities.petActions,
-    versions: state.versions,
+    versions: state.versions
   }
   if (!state.pipe.online) throw new Error('命名管道离线，跳过真实动作验证')
 
@@ -77,7 +77,9 @@ try {
   try {
     // 兜底：确保桌宠不处于隐藏状态
     await handler('pet.action', { name: 'show' })
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 } finally {
   result.finishedAt = new Date().toISOString()
   fs.mkdirSync(path.dirname(outFile), { recursive: true })
