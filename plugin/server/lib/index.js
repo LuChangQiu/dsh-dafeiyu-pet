@@ -269,7 +269,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v48'
+export const name = 'dsh-pet-bridge-v49'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -290,7 +290,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v48] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v49] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -1935,6 +1935,13 @@ export function apply(ctx, rawConfig) {
         cfg.bubble = b
         applied.bubble = { normalMs: b.normalMs, innerMs: b.innerMs, reportMs: b.reportMs }
       }
+      // v49 TEST HOOK 动态开关（ui-config.testHook.file；默认无此键 = 关）
+      if (j.testHook && typeof j.testHook === 'object') {
+        const f = String(j.testHook.file || '').trim()
+        if (f && !hookTimer) startTestHook(f)
+        else if (!f && hookTimer) stopTestHook()
+        applied.testHook = f ? 'on' : 'off'
+      }
       if (typeof j.activity === 'string' && ACTIVITY_PRESETS[j.activity]) {
         applyActivity(j.activity)
         applied.activity = j.activity
@@ -2223,6 +2230,36 @@ export function apply(ctx, rawConfig) {
     } catch {}
   }
   const attrSkipLogAt = {}
+
+  // ---------- v48：team v2 bootstrap（复用 attribution last-known，reload 后不等用户发消息就有数） ----------
+  const bootstrapTeamFromAttribution = () => {
+    try {
+      const store = typeof ctx.get === 'function' ? ctx.get('sessions') : null
+      const id = activeSessionId || currentSessionId || null
+      if (!store || typeof store.get !== 'function' || !id) return false
+      let session = store.get(id)
+      if (!session && typeof store.list === 'function') {
+        // attribution 日志里可能是 16 字符截断 id → 前缀匹配 live 会话
+        const sid = String(id)
+        session = store.list().find((s) => s && String(s.id).startsWith(sid))
+      }
+      if (!session) return false
+      lastSessionRef = new WeakRef(session)
+      return true
+    } catch {
+      return false
+    }
+  }
+  setTimeout(() => {
+    try {
+      const ok = bootstrapTeamFromAttribution()
+      if (ok) {
+        lastTeamV2At = 0 // 允许立即刷新（不受 ≤1/min 节流初始值影响）
+        refreshTeamV2(true)
+      }
+      log('info', 'team v2 bootstrap', { ok, from: 'attribution' })
+    } catch {}
+  }, 3000)
   const bubbleDurFor = (kind, style) => {
     const b = cfg.bubble || {}
     if (kind === 'inner') return b.innerMs || 3000
@@ -2969,46 +3006,110 @@ export function apply(ctx, rawConfig) {
   }, 20000)
 
   // ---------- TEST-ONLY event hook (default off) ----------
-  // For approval-policy=never environments: write a JSON file and the plugin
-  // performs the same演出 the real event would. NEVER enable for daily use.
-  //   {"type":"approval"}[,"text":"..."] / {"type":"turnStart"} / {"type":"turnEnd","report":true}
-  //   / {"type":"inner"} / {"type":"say"} / {"type":"walk","text":"center"} / {"type":"receipt"}
+  // 仅在 cfg.testHookFile 非空时注册（默认关，绝不影响日常）。写 JSON 文件触发一次演出/数据注入：
+  //   {"type":"usage","tokens":42000}                     合成一次 user 角色 usage（input/output 可显式给）→ 偷吃/白饭/费用
+  //   {"type":"state","states":["thinking","tool","waiting_approval","waiting_input","error","done","idle"],"stepMs":800}
+  //   {"type":"report"}                                   强制走报账生成路径（LLM 成功用 LLM，失败池兜底）
+  //   兼容旧类型：approval / turnStart / turnEnd / inner / say / walk / receipt
+  // 清理：删除文件或把 cfg.testHookFile 置空；样例见 <pet-work>\test-hook\sample-*.json
   let hookTimer = null
-  if (cfg.testHookFile) {
-    let lastRaw = ''
-    hookTimer = setInterval(() => {
-      try {
-        const raw = fs.readFileSync(cfg.testHookFile, 'utf8')
-        if (raw === lastRaw) return
-        lastRaw = raw
-        const spec = JSON.parse(raw)
-        log('info', 'TEST HOOK event', spec)
-        if (spec.type === 'approval') {
-          stats.approvals += 1
-          if (cfg.walkOnApproval) send('walk:center')
-          setTimeout(
-            () => speak('approval', spec.text || pick('dengdai'), { urgent: true }),
-            cfg.walkOnApproval ? 120 : 0
-          )
-          writeReceipt()
-        } else if (spec.type === 'turnStart') {
-          speak('turnStart', spec.text || pick('kaigong'))
-        } else if (spec.type === 'turnEnd') {
-          speak('turnEnd', spec.text || pick('shougong'))
-          if (spec.report) setTimeout(() => send('act:stretch'), 600)
-        } else if (spec.type === 'inner') {
-          send('inner:' + (spec.text || '（我就在旁边。）'))
-        } else if (spec.type === 'say') {
-          send('say:' + (spec.text || '测试一句'))
-        } else if (spec.type === 'walk') {
-          send('walk:' + (spec.text || 'center'))
-        } else if (spec.type === 'receipt') {
-          writeReceipt()
-        }
-      } catch {}
-    }, 1500)
-    log('warn', 'TEST HOOK enabled (test-only)', { file: cfg.testHookFile })
+  let hookFile = ''
+  let hookLastRaw = ''
+  const stopTestHook = () => {
+    if (hookTimer) clearInterval(hookTimer)
+    hookTimer = null
+    hookFile = ''
+    hookLastRaw = ''
   }
+  const runTestHookTick = () => {
+    try {
+      if (!hookFile) return
+      const raw = fs.readFileSync(hookFile, 'utf8')
+      if (raw === hookLastRaw) return
+      hookLastRaw = raw
+      const spec = JSON.parse(raw)
+      if (!spec || !spec.type) return
+      const applied = (extra = {}) => log('info', 'testHook applied', { type: spec.type, ...extra })
+      if (spec.type === 'approval') {
+        stats.approvals += 1
+        if (cfg.walkOnApproval) send('walk:center')
+        setTimeout(
+          () => speak('approval', spec.text || pick('dengdai'), { urgent: true }),
+          cfg.walkOnApproval ? 120 : 0
+        )
+        writeReceipt()
+        applied()
+      } else if (spec.type === 'turnStart') {
+        speak('turnStart', spec.text || pick('kaigong'))
+        applied()
+      } else if (spec.type === 'turnEnd') {
+        speak('turnEnd', spec.text || pick('shougong'))
+        if (spec.report) setTimeout(() => send('act:stretch'), 600)
+        applied()
+      } else if (spec.type === 'inner') {
+        send('inner:' + (spec.text || '（我就在旁边。）'))
+        applied()
+      } else if (spec.type === 'say') {
+        send('say:' + (spec.text || '测试一句'))
+        applied()
+      } else if (spec.type === 'walk') {
+        send('walk:' + (spec.text || 'center'))
+        applied()
+      } else if (spec.type === 'receipt') {
+        writeReceipt()
+        applied()
+      } else if (spec.type === 'usage') {
+        // 合成一次 usage（默认 user 角色）：input/output 可显式给，缺省从 tokens 拆（便于造偷吃/白饭/费用）
+        const total = Math.max(0, Math.floor(Number(spec.tokens ?? spec.totalTokens ?? 0)))
+        const input = Number.isFinite(Number(spec.inputTokens)) ? Number(spec.inputTokens) : Math.round(total * 0.9)
+        const output = Number.isFinite(Number(spec.outputTokens)) ? Number(spec.outputTokens) : total - input
+        const usage = {
+          inputTokens: Math.max(0, input),
+          outputTokens: Math.max(0, output),
+          cacheReadTokens: Math.max(0, Number(spec.cacheReadTokens) || 0),
+          cacheWriteTokens: Math.max(0, Number(spec.cacheWriteTokens) || 0),
+          totalTokens: total || Math.max(0, input) + Math.max(0, output)
+        }
+        accountUsage({ id: 'test-hook-usage', header: { cwd: 'test-hook', delegationDepth: 0 } }, { usage })
+        if ((usage.totalTokens || 0) >= Number(cfg.spike?.absFloor || 3000)) checkUsageSpike(usage.totalTokens)
+        writeState(true)
+        applied({ tokens: usage.totalTokens, input: usage.inputTokens, output: usage.outputTokens })
+      } else if (spec.type === 'state') {
+        const seq = Array.isArray(spec.states) ? spec.states : [spec.state || 'thinking']
+        const stepMs = Math.max(200, Number(spec.stepMs) || 800)
+        seq.slice(0, 20).forEach((st, i) => {
+          setTimeout(() => {
+            setStatus(String(st))
+            applied({ state: String(st) })
+          }, i * stepMs)
+        })
+      } else if (spec.type === 'report') {
+        const s0 = { id: 'test-hook-report', tools: Number(spec.tools ?? 3), tokens: 0 }
+        const numbers = `turns=${today.turns} tokens=${today.tokens} cost=${(today.costYuan || 0).toFixed(4)}元 rice=${(today.riceBowls || 0).toFixed(1)}碗 period=${today.period || '高峰'}`
+        void generate('report', s0, { outcome: '成功', durBucket: '一会儿', numbers }).then((g) => {
+          if (
+            speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
+          )
+            setTimeout(() => send('act:stretch'), 600)
+          applied({ source: g.source })
+        })
+      }
+    } catch {}
+  }
+  // 动态开关：patch cfg.testHookFile 或 ui-config.testHook.file 均可（默认关；清空即停）
+  const startTestHook = (file) => {
+    const f = String(file || '').trim()
+    if (!f) {
+      stopTestHook()
+      return false
+    }
+    stopTestHook()
+    hookFile = f
+    hookTimer = setInterval(runTestHookTick, 1500)
+    log('warn', 'TEST HOOK enabled (test-only)', { file: f })
+    return true
+  }
+  if (cfg.testHookFile) startTestHook(cfg.testHookFile)
 
   const dispose = () => {
     // v47-hotfix/task-69：reload 时完整停掉本实例定时器/队列并 flush 待写盘数据
@@ -3063,7 +3164,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v48', {
+  log('info', 'loaded v49', {
     memoryMB: memRssMb(),
     timers: timerCount(),
     lowMemory: cfg.lowMemory,

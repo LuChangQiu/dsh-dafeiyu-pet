@@ -1,0 +1,5 @@
+{
+  "type": "state",
+  "states": ["thinking", "tool", "waiting_approval", "waiting_input", "error", "done", "idle"],
+  "stepMs": 800
+}

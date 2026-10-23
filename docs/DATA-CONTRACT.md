@@ -256,3 +256,15 @@ price = `pricing.per1kTokens`（0.0015）：
 - **隐私**：只推计数/状态枚举/时间；**不推** task subject/description、member name/description、goal objective、question/option 文本、cwd/writeScopes。
 - 日志：`team v2 updated {team:{enabled,status,members,tasks},goal:{status,rounds},plan,uq,degraded}`（仅计数）；`team v2 degraded/snapshot failed`。
 - 单测覆盖：活跃团队、空团队（progress=null）、未注册、服务未装载、failure 降级、非法输入不崩、隐私（输出不含 subject/description/objective/writeScopes/cwd）。
+
+## 12. v49 TEST HOOK（默认关，仅验收自动化用）
+
+- **注册条件**：`cfg.testHookFile`（patch）非空 **或** `ui-config.testHook.file` 非空（动态开关：1.5s 轮询消费，无需 reload；清空即停）。默认生产两者都空 → 不注册，零开销。
+- **文件格式**（JSON，覆盖写入即触发一次；内容不变不重复触发）：
+  - `{"type":"usage","tokens":42000}` 或 `{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}`：合成一次 user 角色 usage，驱动偷吃/白饭/费用（日志 `testHook applied {type:"usage",tokens,input,output}`）。
+  - `{"type":"state","states":["thinking","tool","waiting_approval","waiting_input","error","done","idle"],"stepMs":800}`：按序列 setStatus。
+  - `{"type":"report"}`：强制走报账生成路径（LLM 成功用 LLM，失败池兜底；日志 source）。
+  - 兼容旧类型 `approval/turnStart/turnEnd/inner/say/walk/receipt`。
+- **样例**：`scripts/fixtures/test-hook/sample-*.json`（部署时同步到 `<pet-work>\test-hook\`；说明见 docs/TEST-HOOK.md）。
+- **启用/清理**：ui-config 加 `"testHook":{"file":"<pet-work>\\test-hook\\active.json"}`（1.5s 内生效）→ 覆盖写 active.json 触发；验收后改 `{"file":""}` 并删除 active.json。
+- **隐私**：hook 文件只含计数/状态枚举；样例不含对话原文/路径/key；日志同样经脱敏出口。
