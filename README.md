@@ -33,3 +33,6 @@ MIT（见 LICENSE）；PySide6 为 LGPLv3 运行时依赖；上游桌宠素材�
 - 优先：桌宠 fork 仓 `LuChangQiu/deepseek-dafeiyu-pet` 的 **GitHub Release**（资产 `dafeiyu-pet-win64-<ver>.zip` + `.sha256`）。
 - Release 尚未上传时：可直接向维护者要本地包 `dafeiyu-pet-win64-1.1.5-dsh.1.zip`（75.3MB，sha256 `F2B6D7A1D8183820E40CE0F2C0BC419DB56E45F78C81776C4E4A069904BE99E5`），校验后解压即可运行（免 Python）。
 - 插件自举会读 `lifecycle.releaseZipUrl`；未配置时会优先用本机 Python+源码（当前开发机）或提示管理员配置 Release URL。
+
+## 功能范围（P1/P2/砍掉）与面板规划
+详见 `docs/PLUGIN-UI-SCOPE.md`：P1（余额/天气/音乐/汇总/显隐/回屏内/救急/双击/皮肤/静默/免打扰/自启/停止联动）必须补齐；P2 仅记录；明确砍掉 10 类原生功能（进程联动/定时提醒/歌词对时/内存回收/自定义音效等）。

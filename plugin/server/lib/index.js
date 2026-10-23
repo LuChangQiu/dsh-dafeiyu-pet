@@ -158,7 +158,7 @@ function blocksToText(content) {
 
 function clip(s, n) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n) }
 
-export const name = 'dsh-pet-bridge-v18'
+export const name = 'dsh-pet-bridge-v19'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -177,7 +177,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v18] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v19] ' + line)
     } catch {}
   }
   const safe = (v) => { try { return JSON.stringify(v) } catch { return String(v) } }
@@ -501,7 +501,7 @@ export function apply(ctx, rawConfig) {
     const map = { size: 'size', opacity: 'opacity', mode: 'mode', lineFreq: 'lineFreq',
       passthrough: 'passthrough', locked: 'locked', bubbleStyle: 'bubbleStyle',
       topmost: 'topmost', snap: 'snap', layer: 'layer', skin: 'skin',
-      soundOn: 'soundOn', volume: 'volume', musicLink: 'musicLink' }
+      soundOn: 'soundOn', volume: 'volume', musicLink: 'musicLink', doubleClick: 'doubleClick' }
     const out = {}
     for (const [k, cmdKey] of Object.entries(map)) if (petCfg[k] !== undefined) out[cmdKey] = petCfg[k]
     if (petCfg.city !== undefined) out.city = petCfg.city
@@ -561,12 +561,13 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.18.0',
-        petVersion: 'v1.1.5+patch-v18',
+        version: '0.19.0',
+        petVersion: 'v1.1.5+patch-v19',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
         attribution: { active: activeSessionId ? String(activeSessionId).slice(0, 16) : null, bootstrapped: attributionBootstrapped },
+        capabilities: { petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'], doubleClick: true, skin: true, quiet: true },
         bootstrap: (() => { try { return JSON.parse(fs.readFileSync(cfg.lifecycle.bootstrapStateFile, 'utf8')) } catch { return null } })(),
         logsRecent: [],
       }
@@ -1091,7 +1092,7 @@ export function apply(ctx, rawConfig) {
         if (raw === lastRaw) return
         lastRaw = raw
         const spec = JSON.parse(raw)
-        log('info', 'TESTHOOK event', spec)
+        log('info', 'TEST HOOK event', spec)
         if (spec.type === 'approval') {
           stats.approvals += 1
           if (cfg.walkOnApproval) send('walk:center')
@@ -1113,13 +1114,13 @@ export function apply(ctx, rawConfig) {
         }
       } catch {}
     }, 1500)
-    log('warn', 'TESTHOOK enabled (test-only)', { file: cfg.testHookFile })
+    log('warn', 'TEST HOOK enabled (test-only)', { file: cfg.testHookFile })
   }
 
   const dispose = () => { try { clearInterval(timer) } catch {}; try { clearInterval(bubbleTimer) } catch {}; try { if (hookTimer) clearInterval(hookTimer) } catch {}; sessions.clear() }
   try { if (typeof ctx.effect === 'function') ctx.effect(() => dispose); else ctx.on('dispose', dispose) } catch {}
 
-  log('info', 'loaded v18', {
+  log('info', 'loaded v19', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
@@ -1144,4 +1145,3 @@ export function apply(ctx, rawConfig) {
     logLevel: cfg.logLevel,
   })
 }
-
