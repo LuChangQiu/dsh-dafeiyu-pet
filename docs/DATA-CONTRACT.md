@@ -112,6 +112,7 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 - 不变式：`tokens ≈ tokensUser + tokensAgent`。v46 上线首日会把 v45 及更早“只有 tokens、无角色拆分”的历史缺口补入 `tokensUser`（日志 `today seed`）；跨天清零后严格成立。
 - 采集点：`onEvent` 入口、在 `skipSubagent` / 归因过滤**之前**归集（旧版在过滤之后 ⇒ 团队/子代理 token 全部丢失，且事件在 TDZ 处抛错）。
 - 计数范围：所有会话，不受 `onlyCwd` / `attribution.onlyActive` 影响（只影响统计，不触发任何演出）。
+- `agentCalls`：过滤分支在 turn/start、tool/call 处累计（v45 因 TDZ 从未生效，v46 修复后恢复计数，口径为“后台 agent 会话的活动次数”）。
 
 ### 9.2 三本账成本（估算）
 
@@ -145,7 +146,7 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 9. `read` 前缀：`read|list|open|view|cat|get_file|read_file`
 10. 其余/空名 → `unknown`
 
-- 输出：`state.status.toolType`（9 类之一）、`state.status.subkind`（job 时 = `job`，否则 null）。
+- 输出：`state.status.toolType`（9 类之一）、`state.status.subkind`（job 时 = `job`，否则 null）；日志 `toolType mapped {tool,toolType,subkind}`（按映射去重，供 verifier 抽查真实事件）。
 - `ask_user_question` 额外把状态置为 `waiting_input`（`stateClass=waiting`，等用户选），不只普通 tool。
 - 动作映射（旧口径延续）：read→peek、write→jump、command→peek+走近、search→peek×2、mcp→peek；plan/knowledge/unknown 不动作。
 - 单测：`node scripts/test-tool-types.mjs`（全部示例 + 顺序校验 + 9 类枚举覆盖）。

@@ -635,6 +635,7 @@ export function apply(ctx, rawConfig) {
   let lastEventAt = Date.now()
   let lastToolActAt = 0
   let toolActionSeq = 0
+  let lastToolTypeLogged = ''
   let lastLongStepAt = 0
   let lastSkitAt = 0
   let hourActKey = ''
@@ -1992,6 +1993,12 @@ export function apply(ctx, rawConfig) {
       const tt = toolTypeOf(toolName)
       // v46：ask_user_question = 等用户做选择 → 状态 waiting_input（stateClass 派生 waiting），不只是普通 tool
       const isAsk = tt.type === 'plan' && /^ask_user_question$/i.test(toolName)
+      // v46：工具分类证据日志（按映射去重，避免每轮工具都刷一行；verifier 用 status.toolType + 该日志抽查）
+      const mapKey = tt.type + '/' + (tt.subkind || '')
+      if (lastToolTypeLogged !== mapKey) {
+        lastToolTypeLogged = mapKey
+        log('info', 'toolType mapped', { tool: toolName, toolType: tt.type, subkind: tt.subkind })
+      }
       setStatus(isAsk ? 'waiting_input' : 'tool', {
         tool: toolName,
         toolType: tt.type,
