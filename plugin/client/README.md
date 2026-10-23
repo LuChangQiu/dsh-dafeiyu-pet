@@ -50,7 +50,7 @@ DSH 0.2.x 的 client-connection 自身 inject 收缩为 `['credentials']`，其 
 
 ## 安装 / 接线
 
-前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `C:\Users\xiqi\.dsh\profiles\web`，
+前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `%USERPROFILE%\.dsh\profiles\web`，
 且 profile `package.json` 的 `dsh.profile.patchReload` 为 `live`（热组合，无需重启 host）。
 
 ```powershell
@@ -78,12 +78,12 @@ install.ps1 做的事（全部可回滚）：
       name: 'dsh-pet-bridge-ui'
       config:
         channel: '/pet-bridge-ui'
-        logFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
-        activityFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\activity.txt'
-        stateFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\state.json'
-        uiConfigFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\ui-config.json'
-        evidenceDir: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence'
-        heartbeatFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
+        logFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
+        activityFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\activity.txt'
+        stateFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\state.json'
+        uiConfigFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\ui-config.json'
+        evidenceDir: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence'
+        heartbeatFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
         defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
@@ -191,10 +191,10 @@ curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "content-type: application/jso
   --data '{\"rpcId\":\"p\",\"method\":\"ping\"}' http://127.0.0.1:3080/pet-bridge-ui/ping
 
 # 激活心跳（安装脚本用它判定插件加载成功）
-Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
+Get-Content '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
 
 # 联动插件日志（会显示 ui-config applied / activity preset）
-Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log' -Tail 20
+Get-Content '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log' -Tail 20
 ```
 
 ## 已知限制

@@ -88,6 +88,8 @@ const DEFAULTS = {
   uiActionFile: '',
   petConfigFile: '',
   stateFileV2: '',
+  companionFile: '',
+  eventsFile: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
@@ -184,7 +186,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v34'
+export const name = 'dsh-pet-bridge-v35'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -203,7 +205,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v34] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v35] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -786,6 +788,17 @@ export function apply(ctx, rawConfig) {
               fs.unlinkSync(cmdFile)
             } catch {}
           }
+        } else if (j.name === 'interact-head') interact('head')
+        else if (j.name === 'interact-feed') {
+          const r = interact('feed')
+          if (r === 'feed-night') {
+            status = 'failed'
+            message = '深夜不喂食'
+          }
+        } else if (j.name === 'interact-come') interact('come')
+        else if (j.name === 'events-ack') {
+          events = events.map((e) => ({ ...e, unread: false }))
+          saveEvents()
         } else {
           status = 'failed'
           message = 'unsupported action'
@@ -880,9 +893,122 @@ export function apply(ctx, rawConfig) {
         statusState.since = new Date().toISOString()
       }
       pruneSessions()
+      todayReset()
+      saveCompanion()
       pushStatusToPet()
       writeState()
     }, cfg.statusChannel.heartbeatMs || 5000)
+  }
+
+  // ---------- Phase-1：今日统计 / 事件环形缓冲 / companion 情绪模型 / 互动 ----------
+  const today = {
+    date: new Date().toISOString().slice(0, 10),
+    turns: 0,
+    toolCalls: 0,
+    longestTurnMs: 0,
+    costYuan: 0,
+    budgetYuan: cfg.llm.budgetPerDayYuan || 1,
+    calls: 0
+  }
+  const companion = {
+    mood: 10,
+    energy: 70,
+    affinity: 5,
+    level: '熟悉',
+    streakDays: 0,
+    firstSeenAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),
+    totals: { turns: 0, tools: 0, interactions: 0 },
+    updatedAt: new Date().toISOString()
+  }
+  try {
+    if (cfg.companionFile && fs.existsSync(cfg.companionFile))
+      Object.assign(companion, JSON.parse(fs.readFileSync(cfg.companionFile, 'utf8')))
+  } catch {}
+  const stateWords = () => {
+    const moodW = companion.mood >= 40 ? '开心' : companion.mood <= -20 ? '有点低落' : '平静'
+    const energyW = companion.energy < 30 ? '困了' : companion.energy > 70 ? '有精神' : '有点累'
+    const affW =
+      companion.affinity >= 60 ? '黏人' : companion.affinity >= 30 ? '亲近' : companion.affinity >= 10 ? '熟悉' : '陌生'
+    return { mood: moodW, energy: energyW, affinity: affW }
+  }
+  const saveCompanion = () => {
+    try {
+      companion.updatedAt = new Date().toISOString()
+      if (cfg.companionFile) {
+        const t = cfg.companionFile + '.tmp'
+        fs.writeFileSync(t, JSON.stringify(companion), 'utf8')
+        fs.renameSync(t, cfg.companionFile)
+      }
+    } catch {}
+  }
+  let events = []
+  try {
+    if (cfg.eventsFile && fs.existsSync(cfg.eventsFile)) {
+      const j = JSON.parse(fs.readFileSync(cfg.eventsFile, 'utf8'))
+      if (Array.isArray(j.events)) events = j.events
+    }
+  } catch {}
+  const saveEvents = () => {
+    try {
+      if (cfg.eventsFile) {
+        const t = cfg.eventsFile + '.tmp'
+        fs.writeFileSync(t, JSON.stringify({ events: events.slice(-500) }), 'utf8')
+        fs.renameSync(t, cfg.eventsFile)
+      }
+    } catch {}
+  }
+  const pushEvent = (kind, level, payload, said) => {
+    events.push({
+      at: new Date().toISOString(),
+      kind,
+      level,
+      payload: String(payload || '').slice(0, 80),
+      said: !!said,
+      unread: level === 'S0' || level === 'S1'
+    })
+    if (events.length > 500) events = events.slice(-500)
+    saveEvents()
+  }
+  const interact = (name) => {
+    const now = Date.now()
+    const limits = { head: 5 * 60 * 1000, feed: 0, come: 60 * 1000 }
+    if (name === 'head') {
+      send('cmd:fx:love')
+      companion.mood = Math.min(100, companion.mood + 3)
+      companion.affinity = Math.min(100, companion.affinity + 0.5)
+    } else if (name === 'feed') {
+      const h = new Date().getHours()
+      if (h >= 23 || h < 8) return 'feed-night'
+      send('act:jump')
+      setTimeout(() => send('cmd:fx:love'), 300)
+      companion.mood = Math.min(100, companion.mood + 2)
+      companion.energy = Math.min(100, companion.energy + 3)
+    } else if (name === 'come') {
+      send('walk:nearby')
+      setTimeout(() => send('freeze:800'), 700)
+      companion.mood = Math.min(100, companion.mood + 1)
+    }
+    companion.totals.interactions += 1
+    companion.lastSeenAt = new Date().toISOString()
+    saveCompanion()
+    pushEvent('interaction', 'S3', name, false)
+    log('info', 'interaction', { name, mood: companion.mood, affinity: companion.affinity })
+    return 'ok'
+  }
+  const todayReset = () => {
+    const d = new Date().toISOString().slice(0, 10)
+    if (today.date !== d) {
+      today.date = d
+      today.turns = 0
+      today.toolCalls = 0
+      today.longestTurnMs = 0
+      today.costYuan = 0
+      today.calls = 0
+    }
+    today.calls = llmDay.calls
+    today.costYuan = Number(llmDay.cost.toFixed(4))
+    today.budgetYuan = cfg.llm.budgetPerDayYuan || 1
   }
 
   const writeState = () => {
@@ -905,8 +1031,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.34.0',
-        petVersion: 'v1.1.5+patch-v34',
+        version: '0.35.0',
+        petVersion: 'v1.1.5+patch-v35',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -927,6 +1053,9 @@ export function apply(ctx, rawConfig) {
           bootstrapped: attributionBootstrapped
         },
         currentSessionId: currentSessionId ? String(currentSessionId).slice(0, 16) : null,
+        today,
+        companion: { ...companion, words: stateWords() },
+        eventsUnread: events.filter((e) => e.unread).length,
         userActiveCount: sessionsPayload().filter((x) => x.role === 'user').length,
         backgroundCount: sessionsPayload().filter((x) => x.role !== 'user').length,
         activeSessionCount: sessionsPayload().filter((x) => x.role === 'user').length,
@@ -941,6 +1070,7 @@ export function apply(ctx, rawConfig) {
         })(),
         capabilities: {
           petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'],
+          interactions: { head: true, feed: true, come: true },
           doubleClick: true,
           skin: true,
           quiet: true,
@@ -1426,6 +1556,7 @@ export function apply(ctx, rawConfig) {
     log('debug', 'event', { type: t, session: String(session.id || '').slice(0, 14) })
     if (/error|failed/i.test(t)) {
       setStatus('error', { message: t })
+      pushEvent('error', 'S0', t, true)
       if (cfg.actions?.enabled) {
         act('shake')
         setTimeout(() => send('cmd:fx:sweat'), 400)
@@ -1531,6 +1662,7 @@ export function apply(ctx, rawConfig) {
       }
       s.tools += 1
       stats.tools += 1
+      today.toolCalls += 1
       if (
         cfg.actions?.enabled &&
         activityState.level !== 'quiet' &&
@@ -1604,6 +1736,8 @@ export function apply(ctx, rawConfig) {
       stats.tokens += s.tokens
       s.tokens = 0
       const ok = String(d.reason?.kind || '') === 'completed'
+      today.turns += 1
+      today.longestTurnMs = Math.max(today.longestTurnMs, dur)
       if (cfg.actions?.enabled) {
         if (ok) act('stretch')
         else {
@@ -1659,10 +1793,12 @@ export function apply(ctx, rawConfig) {
           } catch {}
         }
       }
+      pushEvent('turn', 'S1', ok ? '完成' : '未完成', true)
       writeReceipt()
       return
     }
     if (t === 'approval/asked') {
+      pushEvent('approval', 'S0', '等确认', true)
       setStatus('waiting_approval')
       {
         const r = sessionRegistry.get(String(session.id))
@@ -1841,7 +1977,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v34', {
+  log('info', 'loaded v35', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
