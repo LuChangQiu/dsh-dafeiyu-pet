@@ -50,7 +50,7 @@ DSH 0.2.x 的 client-connection 自身 inject 收缩为 `['credentials']`，其 
 
 ## 安装 / 接线
 
-前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `%USERPROFILE%\.dsh\profiles\web`，
+前置：DSH Web 正在运行（本机 `127.0.0.1:3080`），profile 为 `C:\Users\xiqi\.dsh\profiles\web`，
 且 profile `package.json` 的 `dsh.profile.patchReload` 为 `live`（热组合，无需重启 host）。
 
 ```powershell
@@ -78,12 +78,12 @@ install.ps1 做的事（全部可回滚）：
       name: 'dsh-pet-bridge-ui'
       config:
         channel: '/pet-bridge-ui'
-        logFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
-        activityFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\activity.txt'
-        stateFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\state.json'
-        uiConfigFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\ui-config.json'
-        evidenceDir: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence'
-        heartbeatFile: '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
+        logFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
+        activityFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\activity.txt'
+        stateFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\state.json'
+        uiConfigFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\ui-config.json'
+        evidenceDir: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence'
+        heartbeatFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
         defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
@@ -191,10 +191,10 @@ curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "content-type: application/jso
   --data '{\"rpcId\":\"p\",\"method\":\"ping\"}' http://127.0.0.1:3080/pet-bridge-ui/ping
 
 # 激活心跳（安装脚本用它判定插件加载成功）
-Get-Content '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
+Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
 
 # 联动插件日志（会显示 ui-config applied / activity preset）
-Get-Content '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log' -Tail 20
+Get-Content 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log' -Tail 20
 ```
 
 ## 已知限制
@@ -281,3 +281,8 @@ node test/make-fixture.mjs <out>    # 生成 harness 数据快照
 - **代码规范**：JSDoc 补齐（协议/handler/组件/工具函数）、命名与错误信封统一（`{ok,error:{code,message}}` / client 抛中文 Error）、注释与文案中文一致；`scripts/*.ps1` UTF-8 BOM + PS5.1 兼容。等根 Prettier/ESLint 配置就绪后统一跑 lint。
 - harness 截图：`screenshots/ui-08-realtime-status-tool.png`、`ui-09-realtime-status-disconnected.png`（面板数据为注入的合成 runtime，组件/归一为真实代码）。
 - 测试：`node test/smoke.mjs` → 37/37。
+## task-46 多会话 + v2 状态文件（2026-10-23）
+
+- **运行中的对话**（实时状态下方）：按 `workspace` 分组、同工作区多对话并列；当前会话「跟随中」高亮；团队/子代理灰标「后台」；顶部「另有 N 个对话在跑 · 后台 N」（`userActiveCount` 只算真人，`backgroundCount` 单列）；行内显示标题/状态/工具/step/用户消息 x 前（空 → —）/最后活动/sessionId；无 sessions 字段时退回单会话。
+- **状态文件读取顺序**：`bridge-state-v2.json`（v33+ 真源，路径 config `stateV2File` 可覆盖）→ `state.json` 兜底；`state.get.files` 新增 `stateV2File`/`stateSource`。
+- smoke：**47/47**（新增 8 项多会话 + 2 项 v2 优先级）；真实 v34 验证通过（`ui-12-sessions-real-v34.png`）。

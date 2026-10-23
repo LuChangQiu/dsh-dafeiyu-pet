@@ -1,7 +1,7 @@
 # PLUGIN-UI.md — 大肥鱼 × DSH 联动 · 管理界面（task-26 交付说明）
 
 > 交付人：plugin-ui ｜ 交付日期：2026-10-23 ｜ 状态：**已接线并运行于生产 DSH Web（未重启 host）**，E2E 真实链路已验证；真实页面截图待用户补（清单见 §9）。
-> 代码位置：`%PROJECT_ROOT%\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`%PROJECT_ROOT%\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
+> 代码位置：`E:\project\AI提效\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`E:\project\AI提效\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
 
 ---
 
@@ -368,3 +368,23 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 ## B.3 旧包清理（待授权）
 
 见 §A.4/上轮：profile `dsh-pet-bridge-v6…v19` 共 14 个孤儿目录；已请 tech-scout 确认「清理 OK（保留 vX）」后执行并留证（保留 v20+/UI、不重启 host）。
+### B.3.1 task-46 多会话（已实现，v34 真实数据验证）
+
+面板「实时状态」下方新增「运行中的对话」卡片（tech-scout task-46 协议）：
+
+- 读 `state.json` / `bridge-state-v2.json` 的 `sessions[]`（`sessionId/workspace/title/state/tool/step/role/lastUserMessageAt/lastSeenAt`）+ `currentSessionId`、`activeSessionCount`、`userActiveCount`、`backgroundCount`；
+- **按工作区分组**（同一工作区多对话并列）；当前会话高亮蓝框 + 「跟随中」徽标；团队/子代理（`role=teammate/subagent` 或 `state=background`）灰标「后台」；
+- 顶部计数：**「另有 N 个对话在跑」只算真人会话**（`userActiveCount - 当前会话`），后台单列 **「· 后台 N」**（`backgroundCount`），子代理不计入「对话」；
+- 行内展示：标题（`im#短id` / `工作区名 · #短id` 原样展示）、状态、工具、step、**用户消息 x 前（`lastUserMessageAt` 空 → “—”）、最后活动 x 前、sessionId 短版**；
+- 兼容：无 `sessions[]` / `userActiveCount` / `backgroundCount` 时从 sessions 推导，仍无则退回单会话模式（`supported=false`，显示「单会话兼容模式」）；
+- 排序：当前会话所在组最前，组内当前会话优先，其余按最近活动倒序；
+- 证据（真实 v34 数据）：`screenshots/ui-12-sessions-real-v34.png`（当前工作区分组 跟随中 + im 工作区 6 个后台会话，「另有 1 个对话在跑 · 后台 5」）；`screenshots/ui-11-sessions-multi-workspace.png`（合成数据：2 工作区 + 后台徽标 + 用户消息空值“—”）。
+- smoke：新增 8 项多会话用例（无 sessions 兜底、多工作区分组、同工作区多对话、角色后台标记、**userActiveCount/backgroundCount 计数、分项缺省推导、lastUserMessageAt 空值、current 字段兼容**）。
+
+### B.4 状态文件 v2（v33/v34，bridge-state-v2.json）
+
+- 读取顺序：**`bridge-state-v2.json` 优先 → `state.json` 兜底**（旧 state.json 有 v26~v31 泄漏定时器持续覆盖，仅兼容兜底）；
+- 路径来自插件 config `stateV2File`（默认 `<pet-work>\bridge-state-v2.json`，可由 profile patch 覆盖，非硬编码）；
+- `state.get.files` 增加 `stateV2File` 与 `stateSource`（`v2` / `legacy` / `null`），面板与验证脚本可判定当前真源；
+- smoke 新增 2 项：v2 存在（版本/status/sessions 均来自 v2，`stateSource=v2`）与 v2 缺失（回退 legacy，`stateSource=legacy`）→ 合计 **47/47**；
+- 真实环境（v34）实测：`files.stateSource=v2`、`versions.bridgePlugin=0.34.0`、`runtime=idle/heartbeat 29ms`、`sessionList={userActiveCount:2, backgroundCount:5, othersCount:1, groups:2, total:7}`。

@@ -66,3 +66,9 @@ try {
   & schtasks.exe /Create /TN $taskName /TR ("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"" + $startScript + "`"") /SC ONCE /ST 00:00 /F /RL LIMITED | Out-Host
   Write-Info ("scheduled task registered: " + $taskName)
 } catch { Write-Info ("WARN: schtasks 注册失败: " + $_.Exception.Message) }
+
+# 5) 代码规范 pre-commit 钩子（仓库内 .githooks：node --check + prettier + ruff）
+try {
+  $top = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
+  if ($top) { & git -C $top config core.hooksPath .githooks | Out-Null; Write-Info 'git hooksPath = .githooks' }
+} catch { Write-Info ('WARN: git hooks 配置失败: ' + $_.Exception.Message) }
