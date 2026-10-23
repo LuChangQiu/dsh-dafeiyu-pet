@@ -29,6 +29,10 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 4. 应急：`scripts\start-pet.ps1 -Check|-Restart`、`scripts\pet-rollback.ps1`、`scripts\plugin-rollback.ps1`；面板内也有重启/停止/恢复默认/查看日志/回滚指引。
 5. 卸载：`scripts\plugin-rollback.ps1`（glob 清理插件+面板、还原 patch、校验无残留）。
 
+## 启动兜底（计划任务）
+- 安装时注册 Windows 计划任务 `DafeiyuPetStart`（powershell 运行 `scripts\start-pet.ps1`）。
+- 面板「启动桌宠」/离线「重启」通过 `schtasks /Run /TN DafeiyuPetStart` 拉起，绕开 DSH 插件子进程限制；卸载时可用 `schtasks /Delete /TN DafeiyuPetStart /F` 删除。
+
 ## 版本配对（插件 ↔ 桌宠）
 | 组件 | 位置 | 版本标识 |
 |---|---|---|
@@ -48,4 +52,5 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 
 ## License
 MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游素材声明见 `NOTICE`。
+
 
