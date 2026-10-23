@@ -25,10 +25,11 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mountWebRoute } from './web-route.js'
+import { renderHomeHtml } from './home.js'
 
 const runFile = promisify(execFile)
 const STARTED_AT = Date.now()
-const PLUGIN_VERSION = '0.2.0'
+const PLUGIN_VERSION = '0.3.0'
 
 export const name = 'dsh-pet-bridge-ui'
 
@@ -43,6 +44,7 @@ const PET_ACTION_CMDS = {
   show: 'cmd:show',
   hide: 'cmd:hide',
   snapInto: 'cmd:snap_into_screen',
+  walkNearby: 'walk:nearby',
   recover: 'cmd:recover',
   quietStart: 'cmd:quiet', // 需要分钟数：实际下发 cmd:quiet:<minutes>
   quietEnd: 'cmd:quiet:off',
@@ -66,6 +68,9 @@ const DEFAULT_PET_ACTION_READINESS = {
   autoStart: false
 }
 
+/** task-51（ux 19 / v37）：活跃度护栏默认值（ui-config.guards）。 */
+const GUARD_DEFAULTS = { maxActionsPerHour: 60, noActionOnSameState: true }
+
 const DEFAULTS = {
   channel: '/pet-bridge-ui',
   pipe: '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance',
@@ -74,6 +79,10 @@ const DEFAULTS = {
   stateFile: path.join(PET_ROOT, 'state.json'),
   /** v33+ 实时状态真源（旧 state.json 有泄漏定时器持续覆盖，仅作兜底；可由 patch config 覆盖）。 */
   stateV2File: path.join(PET_ROOT, 'bridge-state-v2.json'),
+  /** Phase-1：事件环形缓冲（task-46/F3，500 条/最近；不存在时面板显示空态）。 */
+  eventsFile: path.join(PET_ROOT, 'events.json'),
+  /** Phase-1：情绪持久化（情绪/精力/好感；v2.companion 优先，文件仅兜底）。 */
+  companionFile: path.join(PET_ROOT, 'companion.json'),
   uiConfigFile: path.join(PET_ROOT, 'ui-config.json'),
   petConfigFile: path.join(PET_ROOT, 'pet', 'config.json'),
   actionFile: path.join(PET_ROOT, 'ui-action.json'),
@@ -336,6 +345,9 @@ export function normalizeRuntimeStatus(stateFile, opts = {}) {
     staleAfterMs: staleMs,
     disconnected: state === 'disconnected',
     source: firstString(raw?.source),
+    toolType: firstString(raw?.toolType, raw?.tool_type),
+    phase: firstString(raw?.phase),
+    stateClass: firstString(raw?.stateClass, raw?.state_class),
     message: firstString(raw?.message, raw?.detail),
     lastEventAt: firstString(raw?.lastEventAt)
   }
@@ -499,6 +511,73 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
 
 // ────────────────────────────── 日志解析 ──────────────────────────────
 
+/**
+ * Phase-1：读事件环形缓冲 `events.json`（tech-scout DATA-CONTRACT §3）。
+ * 只读取标量摘要（无对话原文/路径）；返回**最新在前**的 items。
+ * @param {string} file events.json 路径
+ * @param {number} [limit] 最多返回条数（默认 50）
+ * @returns {{supported:boolean,file:string,total:number,unread:number,items:Array<object>}}
+ */
+export function readEvents(file, limit = 50) {
+  const raw = readJson(file, null)
+  const list = Array.isArray(raw?.events) ? raw.events : []
+  const items = list
+    .slice(-Math.max(1, Math.min(500, limit)))
+    .reverse()
+    .map((item) => ({
+      at: typeof item?.at === 'string' ? item.at : null,
+      kind: typeof item?.kind === 'string' ? item.kind : 'event',
+      level: typeof item?.level === 'string' ? item.level : null,
+      payload: clip(item?.payload, 120),
+      said: Boolean(item?.said),
+      unread: Boolean(item?.unread)
+    }))
+  return {
+    supported: list.length > 0,
+    file,
+    total: list.length,
+    unread: list.filter((item) => item?.unread).length,
+    items
+  }
+}
+
+/**
+ * Phase-1：情绪状态（v2.companion 优先含 words；companionFile 兜底无 words）。
+ * @param {object|null} stateFile v2 快照
+ * @param {string} file companion.json 路径
+ * @returns {{supported:boolean,words:{mood:string,energy:string,affinity:string}|null,level:string|null,streakDays:number|null,totals:object|null,lastSeenAt:string|null,updatedAt:string|null}}
+ */
+export function readCompanion(stateFile, file) {
+  const fromV2 = isObject(stateFile?.companion) ? stateFile.companion : null
+  const raw = fromV2 ?? readJson(file, null)
+  if (!isObject(raw)) {
+    return {
+      supported: false,
+      words: null,
+      level: null,
+      streakDays: null,
+      totals: null,
+      lastSeenAt: null,
+      updatedAt: null
+    }
+  }
+  const words = isObject(raw.words)
+    ? {
+        mood: String(raw.words.mood ?? '—'),
+        energy: String(raw.words.energy ?? '—'),
+        affinity: String(raw.words.affinity ?? '—')
+      }
+    : null
+  return {
+    supported: true,
+    words,
+    level: typeof raw.level === 'string' ? raw.level : null,
+    streakDays: Number.isFinite(raw.streakDays) ? raw.streakDays : null,
+    totals: isObject(raw.totals) ? raw.totals : null,
+    lastSeenAt: typeof raw.lastSeenAt === 'string' ? raw.lastSeenAt : null,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null
+  }
+}
 /**
  * 解析 log 尾部。
  * 行格式：`[ISO] [level] <msg> [JSON]`
@@ -1117,6 +1196,7 @@ function buildHandler(cfg, log) {
           quietHours: Array.isArray(ui.quietHours) ? ui.quietHours : null,
           budgetPerDayYuan: Number.isFinite(ui?.llm?.budgetPerDayYuan) ? ui.llm.budgetPerDayYuan : null,
           pet: isObject(ui.pet) ? ui.pet : null,
+          guards: isObject(ui.guards) ? ui.guards : null,
           updatedAt: ui.updatedAt ?? null
         }
       : null
@@ -1168,6 +1248,50 @@ function buildHandler(cfg, log) {
     })
     // task-46：多会话视图（按工作区分组；无 sessions 时退回单会话）
     const sessionList = normalizeSessions(stateFile, runtime)
+    // Phase-1：今日统计（v2.today，跨天自动重置）、事件时间线、情绪状态
+    const todayV2 = isObject(stateFile?.today) ? stateFile.today : null
+    const todayStats = {
+      date: typeof todayV2?.date === 'string' ? todayV2.date : dateKey(),
+      turns: Number.isFinite(todayV2?.turns) ? todayV2.turns : null,
+      toolCalls: Number.isFinite(todayV2?.toolCalls) ? todayV2.toolCalls : null,
+      longestTurnMs: Number.isFinite(todayV2?.longestTurnMs) ? todayV2.longestTurnMs : null,
+      calls: Number.isFinite(todayV2?.calls) ? todayV2.calls : todayCalls,
+      costYuan: Number.isFinite(todayV2?.costYuan) ? todayV2.costYuan : todayCost,
+      budgetYuan: Number.isFinite(todayV2?.budgetYuan) ? todayV2.budgetYuan : effective.budgetPerDayYuan,
+      // task-51/白饭报账（v37）：token、白饭碗数（1 碗 = 10 万 token）、峰谷时段
+      tokens: Number.isFinite(todayV2?.tokens) ? todayV2.tokens : null,
+      riceBowls: Number.isFinite(todayV2?.riceBowls)
+        ? todayV2.riceBowls
+        : Number.isFinite(todayV2?.tokens)
+          ? Math.round((todayV2.tokens / 100000) * 10) / 10
+          : null,
+      period: typeof todayV2?.period === 'string' ? todayV2.period : null,
+      // 两本账分开：桌宠说话花费（1 元预算环） vs 用户 token 估算（自定价）
+      petLlmCostYuan: Number.isFinite(todayV2?.petLlmCostYuan)
+        ? todayV2.petLlmCostYuan
+        : Number.isFinite(todayV2?.costYuan)
+          ? todayV2.costYuan
+          : todayCost,
+      estimateCostYuan: Number.isFinite(todayV2?.costYuan) ? todayV2.costYuan : todayCost,
+      ratio: 0,
+      source: todayV2 ? 'v2' : 'legacy'
+    }
+    todayStats.ratio = todayStats.budgetYuan > 0 ? Math.min(1, todayStats.costYuan / todayStats.budgetYuan) : 0
+    const events = readEvents(cfg.eventsFile)
+    if (Number.isFinite(stateFile?.eventsUnread)) events.unread = stateFile.eventsUnread
+    const companion = readCompanion(stateFile, cfg.companionFile)
+    const interactions = isObject(stateFile?.capabilities?.interactions)
+      ? {
+          head: stateFile.capabilities.interactions.head === true,
+          feed: stateFile.capabilities.interactions.feed === true,
+          come: stateFile.capabilities.interactions.come === true
+        }
+      : { head: false, feed: false, come: false }
+    // task-51：活跃度护栏（ui-config.guards；缺省用默认值，热更新由联动插件 watcher 应用）
+    const guards = {
+      ...GUARD_DEFAULTS,
+      ...(isObject(ui?.guards) ? ui.guards : {})
+    }
 
     return {
       ok: true,
@@ -1207,7 +1331,8 @@ function buildHandler(cfg, log) {
           petActionReadiness,
           doubleClick: petActionReadiness.doubleClick !== false,
           autoStart: petActionReadiness.autoStart !== false,
-          quit: petActionReadiness.quit !== false
+          quit: petActionReadiness.quit !== false,
+          interactions
         },
         petOptions: {
           skins,
@@ -1232,6 +1357,10 @@ function buildHandler(cfg, log) {
           ranges: quietRanges.map((r) => r.text),
           now: hhmm()
         },
+        todayStats,
+        events,
+        companion,
+        guards,
         recentSay,
         lastSayAt,
         lastLogAt: logParsed.lastLineAt,
@@ -1243,6 +1372,8 @@ function buildHandler(cfg, log) {
           petConfigFile: cfg.petConfigFile,
           actionFile: cfg.actionFile,
           stateV2File: cfg.stateV2File,
+          eventsFile: cfg.eventsFile,
+          companionFile: cfg.companionFile,
           stateSource: stateFile?._source ?? null,
           stateFileFresh: Boolean(stateFile?._fresh)
         }
@@ -1330,6 +1461,34 @@ function buildHandler(cfg, log) {
         ...(isObject(next.llm) ? next.llm : {}),
         budgetPerDayYuan: n
       }
+    }
+
+    if (payload?.guards !== undefined) {
+      if (!isObject(payload.guards)) {
+        return { ok: false, error: { code: 'invalid-argument', message: 'guards 必须是对象' } }
+      }
+      const current = isObject(next.guards) ? next.guards : { ...GUARD_DEFAULTS }
+      const nextGuards = { ...current }
+      if (payload.guards.maxActionsPerHour !== undefined) {
+        const n = Number(payload.guards.maxActionsPerHour)
+        if (!Number.isFinite(n) || n < 1 || n > 600) {
+          return {
+            ok: false,
+            error: { code: 'invalid-argument', message: '每小时动作上限应在 1~600 之间' }
+          }
+        }
+        nextGuards.maxActionsPerHour = Math.round(n)
+      }
+      if (payload.guards.noActionOnSameState !== undefined) {
+        if (typeof payload.guards.noActionOnSameState !== 'boolean') {
+          return {
+            ok: false,
+            error: { code: 'invalid-argument', message: 'noActionOnSameState 必须是布尔值' }
+          }
+        }
+        nextGuards.noActionOnSameState = payload.guards.noActionOnSameState
+      }
+      next.guards = nextGuards
     }
 
     if (payload?.pet !== undefined) {
@@ -1463,7 +1622,12 @@ function buildHandler(cfg, log) {
       // task-40：自启/退出语义（tech-scout v20 消费）
       'enable-autostart',
       'disable-autostart',
-      'quit-pet'
+      'quit-pet',
+      // Phase-1：互动（DATA-CONTRACT §4）与事件未读确认
+      'interact-head',
+      'interact-feed',
+      'interact-come',
+      'events-ack'
     ]
     const name = String(payload?.name ?? '')
     if (!SUPPORTED.includes(name)) {
@@ -1511,10 +1675,39 @@ function buildHandler(cfg, log) {
   }
 
   /**
-   * task-36 快捷查看：把协议命令发到桌宠并读回执。
-   * 回执 `cmd:<name>` = 成功；`unknowncmd:<name>` = 桌宠协议未支持（待服务端）；
-   * `<...>-fail` = 桌宠侧执行失败（如余额未配 Key）。
+   * Phase-1 互动（DATA-CONTRACT §4）：头/喂/叫她 → 统一走 `ui-action.json`
+   * （`interact-head` / `interact-feed` / `interact-come`，由联动插件做节流与冷却）。
+   * @param {object} payload `{name: 'head'|'feed'|'come'}`
+   * @returns {{ok:true,data:{queued:boolean,request:object,note:string}}|{ok:false,error:object}}
    */
+  function interaction(payload) {
+    const name = String(payload?.name ?? '')
+    const map = { head: 'interact-head', feed: 'interact-feed', come: 'interact-come' }
+    const action = map[name]
+    if (!action) {
+      return {
+        ok: false,
+        error: { code: 'invalid-argument', message: `未知互动：${name}（支持 head / feed / come）` }
+      }
+    }
+    const stateFile = loadStateFile()
+    const caps = isObject(stateFile?.capabilities?.interactions) ? stateFile.capabilities.interactions : null
+    if (!caps || caps[name] !== true) {
+      return {
+        ok: false,
+        error: {
+          code: 'not-supported',
+          message: `互动「${name}」尚未就绪（待联动插件 v35+ capabilities.interactions）`
+        }
+      }
+    }
+    return requestAction({ name: action })
+  }
+
+  /** Phase-1：事件未读确认（`ui-action: events-ack` → unread 全置 false）。 */
+  function ackEvents() {
+    return requestAction({ name: 'events-ack' })
+  }
   async function petAction(payload) {
     const name = String(payload?.name ?? '').trim()
     const minutes = Math.max(1, Math.min(240, Number(payload?.minutes) || 30))
@@ -1647,6 +1840,10 @@ function buildHandler(cfg, log) {
         return requestAction(payload)
       case 'pet.action':
         return petAction(payload)
+      case 'interaction':
+        return interaction(payload)
+      case 'events.ack':
+        return ackEvents()
       case 'pet.nativeui': {
         // 应急：临时显示/隐藏桌宠原生菜单（v10 默认隐藏；task-32 §B 的应急通道）
         const on = payload?.on !== false
@@ -1722,14 +1919,31 @@ export function apply(ctx, rawConfig) {
   const handler = buildHandler(cfg, log)
 
   ctx.inject(['connection', 'webServer'], (scope) => {
-    const webServer = scope.get('webServer')
+    const server = scope.get('webServer')
     const connection = scope.get('connection')
+    /**
+     * task-51：大肥鱼主页（自包含 HTML，同源鉴权沿用 GET 路由栅栏）。
+     * @param {any} req
+     * @param {any} res
+     */
+    const serveHome = (req, res) => {
+      const html = renderHomeHtml()
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff'
+      })
+      res.end(html)
+    }
     const dispose = mountWebRoute({
-      webServer,
+      webServer: server,
       connection,
       channel: cfg.channel,
       handler,
-      log
+      log,
+      getRoutes: {
+        [cfg.channel + '/home']: serveHome
+      }
     })
     if (dispose === null) {
       log.warn('[pet-bridge-ui] webServer.register 不可用，设置面板将无法取数')
@@ -1779,6 +1993,9 @@ export const __test = {
   buildHandler,
   readPetConfig,
   readSkinOptions,
+  readEvents,
+  readCompanion,
+  renderHomeHtml,
   normalizeRuntimeStatus,
   normalizeSessions,
   RUNTIME_STATE_META,

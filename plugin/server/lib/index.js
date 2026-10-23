@@ -108,6 +108,7 @@ const DEFAULTS = {
   stateClass: { enabled: true, debounceMs: 300 },
   reunion: { enabled: true },
   costModel: { ricePriceYuan: 0.5, userPricePer1kTokensYuan: 0.002 },
+  pricing: { per1kTokens: 0.0015 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -202,7 +203,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v43'
+export const name = 'dsh-pet-bridge-v45'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -221,7 +222,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v43] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v45] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -533,10 +534,12 @@ export function apply(ctx, rawConfig) {
         log('info', 'llm duplicate retry', { kind })
         return generate(kind, s, { ...extra, __dupRetry: true })
       }
-      if (line) log('info', 'llm rejected: duplicate', { kind, line })
-      else if (raw) log('info', 'llm rejected: constraint', { kind, raw: clip(raw, 40) })
+      if (line) log('info', 'llm lines fallback', { kind, reason: 'duplicate' })
+      else if (raw) log('info', 'llm rejected: constraint', { kind, rawChars: String(raw).length })
+      else log('info', 'llm lines fallback', { kind, reason: 'invalid' })
       return fallback()
     }
+    log('info', 'llm lines ok', { kind, text: line, latencyMs, tokens })
     return { text: line, source: 'llm', latencyMs, tokens }
   }
 
@@ -974,6 +977,10 @@ export function apply(ctx, rawConfig) {
       }
       pruneSessions()
       todayReset()
+      try {
+        const base = currentTurnStartAt || (sessions.get(String(currentSessionId)) || {}).turnStartAt || 0
+        if (base) today.longestTurnMs = Math.max(today.longestTurnMs || 0, Date.now() - base)
+      } catch {}
       saveCompanion()
       pushStatusToPet()
       writeState()
@@ -981,6 +988,7 @@ export function apply(ctx, rawConfig) {
   }
 
   // ---------- Phase-1：今日统计 / 事件环形缓冲 / companion 情绪模型 / 互动 ----------
+  let currentTurnStartAt = 0
   let lastLlmCalls = 0
   let lastLlmCost = 0
   const today = {
@@ -989,6 +997,10 @@ export function apply(ctx, rawConfig) {
     toolCalls: 0,
     longestTurnMs: 0,
     tokens: 0,
+    tokensUser: 0,
+    tokensAgent: 0,
+    costUserYuan: 0,
+    costAgentYuan: 0,
     costYuan: 0,
     petLlmCostYuan: 0,
     budgetYuan: cfg.llm.budgetPerDayYuan || 1,
@@ -1216,9 +1228,10 @@ export function apply(ctx, rawConfig) {
     }
     today.calls = llmDay.calls
     today.petLlmCostYuan = Number(llmDay.cost.toFixed(4))
-    today.costYuan = Number(
-      (((today.tokens || 0) / 1000) * (cfg.costModel?.userPricePer1kTokensYuan || 0.002)).toFixed(4)
-    )
+    const priceK = cfg.pricing?.per1kTokens ?? cfg.costModel?.userPricePer1kTokensYuan ?? 0.0015
+    today.costUserYuan = Number((((today.tokensUser || 0) / 1000) * priceK).toFixed(4))
+    today.costAgentYuan = Number((((today.tokensAgent || 0) / 1000) * priceK).toFixed(4))
+    today.costYuan = Number(((today.costUserYuan || 0) + (today.costAgentYuan || 0)).toFixed(4))
     today.budgetYuan = cfg.llm.budgetPerDayYuan || 1
     today.riceBowls = Number(((today.tokens || 0) / (cfg.rice?.bowlTokens || 100000)).toFixed(2))
     today.period = new Date().getHours() >= 0 && new Date().getHours() < 8 ? '低谷' : '高峰'
@@ -1244,8 +1257,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.43.0',
-        petVersion: 'v1.1.5+patch-v43',
+        version: '0.45.0',
+        petVersion: 'v1.1.5+patch-v45',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1562,6 +1575,13 @@ export function apply(ctx, rawConfig) {
     return true
   }
   const sendBubble = (item) => {
+    if (item && typeof item.source === 'string' && item.source.startsWith('llm')) {
+      today.calls = (today.calls || 0) + 1
+      const tk = Number(item.tokens) || 0
+      const price = cfg.pricing?.per1kTokens ?? cfg.llm.costPer1kTokensYuan ?? 0.0015
+      today.petLlmCostYuan = Number(((today.petLlmCostYuan || 0) + (tk / 1000) * price).toFixed(6))
+      log('info', 'llm line accounted', { kind: item.kind, source: item.source, tokens: tk })
+    }
     const sec = Math.max(1, Math.min(30, Math.round(item.durMs / 1000)))
     recentSay.push({ at: new Date().toISOString(), kind: item.kind, source: item.source, line: item.text })
     if (recentSay.length > 10) recentSay.shift()
@@ -1768,7 +1788,7 @@ export function apply(ctx, rawConfig) {
     const recEarly = touchSession(session)
     if (!passesFilter(session)) {
       recEarly.state = recEarly.role === 'user' ? recEarly.state : 'background'
-      if (t === 'turn/start' && recEarly.role !== 'user') today.agentCalls += 1
+      if ((t === 'turn/start' || t === 'tool/call') && recEarly.role !== 'user') today.agentCalls += 1
       return
     }
     lastEventAt = Date.now()
@@ -1919,6 +1939,10 @@ export function apply(ctx, rawConfig) {
         if (u) {
           const dt = Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
           today.tokens = (today.tokens || 0) + dt
+          const rr = sessionRegistry.get(String(session.id))
+          const role = rr ? rr.role : 'user'
+          if (role === 'user') today.tokensUser = (today.tokensUser || 0) + dt
+          else today.tokensAgent = (today.tokensAgent || 0) + dt
         }
       } catch {}
       if (u) s.tokens += Number(u.totalTokens ?? Number(u.inputTokens || 0) + Number(u.outputTokens || 0)) || 0
@@ -1926,6 +1950,7 @@ export function apply(ctx, rawConfig) {
     }
     if (t === 'turn/start') {
       today.turns += 1
+      currentTurnStartAt = Date.now()
       setStatus('thinking', { turn: stats.turns + 1, tool: null, step: 0 })
       {
         const r = sessionRegistry.get(String(session.id))
@@ -2278,7 +2303,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v43', {
+  log('info', 'loaded v45', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',

@@ -147,6 +147,8 @@ const tmpCfg = {
   // ⚠️ 隔离：actionFile / petConfigFile / heartbeatFile 必须指向临时目录，
   //    否则测试会写生产 sidecar（曾误触生产 ui-action 队列，勿再犯）。
   stateV2File: path.join(tmpDir, 'bridge-state-v2.json'),
+  eventsFile: path.join(tmpDir, 'events.json'),
+  companionFile: path.join(tmpDir, 'companion.json'),
   actionFile: path.join(tmpDir, 'ui-action.json'),
   petConfigFile: path.join(tmpDir, 'pet-config.json'),
   heartbeatFile: path.join(tmpDir, 'heartbeat.json'),
@@ -1254,6 +1256,181 @@ await testAsync('v2 缺失时回退 state.json（legacy）', async () => {
   assert.equal(data.runtime.state, 'idle')
   assert.equal(data.sessionList.supported, false)
   dispose()
+})
+
+// ───────────────────────── 3.10 task-51：Phase-1 数据（today/events/companion/guards/互动） ─────────────────────────
+console.log('\n[3.10] Phase-1 数据契约')
+
+test('readEvents：最新在前、unread 统计、字段裁剪', async () => {
+  const { readEvents } = index.__test
+  const nowIso = new Date().toISOString()
+  fs.writeFileSync(
+    tmpCfg.eventsFile,
+    JSON.stringify({
+      events: [
+        { at: nowIso, kind: 'turn', level: 'S3', payload: '完成一轮', said: true, unread: false },
+        { at: nowIso, kind: 'approval', level: 'S0', payload: '等你确认', said: true, unread: true },
+        { at: nowIso, kind: 'error', level: 'S1', payload: '出错重试', said: false, unread: true }
+      ]
+    }),
+    'utf8'
+  )
+  const r = readEvents(tmpCfg.eventsFile, 50)
+  assert.equal(r.supported, true)
+  assert.equal(r.total, 3)
+  assert.equal(r.unread, 2)
+  assert.equal(r.items.length, 3)
+  assert.equal(r.items[0].kind, 'error') // 最新在前
+  assert.equal(r.items[0].level, 'S1')
+})
+
+test('readEvents：文件缺失 → 空态（supported=false）', () => {
+  const { readEvents } = index.__test
+  const r = readEvents(path.join(tmpDir, 'nope-events.json'))
+  assert.equal(r.supported, false)
+  assert.deepEqual(r.items, [])
+})
+
+test('readCompanion：v2.companion.words 优先，文件兜底无 words', () => {
+  const { readCompanion } = index.__test
+  fs.writeFileSync(tmpCfg.companionFile, JSON.stringify({ mood: 10, level: '熟悉', streakDays: 2 }), 'utf8')
+  const fromFile = readCompanion(null, tmpCfg.companionFile)
+  assert.equal(fromFile.supported, true)
+  assert.equal(fromFile.words, null)
+  assert.equal(fromFile.level, '熟悉')
+  const fromV2 = readCompanion(
+    {
+      companion: { mood: 10, words: { mood: '平静', energy: '有精神', affinity: '亲近' }, level: '熟悉', streakDays: 3 }
+    },
+    tmpCfg.companionFile
+  )
+  assert.deepEqual(fromV2.words, { mood: '平静', energy: '有精神', affinity: '亲近' })
+})
+
+test('guards 校验（normalize 层）：非法值拒绝', async () => {
+  const { routes, dispose } = mount()
+  for (const bad of [
+    { guards: { maxActionsPerHour: 0 } },
+    { guards: { maxActionsPerHour: 999 } },
+    { guards: { noActionOnSameState: 'yes' } }
+  ]) {
+    const res = await invoke(
+      routes,
+      makeReq({ url: '/pet-bridge-ui/config.set', body: { rpcId: 'r-g', method: 'config.set', payload: bad } }),
+      makeRes()
+    )
+    assert.equal(JSON.parse(res.body).result.ok, false, JSON.stringify(bad))
+  }
+  dispose()
+})
+
+await testAsync('state.get 含 todayStats/events/companion/guards/capabilities.interactions', async () => {
+  const v2 = {
+    updatedAt: new Date().toISOString(),
+    version: '9.9.9',
+    status: { state: 'thinking', heartbeatAt: new Date().toISOString() },
+    today: {
+      date: '2026-10-23',
+      turns: 4,
+      toolCalls: 12,
+      longestTurnMs: 65000,
+      calls: 5,
+      costYuan: 0.12,
+      petLlmCostYuan: 0.03,
+      budgetYuan: 1,
+      tokens: 250000,
+      riceBowls: 2.5,
+      period: '高峰'
+    },
+    companion: { words: { mood: '不错', energy: '有精神', affinity: '亲近' }, level: '亲近', streakDays: 3 },
+    capabilities: { interactions: { head: true, feed: true, come: true } }
+  }
+  fs.writeFileSync(tmpCfg.stateV2File, JSON.stringify(v2), 'utf8')
+  const h = buildHandler(tmpCfg, noopLog)
+  const { routes, dispose } = mountWith(h)
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-p1', method: 'state.get' } }),
+    makeRes()
+  )
+  const data = JSON.parse(res.body).result.data
+  fs.unlinkSync(tmpCfg.stateV2File)
+  assert.equal(data.files.stateSource, 'v2')
+  assert.equal(data.todayStats.riceBowls, 2.5)
+  assert.equal(data.todayStats.period, '高峰')
+  assert.equal(data.todayStats.petLlmCostYuan, 0.03)
+  assert.equal(data.todayStats.estimateCostYuan, 0.12)
+  assert.equal(data.todayStats.tokens, 250000)
+  assert.deepEqual(data.companion.words, { mood: '不错', energy: '有精神', affinity: '亲近' })
+  assert.equal(data.capabilities.interactions.head, true)
+  assert.equal(data.guards.maxActionsPerHour, 60)
+  dispose()
+})
+
+await testAsync('interaction：能力就绪时排队 ui-action（interact-head）；未就绪 not-supported', async () => {
+  const { routes, dispose } = mount()
+  // 当前 tmpCfg 无 v2 → interactions 未就绪
+  const resBad = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/interaction',
+      body: { rpcId: 'r-i0', method: 'interaction', payload: { name: 'head' } }
+    }),
+    makeRes()
+  )
+  assert.equal(JSON.parse(resBad.body).result.error.code, 'not-supported')
+  dispose()
+
+  fs.writeFileSync(
+    tmpCfg.stateV2File,
+    JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      capabilities: { interactions: { head: true, feed: true, come: true } }
+    }),
+    'utf8'
+  )
+  fs.writeFileSync(tmpCfg.actionFile, JSON.stringify({ id: 'old', handledAt: 'x', status: 'done' }), 'utf8')
+  const h = buildHandler(tmpCfg, noopLog)
+  const m2 = mountWith(h)
+  const res = await invoke(
+    m2.routes,
+    makeReq({
+      url: '/pet-bridge-ui/interaction',
+      body: { rpcId: 'r-i1', method: 'interaction', payload: { name: 'head' } }
+    }),
+    makeRes()
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.request.name, 'interact-head')
+  m2.dispose()
+  fs.unlinkSync(tmpCfg.stateV2File)
+})
+
+await testAsync('events.ack：排队 ui-action events-ack', async () => {
+  fs.writeFileSync(tmpCfg.actionFile, JSON.stringify({ id: 'old', handledAt: 'x', status: 'done' }), 'utf8')
+  const h = buildHandler(tmpCfg, noopLog)
+  const { routes, dispose } = mountWith(h)
+  const res = await invoke(
+    routes,
+    makeReq({ url: '/pet-bridge-ui/events.ack', body: { rpcId: 'r-ack', method: 'events.ack' } }),
+    makeRes()
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.request.name, 'events-ack')
+  dispose()
+})
+
+test('renderHomeHtml：自包含（无外链 http(s)），含主页关键节点', async () => {
+  const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
+  const html = renderHomeHtml()
+  assert.match(html, /大肥鱼主页|大肥鱼联动/)
+  assert.match(html, /实时状态/)
+  assert.match(html, /运行中的对话/)
+  assert.match(html, /今日数据/)
+  assert.match(html, /她今天怎么样/)
+  assert.doesNotMatch(html, /https?:\/\//)
 })
 
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────

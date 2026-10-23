@@ -602,7 +602,9 @@ window.__ModuleLoader__.load({
             musicLink: true,
             soundOn: true,
             doubleClick: 'balance',
-            autoStart: false
+            autoStart: false,
+            guardsMax: '60',
+            guardsNoRepeat: true
           }
         }
 
@@ -648,7 +650,12 @@ window.__ModuleLoader__.load({
                 ? pet.autoStart
                 : data.petOptions && typeof data.petOptions.autoStart === 'boolean'
                   ? data.petOptions.autoStart
-                  : false
+                  : false,
+            guardsMax: String((data.guards && data.guards.maxActionsPerHour) || 60),
+            guardsNoRepeat:
+              data.guards && typeof data.guards.noActionOnSameState === 'boolean'
+                ? data.guards.noActionOnSameState
+                : true
           })
         }
 
@@ -695,6 +702,10 @@ window.__ModuleLoader__.load({
               activity: form.activity,
               quietHours: ranges,
               budgetPerDayYuan: Number(form.budgetPerDayYuan),
+              guards: {
+                maxActionsPerHour: Number(form.guardsMax),
+                noActionOnSameState: form.guardsNoRepeat
+              },
               pet: {
                 size: Number(form.size),
                 opacity: Number(form.opacity),
@@ -789,6 +800,17 @@ window.__ModuleLoader__.load({
         }
 
         /** task-36 快捷查看/免打扰即时动作：走 pet.action（管道命令 + 回执）。 */
+        /** task-51：打开大肥鱼主页（同源 GET /pet-bridge-ui/home，新标签；不抢 DSH 焦点）。 */
+        const openHome = () => {
+          try {
+            if (typeof window !== 'undefined' && typeof window.open === 'function') {
+              window.open('/pet-bridge-ui/home', '_blank', 'noopener')
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
         const runPetAction = async (name, extra) => {
           setBusy('pet:' + name)
           setMsg(null)
@@ -919,7 +941,9 @@ window.__ModuleLoader__.load({
           capabilities,
           petOptions,
           runtime,
-          sessionList
+          sessionList,
+          companion,
+          todayStats
         } = state
         const rt = runtime || {
           supported: false,
@@ -980,7 +1004,21 @@ window.__ModuleLoader__.load({
             'div',
             { style: S.header },
             h('h1', { style: S.h1 }, '大肥鱼联动'),
-            h('p', { style: S.hint }, 'DSH × 大肥鱼桌宠 · 唯一控制台（状态 / 基础设置 / 应急 / 日志 / 测试）')
+            h('p', { style: S.hint }, 'DSH × 大肥鱼桌宠 · 唯一控制台（状态 / 基础设置 / 应急 / 日志 / 测试）'),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, S.btnPrimary),
+                  onClick: openHome
+                },
+                '打开大肥鱼主页'
+              ),
+              h('span', { style: S.hint }, '新标签打开（同源鉴权）；主页含概览/会话/时间线/互动')
+            )
           ),
 
           msg
@@ -1059,6 +1097,21 @@ window.__ModuleLoader__.load({
                 detail: rt.heartbeatAt ? fmtTime(rt.heartbeatAt) : '无心跳'
               })
             ),
+            companion && companion.supported
+              ? h(
+                  'p',
+                  { style: S.hint },
+                  '她今天怎么样：心情 ' +
+                    (companion.words ? companion.words.mood : companion.level || '—') +
+                    ' · 精力 ' +
+                    (companion.words ? companion.words.energy : '—') +
+                    ' · 好感 ' +
+                    (companion.words ? companion.words.affinity : '—') +
+                    (Number.isFinite(companion.streakDays) && companion.streakDays > 0
+                      ? ' · 连续陪伴 ' + companion.streakDays + ' 天'
+                      : '')
+                )
+              : null,
             rt.message ? h('p', { style: S.hint }, rt.message) : null,
             rt.supported
               ? null
@@ -1297,7 +1350,46 @@ window.__ModuleLoader__.load({
               })),
               onChange: (v) => touch({ activity: v })
             }),
-            h('p', { style: S.hint }, (ACTIVITY_META[form.activity] || ACTIVITY_META.normal).desc)
+            h('p', { style: S.hint }, (ACTIVITY_META[form.activity] || ACTIVITY_META.normal).desc),
+            h(
+              'div',
+              { style: S.grid2 },
+              h(
+                'label',
+                null,
+                h('span', { style: S.label }, '活跃度护栏：每小时动作上限'),
+                h('input', {
+                  style: S.field,
+                  type: 'number',
+                  min: 1,
+                  max: 600,
+                  step: 10,
+                  value: form.guardsMax,
+                  onChange: (e) => touch({ guardsMax: e.target.value })
+                })
+              ),
+              h(
+                'div',
+                null,
+                h('span', { style: S.label }, '状态不变时不重复演出'),
+                h(Toggle, {
+                  value: form.guardsNoRepeat,
+                  onChange: (v) => touch({ guardsNoRepeat: v }),
+                  disabled: busyNow,
+                  onLabel: '开（安静趴着）',
+                  offLabel: '关'
+                })
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '护栏热更新到联动插件（ui-config.guards）：每小时最多 ' +
+                (Number(form.guardsMax) || 60) +
+                ' 次动作；' +
+                (form.guardsNoRepeat ? '同一状态不重复演出。' : '允许同状态重复演出。') +
+                '「安静趴着」优先于热闹。'
+            )
           ),
 
           // ── 免打扰 ──
@@ -1411,13 +1503,29 @@ window.__ModuleLoader__.load({
                 { style: S.hint },
                 '今日：' +
                   today.calls +
-                  ' 次 LLM 调用 · ' +
-                  fmtMoney(today.cost) +
+                  ' 次 LLM 调用 · 桌宠说话 ' +
+                  fmtMoney((todayStats && todayStats.petLlmCostYuan) || today.cost) +
                   ' / 上限 ' +
                   fmtMoney(budget) +
                   '（' +
                   Math.round(ratio * 100) +
                   '%）'
+              ),
+              h(
+                'span',
+                { style: S.hint },
+                '两本账：桌宠说话（预算环上）' +
+                  ' vs 你的 token 估算 ' +
+                  fmtMoney((todayStats && todayStats.estimateCostYuan) || today.cost) +
+                  (todayStats && Number.isFinite(todayStats.riceBowls)
+                    ? ' · 今天 ' +
+                      todayStats.riceBowls +
+                      ' 碗白饭' +
+                      (todayStats.period ? '（' + todayStats.period + '）' : '')
+                    : '') +
+                  (todayStats && Number.isFinite(todayStats.tokens)
+                    ? ' · ' + Math.round(todayStats.tokens / 1000) + 'k token'
+                    : '')
               )
             ),
             h('p', { style: S.hint }, '达到上限后联动插件停用 LLM，回退台词池')

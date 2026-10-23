@@ -104,7 +104,13 @@ export function mountWebRoute({
   channel,
   handler,
   log = console,
-  maxBodyBytes = DEFAULT_MAX_BODY_BYTES
+  maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
+  /**
+   * 可选 GET 路由表：`{ '/pet-bridge-ui/home': (req, res) => void }`。
+   * 用于同前缀下发射自包含 HTML 页面（task-51 大肥鱼主页）；POST RPC 语义不变。
+   * @type {Record<string, (req: any, res: any) => any>}
+   */
+  getRoutes = {}
 }) {
   if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') {
     return null
@@ -131,11 +137,25 @@ export function mountWebRoute({
       }
 
       // ② 方法与路径
+      const pathname = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`).pathname
+      if (req.method === 'GET') {
+        const getHandler = getRoutes[pathname]
+        if (typeof getHandler === 'function') {
+          try {
+            await getHandler(req, res)
+          } catch (error) {
+            log?.warn?.(`[pet-bridge-ui] GET ${pathname} 失败: ${error?.stack ?? error}`)
+            sendText(res, 500, 'page render failed')
+          }
+          return
+        }
+        sendText(res, 405, 'method not allowed')
+        return
+      }
       if (req.method !== 'POST') {
         sendText(res, 405, 'method not allowed')
         return
       }
-      const pathname = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`).pathname
       const endpoint = endpointFromPath(channel, pathname)
       if (endpoint === undefined) {
         sendText(res, 404, 'not found')
