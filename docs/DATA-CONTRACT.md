@@ -54,3 +54,12 @@ Phase-1 写入规则：完成一轮 mood+2/energy−1；错误 mood−6；互动
 - 报告（report 台词）numbers 上下文增 `rice=…碗 period=…`，LLM/池化报账显示白饭口径；小票 receipt 同源数据。
 - **三态护栏（可配置）**：`ui-config.guards={maxActionsPerHour,noActionOnSameState}`；插件侧动作计数与"状态不变不演出"，默认 60 次/小时、开启；`ui-config.guards` 热更新（`ui-config applied` 日志）。
 - **愣一拍**：turnStart 先空拍 `guards.startleDelayMinMs~MaxMs`（默认 900~1500ms）再冒泡；不改变状态时序。
+
+## 7. v38 新增（P0：偷吃被抓包 / 久别重逢 v2）
+### 偷吃判定（`usage spike`）
+- **基准**：最近 **5 轮** turn 的 token 均值（不足 3 轮不判）；`spikeRatio=1.8`、绝对门槛 `minTokens=2000`（避免小样本误报）。
+- **触发**：本轮 token > 基准×1.8 且 ≥2000 → 汗滴 FX + 专属文案（池），`events` 记 `kind=usage, level=S2, payload=用量突增`（不存原文/内容）。
+- **冷却/上限**：同一次 ≥10 分钟冷却、每天 ≤3 次（`costGuard` 可配）。
+### 久别重逢 v2
+- 数据：`companion.lastUserSeenAt`、`companion.lastActivityLabel`（抽象标签如 read/command）、`lastGreetDate`。
+- 触发：gap ≥2 天（普通）/≥7 天（长别）；**每天最多一次**；到附近 + 文案（含"上次在…"抽象标签）；affinity+2/mood+3；events `kind=reunion, level=S1`。

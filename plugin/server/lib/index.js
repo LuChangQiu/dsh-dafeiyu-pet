@@ -94,6 +94,7 @@ const DEFAULTS = {
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   guards: { maxActionsPerHour: 60, noActionOnSameState: true, startleDelayMinMs: 900, startleDelayMaxMs: 1500 },
   costModel: { ricePriceYuan: 0.5 },
+  costGuard: { spikeRatio: 1.8, minTokens: 2000, window: 5, cooldownMs: 600000, dailyCap: 3 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000,
@@ -188,7 +189,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v37'
+export const name = 'dsh-pet-bridge-v38'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -207,7 +208,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v37] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v38] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -584,6 +585,11 @@ export function apply(ctx, rawConfig) {
     } catch {}
   }
   applyActivity(cfg.activity || 'normal')
+  setTimeout(() => {
+    try {
+      checkReunion()
+    } catch {}
+  }, 4000)
   // v10 lifecycle: DSH 启动时自动拉起桌宠（幂等：start-pet.ps1 会先检查）
   if (cfg.lifecycle?.autoStart && cfg.lifecycle.startScript) {
     setTimeout(() => {
@@ -1011,6 +1017,69 @@ export function apply(ctx, rawConfig) {
     log('info', 'interaction', { name, mood: companion.mood, affinity: companion.affinity })
     return 'ok'
   }
+  // v38 偷吃判定 + 久别重逢 v2（隐私：只用 token 数/状态枚举/时间，不读原文）
+  const tokenHistory = []
+  let usageSpikeDay = ''
+  let usageSpikeCount = 0
+  let lastSpikeAt = 0
+  const SPIKE_LINES = ['糟了，被发现了…', '我、我就多看了两眼…', '这可不是偷吃哦']
+  const REUNION_2D = '你回来啦…我还以为要等很久'
+  const REUNION_7D = '好久不见，上次你好像在忙，我就一直趴这儿'
+  const checkUsageSpike = (turnTokens) => {
+    try {
+      const cg = cfg.costGuard || {}
+      const win = tokenHistory.slice(-(cg.window || 5))
+      tokenHistory.push(turnTokens)
+      if (tokenHistory.length > 20) tokenHistory.shift()
+      if (win.length < 3 || !turnTokens || turnTokens < (cg.minTokens || 2000)) return
+      const base = win.reduce((a, b) => a + b, 0) / win.length
+      if (!base || turnTokens <= base * (cg.spikeRatio || 1.8)) return
+      const dayKey = new Date().toISOString().slice(0, 10)
+      if (usageSpikeDay !== dayKey) {
+        usageSpikeDay = dayKey
+        usageSpikeCount = 0
+      }
+      if (usageSpikeCount >= (cg.dailyCap || 3) || Date.now() - lastSpikeAt < (cg.cooldownMs || 600000)) return
+      usageSpikeCount += 1
+      lastSpikeAt = Date.now()
+      send('cmd:fx:sweat')
+      setTimeout(
+        () =>
+          speak('turnEndBad', SPIKE_LINES[Math.floor(Math.random() * SPIKE_LINES.length)], {
+            force: true,
+            source: 'pool'
+          }),
+        350
+      )
+      pushEvent('usage', 'S2', '用量突增', true)
+      log('info', 'usage spike', { turnTokens, base: Math.round(base), count: usageSpikeCount })
+    } catch {}
+  }
+  const checkReunion = () => {
+    try {
+      const last = companion.lastUserSeenAt || companion.lastSeenAt
+      if (!last) return
+      const gap = Date.now() - Date.parse(last)
+      const todayKey = new Date().toISOString().slice(0, 10)
+      if (companion.lastGreetDate === todayKey) return
+      if (gap < 2 * 86400000) return
+      const text = gap >= 7 * 86400000 ? REUNION_7D : REUNION_2D
+      const where = companion.lastActivityLabel ? '上次在' + companion.lastActivityLabel : ''
+      companion.lastGreetDate = todayKey
+      companion.affinity = Math.min(100, (companion.affinity || 0) + 2)
+      companion.mood = Math.min(100, (companion.mood || 0) + 3)
+      saveCompanion()
+      setTimeout(() => {
+        try {
+          send('walk:nearby')
+          speak('morning', text + (where ? '，' + where : ''), { force: true, source: 'pool', style: 'greet' })
+        } catch {}
+      }, 2500)
+      pushEvent('reunion', 'S1', gap >= 7 * 86400000 ? '久别 7 天+' : '久别 2 天+', true)
+      log('info', 'reunion', { days: Math.floor(gap / 86400000) })
+    } catch {}
+  }
+
   const todayReset = () => {
     const d = new Date().toISOString().slice(0, 10)
     if (today.date !== d) {
@@ -1048,8 +1117,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.37.0',
-        petVersion: 'v1.1.5+patch-v37',
+        version: '0.38.0',
+        petVersion: 'v1.1.5+patch-v38',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1593,6 +1662,10 @@ export function apply(ctx, rawConfig) {
       if (srcKind === 'user' && rec0.role === 'user') {
         rec0.lastUserMessageAt = Date.now()
         rec0.state = 'thinking'
+        try {
+          companion.lastUserSeenAt = new Date().toISOString()
+          companion.lastActivityLabel = statusState.toolType || statusState.state || '忙碌'
+        } catch {}
         const switchable = Date.now() - lastSwitchAt >= 2500
         if (String(session.id) !== String(currentSessionId) && switchable) {
           currentSessionId = session.id
@@ -1767,6 +1840,7 @@ export function apply(ctx, rawConfig) {
       const dur = s.turnStartAt ? Date.now() - s.turnStartAt : 0
       const durBucket = dur < 15000 ? '很快' : dur < 60000 ? '一会儿' : '挺久'
       stats.longestMs = Math.max(stats.longestMs, dur)
+      checkUsageSpike(s.tokens)
       stats.tokens += s.tokens
       s.tokens = 0
       const reasonKind = String(d.reason?.kind || '')
@@ -2050,7 +2124,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v37', {
+  log('info', 'loaded v38', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
