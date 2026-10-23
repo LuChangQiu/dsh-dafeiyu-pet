@@ -10524,6 +10524,23 @@ def main():
             w.say(show[:PIPE_TEXT_MAX], seconds=8.0, queue=True)
             return "bal"
 
+        if line.startswith("state:"):
+            # state:<json> —— DSH 插件推送的实时状态（thinking/tool/approval/background/error/done/idle）
+            try:
+                _st = json.loads(line[6:])
+                w._bridge_state = _st
+                _name = str(_st.get("state") or "")
+                if _name in ("approval", "waiting_approval"):
+                    w._bridge_bubble_kind = "remind"
+                    w.say("我在等你的确认哦", seconds=8.0, queue=True)
+                elif _name == "error":
+                    try:
+                        w._bridge_fx_play("sweat")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return "state"
         if line.startswith("cmd:"):
             if muted:
                 return "muted"

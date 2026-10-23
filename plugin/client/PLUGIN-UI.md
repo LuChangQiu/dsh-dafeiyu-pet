@@ -310,3 +310,47 @@ curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "content-type: application/jso
 1. ~~tech-scout v20：ui-action 的 enable-autostart/disable-autostart/quit-pet~~ **v20 已落地**：capabilities 回显 `quit/autoStart:true`，tech-scout 实测三条动作 `status:done`；面板自动启用（readiness 全 true）。剩余仅 verifier 复验这两项。
 2. verifier 重跑功能平价（task-38/40）与 V4.1；本附录可作为矩阵基准。
 3. 真实页面截图（可选，harness 图已覆盖本轮新增 UI）。
+---
+
+# 附录 B — task-43/44：状态通道（面板侧）+ 代码规范（UI 侧）
+
+## B.1 实时状态区（task-44 面板侧，已实现）
+
+面板顶部新增「实时状态」卡片，数据来源为联动插件 `state.json` 中的状态通道快照（tech-scout 实现 `state:<json>`）：
+
+| 展示项 | 来源字段（容错读取） | 说明 |
+|---|---|---|
+| 状态徽标 | `status.state` → `runtime.status.state` → `runtime.state` | 中文映射：空闲/思考中/调工具/等确认/等输入/后台运行/出错/完成/失联；色调：ok/busy/warn/err/dim |
+| 当前工具 | `status.tool` / `toolName` | 状态为 `tool` 时显示「正在调用工具」 |
+| 状态耗时 | `status.since` / `startedAt` | 面板计算 `now - since`，格式 3.2s / 1m 05s / 2h 03m |
+| Step / Turn | `status.step` / `status.turn` | 缺省显示 `— / —` |
+| 最后心跳 | `heartbeatAt` / `lastHeartbeatAt` / `lastEventAt` / `state.json.updatedAt` | 显示「N 秒前」+ 本地时间 |
+| 失联判定 | 心跳龄 > **30s**（`runtimeStaleMs`，可由 patch config 覆盖） | 红色「⚠ 失联（>30s 无心跳）」+ 状态强制为 `disconnected` |
+| 补充信息 | `status.message` / `detail` | 可选一行说明 |
+| 兼容性 | 无 `status` 字段时 `supported=false` | 显示「状态通道未就绪」徽标（当前 v25 尚未落地服务端状态字段），并按 `updatedAt` 兜底判活；服务端一上线自动显示，无需改 UI |
+
+**实时性**：面板沿用 5s 轮询 `state.get`（含 runtime）；断线（30s 无心跳）在下一次轮询即变「失联」。状态枚举/别名归一（approval→waiting_approval、toolcall→tool、running→background、failed→error、completed→done、offline→lost 等）已在 Host 侧统一处理。
+
+**验证**：`node test/smoke.mjs` 新增 6 项状态测试（8 个状态枚举、6 组别名、29s/31s 心跳边界、无 status 兜底、runtime 两种形状、state.get runtime 字段）→ **37/37 通过**；harness 截图：
+- `screenshots/ui-08-realtime-status-tool.png`（调工具 + pwsh + 45s + step 4/turn 2 + 心跳 3s）
+- `screenshots/ui-09-realtime-status-disconnected.png`（失联 + >30s 无心跳 + 心跳 1 分钟前）
+
+> 注：截图中的状态数据由 `test/make-fixture.mjs` 注入合成 runtime（真实 `status` 字段待 tech-scout v26+ 落地）；面板组件与归一逻辑为真实代码。
+
+## B.2 代码规范（task-43 UI 侧，进行中）
+
+已做（不改变行为）：
+1. **JSDoc**：`lib/index.js` 补齐 handler / apply / sendPipeLine / collectState / applyConfig / normalizeRuntimeStatus / petAction / readPetConfig / readSkinOptions / buildBubbleConfig 等注释（参数、返回、异常语义）；`lib/client.js` 补齐 `call()` 协议调用、`Card/Stat/Dot/Segmented/Toggle` 组件、`makeSection/Panel`、`fmtTime/fmtDuration/fmtAge` 等 JSDoc。
+2. **命名/错误处理统一**：peer 字段命名统一 camelCase 输出；错误统一 `{ok:false, error:{code,message}}`（Host）与 `throw new Error(中文)`（client call）；管道命令统一 `sendPipeLine`（无回执）/`sendPipeCommand`（有回执）两条明确语义路径。
+3. **注释/文案中文一致**：新增注释与 UI 文案全部中文；协议、端点、状态枚举均有中文说明。
+4. **PS 脚本**：`scripts/*.ps1` UTF-8 with BOM + `#Requires -Version 5.1` + 注释式帮助（PS5.1 实测 `-DryRun` exit 0）。
+
+待 tech-scout 提供根配置后执行（task-43 共享部分）：
+- 根 Prettier/ESLint 配置路径（repo `dsh-dafeiyu-pet`，尚未见 `.prettierrc`/`eslint.config.js`）；
+- 按根配置跑 `npx prettier --check "plugin/client/**/*.js"` 与 `npx eslint "plugin/client/**/*.js"`，修到 0 error；
+- 与 `docs/CODE-STYLE.md`、`scripts/lint.ps1` 联动（tech-scout 提供）。
+当前自查：`node --check` 全绿；代码风格与既有插件（dsh-submarket 等）一致（2 空格、单引号、无分号、行宽 ~120）。
+
+## B.3 旧包清理（待授权）
+
+见 §A.4/上轮：profile `dsh-pet-bridge-v6…v19` 共 14 个孤儿目录；已请 tech-scout 确认「清理 OK（保留 vX）」后执行并留证（保留 v20+/UI、不重启 host）。

@@ -23,6 +23,13 @@ const state = await handler('state.get')
 const logs = await handler('logs.get', { lines: 80 })
 
 const payload = { state: state.data, logs: logs.data, generatedAt: new Date().toISOString() }
+// 可选：注入合成 runtime 状态用于 harness 截图（真实环境 status 字段由联动插件 task-44 提供）
+// 用法：node test/make-fixture.mjs <out> '{"state":"tool","tool":"pwsh","step":4,"turn":2,...}'
+if (process.argv[3]) {
+  const runtime = JSON.parse(process.argv[3])
+  payload.state.runtime = runtime
+  console.log('fixture runtime injected:', JSON.stringify(runtime))
+}
 fs.mkdirSync(path.dirname(outFile), { recursive: true })
 fs.writeFileSync(outFile, 'window.__FIXTURE__ = ' + JSON.stringify(payload, null, 2) + ';\n', 'utf8')
 console.log('fixture written:', outFile)

@@ -589,6 +589,94 @@ await testAsync('config.set pet.doubleClick/autoStart 写入 ui-config.pet（pen
   assert.ok(result.data.applied.petPendingFields.includes('doubleClick'))
   dispose()
 })
+// ───────────────────────── 3.7 task-44：状态通道归一 ─────────────────────────
+console.log('\n[3.7] 状态通道（state:<json>）归一/失联')
+
+const { normalizeRuntimeStatus } = index.__test
+const NOW = Date.parse('2026-10-23T06:40:00.000Z')
+const iso = (offsetMs) => new Date(NOW - offsetMs).toISOString()
+
+test('各状态枚举 → 中文标签/色调', () => {
+  const cases = {
+    idle: ['空闲', 'dim'],
+    thinking: ['思考中', 'busy'],
+    tool: ['调工具', 'busy'],
+    waiting_approval: ['等确认', 'warn'],
+    waiting_input: ['等输入', 'warn'],
+    background: ['后台运行', 'dim'],
+    error: ['出错', 'err'],
+    done: ['完成', 'ok'],
+  }
+  for (const [state, [label, tone]] of Object.entries(cases)) {
+    const r = normalizeRuntimeStatus({ status: { state, heartbeatAt: iso(1000) } }, { now: NOW })
+    assert.equal(r.state, state, state)
+    assert.equal(r.label, label)
+    assert.equal(r.tone, tone)
+    assert.equal(r.disconnected, false)
+  }
+})
+
+test('别名归一（approval/toolcall/running/offline…）', () => {
+  const pairs = [
+    ['approval', 'waiting_approval'],
+    ['toolcall', 'tool'],
+    ['running', 'background'],
+    ['failed', 'error'],
+    ['completed', 'done'],
+    ['offline', 'disconnected'],
+  ]
+  for (const [raw, want] of pairs) {
+    const r = normalizeRuntimeStatus({ status: { state: raw, heartbeatAt: iso(500) } }, { now: NOW })
+    assert.equal(r.state, want, raw)
+  }
+})
+
+test('心跳超 30s → disconnected（失联）', () => {
+  const fresh = normalizeRuntimeStatus({ status: { state: 'thinking', heartbeatAt: iso(29000) } }, { now: NOW })
+  assert.equal(fresh.disconnected, false)
+  assert.equal(fresh.state, 'thinking')
+  const stale = normalizeRuntimeStatus({ status: { state: 'thinking', heartbeatAt: iso(31000) } }, { now: NOW })
+  assert.equal(stale.disconnected, true)
+  assert.equal(stale.state, 'disconnected')
+  assert.equal(stale.label, '失联')
+  assert.equal(stale.tone, 'err')
+})
+
+test('无 status 字段：supported=false 且按 state.json.updatedAt 兜底判活', () => {
+  const fresh = normalizeRuntimeStatus({ updatedAt: iso(5000) }, { now: NOW })
+  assert.equal(fresh.supported, false)
+  assert.equal(fresh.disconnected, false)
+  assert.equal(fresh.state, 'idle')
+  const stale = normalizeRuntimeStatus({ updatedAt: iso(120000) }, { now: NOW })
+  assert.equal(stale.disconnected, true)
+  const empty = normalizeRuntimeStatus(null, { now: NOW })
+  assert.equal(empty.supported, false)
+  assert.equal(empty.disconnected, true)
+})
+
+test('容错：runtime.status / 顶层 runtime 两种形状都读；tool/step/turn/since 解析', () => {
+  const a = normalizeRuntimeStatus({ runtime: { status: { state: 'tool', tool: 'bash', step: 3, turn: 2, since: iso(45000), heartbeatAt: iso(2000) } } }, { now: NOW })
+  assert.equal(a.state, 'tool')
+  assert.equal(a.tool, 'bash')
+  assert.equal(a.step, 3)
+  assert.equal(a.turn, 2)
+  assert.equal(a.elapsedMs, 45000)
+  const b = normalizeRuntimeStatus({ runtime: { state: 'thinking', heartbeatAt: iso(1000) } }, { now: NOW })
+  assert.equal(b.state, 'thinking')
+  assert.equal(b.supported, true)
+})
+
+await testAsync('state.get 返回 runtime 字段（当前环境无 status → 未就绪兜底）', async () => {
+  const { routes, dispose } = mount()
+  const res = await invoke(routes, makeReq({ url: '/pet-bridge-ui/state.get', body: { rpcId: 'r-rt', method: 'state.get' } }), makeRes())
+  const data = JSON.parse(res.body).result.data
+  assert.ok(data.runtime && typeof data.runtime === 'object')
+  assert.equal(typeof data.runtime.state, 'string')
+  assert.equal(typeof data.runtime.label, 'string')
+  assert.equal(typeof data.runtime.disconnected, 'boolean')
+  assert.equal(data.runtime.staleAfterMs, 30000)
+  dispose()
+})
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────
 console.log('\n[4] client bundle 契约')
 

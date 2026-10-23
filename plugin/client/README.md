@@ -275,3 +275,9 @@ node test/make-fixture.mjs <out>    # 生成 harness 数据快照
 - `state.get` 新增：`capabilities{petActions,petActionReadiness,doubleClick,autoStart,quit}`、`petOptions{skins,doubleClick,doubleClickOptions,autoStart}`；
 - 打包：`license: MIT` + `NOTICE`；`scripts/*.ps1` 全部 UTF-8 **with BOM**（PS5.1 可解析，`-DryRun` 自检通过）。
 - 验证：`node test/smoke.mjs`（31/31）、`node test/e2e-actions.mjs`（真实桌宠 9 动作 ok）。
+## task-44/43（2026-10-23，UI 侧）
+
+- **实时状态区**：面板顶部显示 状态（空闲/思考中/调工具/等确认/等输入/后台运行/出错/完成/失联）、当前工具、状态耗时、step/turn、最后心跳；心跳龄 >30s 判「失联」。数据容错读取 `state.json` 的 `status` / `runtime.status` / `runtime`，服务端字段未就绪时显示「状态通道未就绪」并按 `updatedAt` 兜底判活。归一函数 `normalizeRuntimeStatus()`（已导出，含 6 项 smoke 测试）。
+- **代码规范**：JSDoc 补齐（协议/handler/组件/工具函数）、命名与错误信封统一（`{ok,error:{code,message}}` / client 抛中文 Error）、注释与文案中文一致；`scripts/*.ps1` UTF-8 BOM + PS5.1 兼容。等根 Prettier/ESLint 配置就绪后统一跑 lint。
+- harness 截图：`screenshots/ui-08-realtime-status-tool.png`、`ui-09-realtime-status-disconnected.png`（面板数据为注入的合成 runtime，组件/归一为真实代码）。
+- 测试：`node test/smoke.mjs` → 37/37。

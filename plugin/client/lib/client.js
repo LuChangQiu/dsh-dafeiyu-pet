@@ -85,8 +85,10 @@ window.__ModuleLoader__.load({
       'disable-autostart': '关闭开机自启',
       'quit-pet': '退出桌宠',
     }
-    const PENDING_LABEL = {
-      enabled: '总开关',
+    /** task-44 状态色调（与样式主题一致的语义色）。 @type {Record<string,string>} */
+    const TONE_COLOR = { ok: '#3fb950', busy: '#6ea8ff', warn: '#d29922', err: '#e5534b', dim: '#9aa0a6' }
+
+    const PENDING_LABEL = {      enabled: '总开关',
       activity: '活跃度',
       quietHours: '免打扰时段',
       budgetPerDayYuan: '每日上限',
@@ -227,6 +229,10 @@ window.__ModuleLoader__.load({
       listText: { fontSize: 12, flex: '1 1 auto', minWidth: 0 },
       progressTrack: { height: 6, borderRadius: 3, background: 'rgba(128,128,128,.2)', overflow: 'hidden', width: '100%' },
       progressBar: { height: '100%', borderRadius: 3, transition: 'width .3s' },
+      stateHead: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+      stateDot: { fontSize: 22, lineHeight: 1 },
+      stateName: { fontSize: 18, fontWeight: 700, lineHeight: 1.2 },
+      stateDisconnected: { fontSize: 12, color: '#e5534b', margin: 0, fontWeight: 600 },
       img: { maxWidth: '100%', borderRadius: 6, border: '1px solid rgba(128,128,128,.3)', display: 'block' },
       pre: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -248,6 +254,13 @@ window.__ModuleLoader__.load({
     }
 
     /** 同源 POST，官方 wire 信封；返回 handler 的 data。 */
+    /**
+     * 通过同源 POST 调用 Host 半边（官方 wire 信封）。
+     * @param {string} endpoint 端点名（`state.get` / `config.set` / `pet.action` / …）
+     * @param {object} [payload] 业务负载
+     * @returns {Promise<any>} handler 返回的 `data`
+     * @throws {Error} HTTP 失败、信封异常、或 handler 返回 `{ok:false}` 时抛出带中文 message 的错误
+     */
     async function call(endpoint, payload) {
       const rpcId = 'pbu-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
       const res = await fetch(CHANNEL + '/' + endpoint, {
@@ -265,8 +278,8 @@ window.__ModuleLoader__.load({
       return result.data
     }
 
-    function fmtTime(iso) {
-      if (!iso) return '—'
+    /** ISO 时间 → 本地「HH:MM:SS MM/DD」。 @param {string|null|undefined} iso @returns {string} */
+    function fmtTime(iso) {      if (!iso) return '—'
       const d = new Date(iso)
       if (Number.isNaN(d.getTime())) return '—'
       return d.toLocaleTimeString('zh-CN', { hour12: false }) + ' ' + d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
@@ -276,20 +289,54 @@ window.__ModuleLoader__.load({
       if (!Number.isFinite(v)) return '¥0'
       return '¥' + (v >= 0.01 ? v.toFixed(2) : v.toFixed(4))
     }
+
+    /**
+     * 毫秒时长 → 人类可读（`3.2s` / `1m 05s` / `2h 03m`）。
+     * @param {number|null|undefined} ms
+     * @returns {string}
+     */
+    function fmtDuration(ms) {
+      const v = Number(ms)
+      if (!Number.isFinite(v) || v < 0) return '—'
+      if (v < 1000) return Math.round(v) + 'ms'
+      const s = v / 1000
+      if (s < 60) return s.toFixed(1) + 's'
+      const m = Math.floor(s / 60)
+      const rs = Math.round(s % 60)
+      if (m < 60) return m + 'm ' + String(rs).padStart(2, '0') + 's'
+      return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm'
+    }
+
+    /**
+     * 距今毫秒 → 「刚刚 / x 秒前 / x 分钟前 / x 小时前」。
+     * @param {number|null|undefined} ms
+     * @returns {string}
+     */
+    function fmtAge(ms) {
+      const v = Number(ms)
+      if (!Number.isFinite(v)) return '—'
+      if (v < 2000) return '刚刚'
+      if (v < 60000) return Math.round(v / 1000) + ' 秒前'
+      if (v < 3600000) return Math.round(v / 60000) + ' 分钟前'
+      return Math.round(v / 3600000) + ' 小时前'
+    }
     function pct(n) {
       const v = Number(n)
       return Number.isFinite(v) ? Math.round(v * 100) + '%' : '—'
     }
 
+    /** 状态圆点：在线绿 / 离线红 / 未知黄。 @param {{on?: boolean, unknown?: boolean}} props */
     function Dot({ on, unknown }) {
       return h('span', { style: unknown ? S.dotUnknown : on ? S.dotOn : S.dotOff }, '●')
     }
+    /** 状态小卡：标签 + 圆点 + 值 + 细节（面板状态区统一用）。 @param {{label: string, on?: boolean, unknown?: boolean, value: any, detail?: string}} props */
     function Stat({ label, on, unknown, value, detail }) {
       return h('div', { style: S.statBox },
         h('span', { style: S.statLabel }, label),
         h('span', { style: S.statValue }, h(Dot, { on, unknown }), value),
         detail ? h('span', { style: S.statDetail, title: detail }, detail) : null)
     }
+    /** 分区卡片：标题 + 右上角操作区。 @param {{title: string, right?: any, children?: any}} props */
     function Card({ title, right, children }) {
       return h('section', { style: S.card },
         h('div', { style: S.cardHead },
@@ -297,6 +344,7 @@ window.__ModuleLoader__.load({
           right ? h('span', null, right) : null),
         children)
     }
+    /** 分段选择器（活跃度/模式/语录频率等）。 @param {{value: string, options: Array<{value:string,label:string}>, onChange: (v:string)=>void, disabled?: boolean}} props */
     function Segmented({ value, options, onChange, disabled }) {
       return h('div', { style: S.seg },
         options.map((opt, i) =>
@@ -309,6 +357,7 @@ window.__ModuleLoader__.load({
             onClick: () => onChange(opt.value),
           }, opt.label)))
     }
+    /** 开关（pill 按钮）。 @param {{value: boolean, onChange: (v:boolean)=>void, disabled?: boolean, onLabel?: string, offLabel?: string}} props */
     function Toggle({ value, onChange, disabled, onLabel, offLabel }) {
       return h('button', {
         type: 'button',
@@ -320,7 +369,9 @@ window.__ModuleLoader__.load({
       }, value ? (onLabel || '开') : (offLabel || '关'))
     }
 
+    /** 构造设置页 Panel 组件（供 ctx.slots.register 使用）。 @returns {Function} Panel 组件 */
     function makeSection() {
+      /** 大肥鱼联动设置面板（唯一控制台）：实时状态/运行状态/基础设置/快捷查看/应急/日志/测试。 @returns {any} React 元素 */
       function Panel() {
         const [state, setState] = React.useState(null)
         const [form, setForm] = React.useState(defaultForm())
@@ -612,7 +663,8 @@ window.__ModuleLoader__.load({
             h('p', { style: S.hint }, '正在读取联动状态…'))
         }
 
-        const { host, pet, pipe, config, today, quiet, recentSay, saved, pending, petSettings, versions, lastAction, files, bubble, capabilities, petOptions } = state
+        const { host, pet, pipe, config, today, quiet, recentSay, saved, pending, petSettings, versions, lastAction, files, bubble, capabilities, petOptions, runtime } = state
+        const rt = runtime || { supported: false, state: 'idle', label: '未知', tone: 'dim', disconnected: true, staleAfterMs: 30000 }
         const caps = capabilities || {}
         const actionReady = (name) => (caps.petActionReadiness ? caps.petActionReadiness[name] !== false : true)
         const petLabel = pet.online ? (pipe.online ? '在线' : '进程在 / 管道未响应') : '未找到'
@@ -639,6 +691,47 @@ window.__ModuleLoader__.load({
           pending && pending.length > 0
             ? h('p', { style: S.warn }, '已保存、待联动插件应用（≤20s）：' + pending.map((k) => PENDING_LABEL[k] || k).join('、'))
             : null,
+
+          // ── 实时状态（task-44：状态通道 state:<json>） ──
+          h(Card, { title: '实时状态', right: h('span', { style: S.hint }, rt.supported ? '状态通道 · 5s 轮询' : '状态通道 · 待服务端') },
+            h('div', { style: S.stateHead },
+              h('span', { style: Object.assign({}, S.stateDot, { color: TONE_COLOR[rt.tone] || TONE_COLOR.dim }) }, rt.disconnected ? '⚠' : '●'),
+              h('span', { style: S.stateName }, rt.label || '未知'),
+              rt.disconnected
+                ? h('span', { style: S.stateDisconnected }, '失联（>' + Math.round((rt.staleAfterMs || 30000) / 1000) + 's 无心跳）')
+                : null,
+              rt.supported ? null : h('span', { style: S.badgeWarn }, '状态通道未就绪')),
+            h('div', { style: S.statusGrid },
+              h(Stat, {
+                label: '当前工具',
+                on: !!rt.tool,
+                unknown: !rt.tool,
+                value: rt.tool || '—',
+                detail: rt.state === 'tool' ? '正在调用工具' : '',
+              }),
+              h(Stat, {
+                label: '状态耗时',
+                on: !rt.disconnected,
+                value: fmtDuration(rt.elapsedMs),
+                detail: rt.since ? '起于 ' + fmtTime(rt.since) : '—',
+              }),
+              h(Stat, {
+                label: 'Step / Turn',
+                on: !rt.disconnected,
+                value: (rt.step == null ? '—' : rt.step) + ' / ' + (rt.turn == null ? '—' : rt.turn),
+                detail: '',
+              }),
+              h(Stat, {
+                label: '最后心跳',
+                on: !rt.disconnected,
+                unknown: !rt.heartbeatAt,
+                value: fmtAge(rt.heartbeatAgeMs),
+                detail: rt.heartbeatAt ? fmtTime(rt.heartbeatAt) : '无心跳',
+              })),
+            rt.message ? h('p', { style: S.hint }, rt.message) : null,
+            rt.supported
+              ? null
+              : h('p', { style: S.hint }, '服务端状态通道就绪后自动显示：思考中 / 调工具 / 等确认 / 后台运行 / 出错 / 完成 / 空闲 / 失联；30s 无心跳判失联')),
 
           // ── 运行状态 ──
           h(Card, { title: '运行状态', right: h('span', { style: S.hint }, '刷新于 ' + fmtTime(state.now)) },

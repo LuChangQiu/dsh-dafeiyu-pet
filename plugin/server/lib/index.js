@@ -89,6 +89,7 @@ const DEFAULTS = {
   petConfigFile: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
+  statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
   bubble: {
     normalMs: 5000, innerMs: 3000, reportMs: 10000, approvalMs: 8000, nightMs: 6000,
     queueGapMs: 300, innerDelayMinMs: 1200, innerDelayMaxMs: 1800,
@@ -159,7 +160,7 @@ function blocksToText(content) {
 
 function clip(s, n) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n) }
 
-export const name = 'dsh-pet-bridge-v25'
+export const name = 'dsh-pet-bridge-v26'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -178,7 +179,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v25] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v26] ' + line)
     } catch {}
   }
   const safe = (v) => { try { return JSON.stringify(v) } catch { return String(v) } }
@@ -572,6 +573,36 @@ export function apply(ctx, rawConfig) {
     } catch {}
   }
 
+  // ---------- task-44 状态通道（state:<json>） ----------
+  const statusState = { state: 'idle', tool: null, since: new Date().toISOString(), step: null, turn: null, heartbeatAt: new Date().toISOString(), source: null, message: '' }
+  const pushStatusToPet = () => {
+    if (!cfg.statusChannel?.petPush) return
+    try {
+      if (petOnline) send('state:' + JSON.stringify({ state: statusState.state, tool: statusState.tool, since: statusState.since, step: statusState.step, turn: statusState.turn, heartbeatAt: statusState.heartbeatAt }))
+    } catch {}
+  }
+  const setStatus = (st, extra = {}) => {
+    if (statusState.state === st && extra.tool === undefined) { statusState.heartbeatAt = new Date().toISOString(); return }
+    statusState.state = st
+    statusState.since = new Date().toISOString()
+    if (extra.tool !== undefined) statusState.tool = extra.tool || null
+    if (extra.step !== undefined) statusState.step = extra.step
+    if (extra.turn !== undefined) statusState.turn = extra.turn
+    if (extra.source !== undefined) statusState.source = extra.source
+    if (extra.message !== undefined) statusState.message = extra.message
+    statusState.heartbeatAt = new Date().toISOString()
+    pushStatusToPet()
+    if (st !== 'thinking' && st !== 'tool') log('info', 'state', { state: st, tool: statusState.tool })
+  }
+  if (cfg.statusChannel?.enabled) {
+    setInterval(() => {
+      statusState.heartbeatAt = new Date().toISOString()
+      if (!petOnline && statusState.state !== 'disconnected') { statusState.state = 'disconnected'; statusState.since = new Date().toISOString() }
+      if (petOnline && statusState.state === 'disconnected') { statusState.state = 'idle'; statusState.since = new Date().toISOString() }
+      pushStatusToPet()
+    }, cfg.statusChannel.heartbeatMs || 5000)
+  }
+
   const writeState = () => {
     if (!cfg.stateFile) return
     try {
@@ -591,11 +622,12 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.25.0',
-        petVersion: 'v1.1.5+patch-v25',
+        version: '0.26.0',
+        petVersion: 'v1.1.5+patch-v26',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
+        status: { state: statusState.state, tool: statusState.tool, since: statusState.since, step: statusState.step, turn: statusState.turn, heartbeatAt: statusState.heartbeatAt, source: statusState.source, message: statusState.message },
         attribution: { active: activeSessionId ? String(activeSessionId).slice(0, 16) : null, bootstrapped: attributionBootstrapped },
         skins: (() => { try { const pc = JSON.parse(fs.readFileSync(cfg.petConfigFile, 'utf8')); return { current: pc.skin || '大肥鱼', available: ['大肥鱼'] } } catch { return { current: '大肥鱼', available: ['大肥鱼'] } } })(),
         capabilities: { petActions: ['balance', 'weather', 'music', 'summary', 'show', 'hide', 'snapInto', 'recover'], doubleClick: true, skin: true, quiet: true, quit: true, autoStart: true },
@@ -894,12 +926,14 @@ export function apply(ctx, rawConfig) {
     const t = event.type
     const d = event.data || {}
     log('debug', 'event', { type: t, session: String(session.id || '').slice(0, 14) })
+    if (/error|failed/i.test(t)) setStatus('error', { message: t })
 
     const hdr = session.header || {}
     if (t === 'user/message') {
       const srcKind = d.source && d.source.kind
       const denyOrigin = hdr.origin && ['subagent', 'teammate', 'team', 'delegate', 'background', 'tool'].includes(String(hdr.origin).toLowerCase())
       if (srcKind === 'user' && !denyOrigin && (hdr.delegationDepth ?? 0) === 0) {
+        setStatus('thinking', { source: String(session.id).slice(0, 16) })
         activeSessionId = session.id
         activeAt = Date.now()
         try {
@@ -933,12 +967,14 @@ export function apply(ctx, rawConfig) {
           attrSkipLogAt[key] = Date.now()
           log('info', 'attribution skip', { session: key.slice(0, 16), reason: hdr.origin ? ('origin:' + hdr.origin) : 'not-active', active: activeSessionId ? String(activeSessionId).slice(0, 16) : null })
         }
+        if (!['thinking', 'tool', 'approval', 'waiting_approval'].includes(statusState.state)) setStatus('background', { source: String(session.id).slice(0, 16) })
         return
       }
     }
 
     if (t === 'user/message' || t === 'system/message' || t === 'request/header') return
     if (t === 'tool/call') {
+      setStatus('tool', { tool: d.tool || d.name || 'tool' })
       s.tools += 1; stats.tools += 1
       if (cfg.actions?.enabled && activityState.level !== 'quiet'
           && Date.now() - lastToolActAt >= (activityState.toolEveryMs || cfg.actions.toolEveryMs || 20000)) {
@@ -954,6 +990,7 @@ export function apply(ctx, rawConfig) {
       return
     }
     if (t === 'turn/start') {
+      setStatus('thinking', { turn: stats.turns + 1, tool: null })
       s.turnStartAt = Date.now(); s.tools = 0
       stats.turns += 1
       if (cfg.actions?.enabled) {
@@ -974,6 +1011,8 @@ export function apply(ctx, rawConfig) {
       return
     }
     if (t === 'turn/end') {
+      setStatus('done')
+      setTimeout(() => { if (statusState.state === 'done') setStatus('idle') }, 3000)
       const dur = s.turnStartAt ? Date.now() - s.turnStartAt : 0
       const durBucket = dur < 15000 ? '很快' : dur < 60000 ? '一会儿' : '挺久'
       stats.longestMs = Math.max(stats.longestMs, dur)
@@ -1021,6 +1060,7 @@ export function apply(ctx, rawConfig) {
       return
     }
     if (t === 'approval/asked') {
+      setStatus('waiting_approval')
       if (!cfg.events.approval) return
       stats.approvals += 1
       const go = () => {
@@ -1151,7 +1191,7 @@ export function apply(ctx, rawConfig) {
   const dispose = () => { try { clearInterval(timer) } catch {}; try { clearInterval(bubbleTimer) } catch {}; try { if (hookTimer) clearInterval(hookTimer) } catch {}; sessions.clear() }
   try { if (typeof ctx.effect === 'function') ctx.effect(() => dispose); else ctx.on('dispose', dispose) } catch {}
 
-  log('info', 'loaded v25', {
+  log('info', 'loaded v26', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',

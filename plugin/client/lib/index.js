@@ -86,6 +86,8 @@ const DEFAULTS = {
   processProbeTtlMs: 15000,
   stateFileTtlMs: 60000,
   pipeProbeTimeoutMs: 700,
+  /** task-44：状态通道心跳超时阈值（ms），超过即面板显示「失联」。 */
+  runtimeStaleMs: 30000,
   /** 快捷动作协议就绪度（可由 patch config 覆盖；balance 等 tech-scout 加 cmd:balance 后设 true）。 */
   petActionReadiness: DEFAULT_PET_ACTION_READINESS,
   /** 「恢复默认配置」时写回的桌宠设置默认值（来源：task-32 映射表 §D；size 按 v15 用户偏好 0.36）。 */
@@ -119,6 +121,40 @@ const LINE_FREQ_LEVELS = ['安静', '正常', '话多', '话痨']
 const LAYER_LEVELS = ['top', 'bottom', 'normal']
 const BUBBLE_STYLE_LEVELS = ['auto', 'light', 'dark']
 const DOUBLE_CLICK_LEVELS = ['balance', 'weather', 'music', 'lines']
+
+/**
+ * task-44 状态通道：DSH 运行状态枚举（tech-scout `state:<json>` 协议）。
+ * @type {Record<string, { label: string, tone: 'ok'|'busy'|'warn'|'err'|'dim' }>}
+ */
+const RUNTIME_STATE_META = {
+  idle: { label: '空闲', tone: 'dim' },
+  thinking: { label: '思考中', tone: 'busy' },
+  tool: { label: '调工具', tone: 'busy' },
+  waiting_approval: { label: '等确认', tone: 'warn' },
+  waiting_input: { label: '等输入', tone: 'warn' },
+  background: { label: '后台运行', tone: 'dim' },
+  error: { label: '出错', tone: 'err' },
+  done: { label: '完成', tone: 'ok' },
+  disconnected: { label: '失联', tone: 'err' },
+}
+
+/** 状态别名归一（协议前后兼容：approval→waiting_approval、tool-call→tool 等）。 */
+const RUNTIME_STATE_ALIASES = {
+  approval: 'waiting_approval',
+  waiting: 'waiting_approval',
+  waitingapproval: 'waiting_approval',
+  toolcall: 'tool',
+  tools: 'tool',
+  running: 'background',
+  busy: 'thinking',
+  ok: 'done',
+  complete: 'done',
+  completed: 'done',
+  fail: 'error',
+  failed: 'error',
+  offline: 'disconnected',
+  lost: 'disconnected',
+}
 /** cmd:config 批量下发的 pet 字段白名单（task-32 映射表 §C + task-36 doubleClick）。 */
 const PET_CONFIG_FIELDS = [
   'size', 'opacity', 'mode', 'lineFreq', 'bubbleStyle', 'passthrough', 'locked',
@@ -213,6 +249,80 @@ function isInQuietHours(ranges, now = new Date()) {
 
 function clip(s, n) {
   return String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
+}
+
+/**
+ * task-44：把 `state.json` 里的状态通道快照归一成面板可直接渲染的运行时状态。
+ *
+ * 容错读取顺序：`status` → `runtime.status` → `runtime`（tech-scout 协议落地前后都能工作）；
+ * 心跳取 `heartbeatAt` / `lastHeartbeatAt` / `lastEventAt` / `state.json.updatedAt`。
+ * 超过 `staleMs`（默认 30s）无心跳 → `disconnected`（失联）。
+ *
+ * @param {object|null} stateFile 联动插件写出的 state.json
+ * @param {{ now?: number, staleMs?: number }} [opts]
+ * @returns {{
+ *   supported: boolean, state: string, label: string, tone: 'ok'|'busy'|'warn'|'err'|'dim',
+ *   tool: string|null, step: number|null, turn: number|null, since: string|null,
+ *   elapsedMs: number|null, heartbeatAt: string|null, heartbeatAgeMs: number|null,
+ *   staleAfterMs: number, disconnected: boolean, source: string|null, message: string|null,
+ *   lastEventAt: string|null
+ * }}
+ */
+export function normalizeRuntimeStatus(stateFile, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now()
+  const staleMs = Number.isFinite(opts.staleMs) ? opts.staleMs : 30000
+  const raw = isObject(stateFile?.status)
+    ? stateFile.status
+    : isObject(stateFile?.runtime)
+      ? (isObject(stateFile.runtime.status) ? stateFile.runtime.status : stateFile.runtime)
+      : null
+
+  const firstString = (...values) => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return null
+  }
+  const asNumber = (value) => (Number.isFinite(value) ? value : null)
+
+  const heartbeatAt = firstString(
+    raw?.heartbeatAt,
+    raw?.lastHeartbeatAt,
+    raw?.lastEventAt,
+    stateFile?.updatedAt,
+  )
+  const heartbeatMs = heartbeatAt ? new Date(heartbeatAt).getTime() : NaN
+  const heartbeatAgeMs = Number.isFinite(heartbeatMs) ? Math.max(0, now - heartbeatMs) : null
+  const stale = heartbeatAgeMs === null || heartbeatAgeMs > staleMs
+
+  let state = String(raw?.state ?? raw?.status ?? '').trim().toLowerCase()
+  state = RUNTIME_STATE_ALIASES[state.replace(/[^a-z_]/g, '')] ?? state
+  if (!RUNTIME_STATE_META[state]) state = stale ? 'disconnected' : 'idle'
+  if (stale) state = 'disconnected'
+
+  const since = firstString(raw?.since, raw?.startedAt)
+  const sinceMs = since ? new Date(since).getTime() : NaN
+  const elapsedMs = Number.isFinite(sinceMs) ? Math.max(0, now - sinceMs) : null
+  const meta = RUNTIME_STATE_META[state] ?? RUNTIME_STATE_META.idle
+
+  return {
+    supported: raw !== null,
+    state,
+    label: meta.label,
+    tone: meta.tone,
+    tool: firstString(raw?.tool, raw?.toolName),
+    step: asNumber(raw?.step),
+    turn: asNumber(raw?.turn),
+    since,
+    elapsedMs,
+    heartbeatAt,
+    heartbeatAgeMs,
+    staleAfterMs: staleMs,
+    disconnected: state === 'disconnected',
+    source: firstString(raw?.source),
+    message: firstString(raw?.message, raw?.detail),
+    lastEventAt: firstString(raw?.lastEventAt),
+  }
 }
 
 // ────────────────────────────── 日志解析 ──────────────────────────────
@@ -532,6 +642,13 @@ function makeProcessProbe(ttlMs) {
 }
 
 /** 往命名管道写一行（协议 v2：say:/act:/walk:/...），短连接、静默失败。 */
+/**
+ * 往命名管道写一行（协议 v2：say:/act:/cmd:…），不等待回执，短连接静默失败。
+ * @param {string} pipe 管道名
+ * @param {string} line 协议行（自动补换行）
+ * @param {number} [timeoutMs] 写超时
+ * @returns {Promise<{ok: boolean, error: string|null}>}
+ */
 export function sendPipeLine(pipe, line, timeoutMs = 900) {
   return new Promise((resolve) => {
     const payload = `${line}\n`
@@ -762,6 +879,10 @@ function buildHandler(cfg, log) {
     return readiness
   }
 
+  /**
+   * 聚合面板所需全部状态（只读）：host/pet/pipe、最近 say、state.json、运行时状态、capabilities、petOptions。
+   * @returns {Promise<{ok: true, data: object}>}
+   */
   async function collectState() {
     const [pipeProbe, processInfo] = await Promise.all([
       probePipe(cfg.pipe, cfg.pipeProbeTimeoutMs),
@@ -842,6 +963,8 @@ function buildHandler(cfg, log) {
     const skins = Array.isArray(stateFile?.skins?.available) && stateFile.skins.available.length
       ? stateFile.skins.available.map(String)
       : readSkinOptions(cfg.petConfigFile)
+    // task-44：实时状态（思考/调工具/等确认/后台/出错/完成/空闲/失联），30s 无心跳判失联
+    const runtime = normalizeRuntimeStatus(stateFile, { staleMs: cfg.runtimeStaleMs })
 
     return {
       ok: true,
@@ -874,6 +997,7 @@ function buildHandler(cfg, log) {
         petSettingsChannels: PET_FIELD_CHANNEL,
         bubble,
         attribution: isObject(stateFile?.attribution) ? stateFile.attribution : null,
+        runtime,
         capabilities: {
           petActions: Object.keys(PET_ACTION_CMDS).filter((k) => petActionReadiness[k] !== false),
           petActionReadiness,
@@ -920,6 +1044,11 @@ function buildHandler(cfg, log) {
     }
   }
 
+  /**
+   * 保存面板配置到 sidecar `ui-config.json`（白名单校验）；可即时项同时经管道下发。
+   * @param {object} payload `{enabled?, activity?, quietHours?, budgetPerDayYuan?, pet?}`
+   * @returns {Promise<{ok: boolean, data?: object, error?: object}>}
+   */
   async function applyConfig(payload) {
     const ui = loadUiConfig() ?? { version: 1 }
     const next = { ...ui, version: 1, updatedBy: 'dsh-pet-bridge-ui' }
@@ -1184,6 +1313,12 @@ function buildHandler(cfg, log) {
     return { ok: false, error: { code: 'unknown-endpoint', message: `未知测试动作：${kind}` } }
   }
 
+  /**
+   * Host 半边统一端点分发（wire 信封内由 web-route 调用）。
+   * @param {string} endpoint 端点名（ping/state.get/config.set/config.reset/logs.get/action.request/pet.action/pet.nativeui/test.*）
+   * @param {any} [payload] 业务负载
+   * @returns {Promise<{ok: true, data: any} | {ok: false, error: {code: string, message: string}}>} 统一结果信封
+   */
   return async function handler(endpoint, payload) {
     switch (endpoint) {
       case 'ping':
@@ -1223,6 +1358,11 @@ function buildHandler(cfg, log) {
 
 // ────────────────────────────── 插件入口 ──────────────────────────────
 
+/**
+ * Cordis 插件入口：合并配置、挂载 `/pet-bridge-ui` host 路由并写激活心跳。
+ * @param {any} ctx Cordis 上下文（需 connection/webServer 服务）
+ * @param {object} [rawConfig] profile patch 中的插件 config
+ */
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
   const log = {
@@ -1312,6 +1452,8 @@ export const __test = {
   buildHandler,
   readPetConfig,
   readSkinOptions,
+  normalizeRuntimeStatus,
+  RUNTIME_STATE_META,
   petSettingsToCmds,
   normalizePetSettings,
   resolvePetSettings,
