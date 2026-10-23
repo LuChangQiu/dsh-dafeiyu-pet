@@ -1,7 +1,7 @@
 # PLUGIN-UI.md — 大肥鱼 × DSH 联动 · 管理界面（task-26 交付说明）
 
 > 交付人：plugin-ui ｜ 交付日期：2026-10-23 ｜ 状态：**已接线并运行于生产 DSH Web（未重启 host）**，E2E 真实链路已验证；真实页面截图待用户补（清单见 §9）。
-> 代码位置：`E:\project\AI提效\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`E:\project\AI提效\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
+> 代码位置：`%PROJECT_ROOT%\tool\pet-integration-src\pet-work\plugin-ui\dsh-pet-bridge-ui\`；repo 副本：`%PROJECT_ROOT%\tool\大肥鱼桌宠-fork\plugin\dsh-pet-bridge-ui\`（branch `custom/dsh-linkage`，待 tech-scout commit）。
 
 ---
 

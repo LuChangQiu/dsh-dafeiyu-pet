@@ -58,3 +58,11 @@ if (Test-Path $petRoot) {
 Write-Info 'done. 重启 dsh web 后：设置页出现管理面板，桌宠由插件自动拉起（bootstrap-pet.ps1）。'
 Write-Info '回滚：scripts\plugin-rollback.ps1 / scripts\pet-rollback.ps1'
 
+
+# 4) 注册按需计划任务（绕开 DSH 插件子进程限制，供面板"启动桌宠"用）
+$taskName = 'DafeiyuPetStart'
+$startScript = Join-Path $PetWork 'tools\start-pet.ps1'
+try {
+  & schtasks.exe /Create /TN $taskName /TR ("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"" + $startScript + "`"") /SC ONCE /ST 00:00 /F /RL LIMITED | Out-Host
+  Write-Info ("scheduled task registered: " + $taskName)
+} catch { Write-Info ("WARN: schtasks 注册失败: " + $_.Exception.Message) }
