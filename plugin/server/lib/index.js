@@ -65,6 +65,15 @@ const DEFAULTS = {
 
   // P2: dynamic lines via ctx.llm (persona + reversal + IP words + keeper relation)
   llm: {
+    lines: {
+      enabled: true,
+      perKindPerHour: 6,
+      reportPerHour: 3,
+      spikePerHour: 2,
+      dedupeWindow: 20,
+      similarityMax: 0.8,
+      retryOnDup: true
+    },
     enabled: true,
     provider: 'deepseek-official',
     model: 'deepseek-flash',
@@ -193,7 +202,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v42'
+export const name = 'dsh-pet-bridge-v43'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -212,7 +221,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v42] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v43] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -265,6 +274,10 @@ export function apply(ctx, rawConfig) {
 [禁忌] 不说教、不油腻、不灌鸡汤、不过度卖萌、不装懂、不卖惨、不复述他的隐私；不用 emoji/网络热词；不出现"作为AI/建议您"；不编造他做过的事；深夜不说教不劝睡（最多一句轻的）。`
 
   const KIND_DESC = {
+    waitingInput: '用户需要做选择，你在旁边等他选，不催',
+    error: '这轮出错了，安慰他但不说教、不玩梗',
+    spike: '发现他这轮用量突然涨了很多，被发现的俏皮心虚',
+    reunion: '很久没见他了，重逢的开心但不索取',
     turnStart: '他刚开始一轮工作，你想说一句让他在、又不打扰的话',
     turnEnd: '这一轮结束了，你想说一句收工/陪伴的话',
     turnEndBad: '这一轮没跑完/出错了，你想说一句只陪伴、不玩梗的话',
@@ -298,6 +311,24 @@ export function apply(ctx, rawConfig) {
   const isDuplicate = (text) => {
     const now = Date.now()
     return hist.some((x) => x.text === text && now - x.at < 7 * 86400e3)
+    try {
+      const big = (t) => {
+        const c = String(t).replace(/\s/g, '')
+        const set = new Set()
+        for (let i = 0; i < c.length - 1; i++) set.add(c.slice(i, i + 2))
+        return set
+      }
+      const a = big(text)
+      const sim = (braw) => {
+        const b = big(braw)
+        if (!a.size || !b.size) return 0
+        let inter = 0
+        for (const x of a) if (b.has(x)) inter += 1
+        return inter / (a.size + b.size - inter)
+      }
+      const win = hist.slice(-(cfg.llm.lines?.dedupeWindow || 20))
+      if (win.some((x) => sim(x.text) > (cfg.llm.lines?.similarityMax || 0.8))) return true
+    } catch {}
   }
   const rememberLine = (text, source) => {
     hist.push({ text, at: Date.now() })
@@ -451,6 +482,8 @@ export function apply(ctx, rawConfig) {
     return r
   }
 
+  let kindHourKey = ''
+  const kindCalls = new Map()
   const generate = async (kind, s, extra = {}) => {
     const fallback = () => {
       const poolName =
@@ -458,11 +491,11 @@ export function apply(ctx, rawConfig) {
           ? 'kaigong'
           : kind === 'turnEnd'
             ? 'shougong'
-            : kind === 'turnEndBad'
+            : kind === 'turnEndBad' || kind === 'error' || kind === 'spike'
               ? 'anwei'
-              : kind === 'approval'
+              : kind === 'approval' || kind === 'waitingInput'
                 ? 'dengdai'
-                : kind === 'morning'
+                : kind === 'morning' || kind === 'reunion'
                   ? 'kaigong'
                   : kind === 'sleep'
                     ? 'shenye'
@@ -471,15 +504,35 @@ export function apply(ctx, rawConfig) {
                       : 'shougong'
       return { text: pick(poolName), source: 'pool', latencyMs: 0, tokens: 0 }
     }
-    if (!llmBudgetOk()) {
+    if (!llmBudgetOk() || cfg.llm.lines?.enabled === false) {
       log('debug', 'llm fallback: budget/disabled', { kind })
       return fallback()
     }
+    const hk = new Date().toDateString() + new Date().getHours()
+    if (hk !== kindHourKey) {
+      kindHourKey = hk
+      kindCalls.clear()
+    }
+    const cap =
+      kind === 'report'
+        ? cfg.llm.lines?.reportPerHour || 3
+        : kind === 'spike'
+          ? cfg.llm.lines?.spikePerHour || 2
+          : cfg.llm.lines?.perKindPerHour || 6
+    if ((kindCalls.get(kind) || 0) >= cap) {
+      log('debug', 'llm fallback: kind cap', { kind })
+      return fallback()
+    }
+    kindCalls.set(kind, (kindCalls.get(kind) || 0) + 1)
     const { text: raw, latencyMs, tokens } = await callLlm(buildPrompt(kind, s, extra), kind)
     const line = validateLine(raw, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
     if (!line && raw && kind === 'report')
       log('info', 'report too long/invalid -> fallback', { rawChars: String(raw).length, limit: cfg.llm.maxChars })
     if (!line || isDuplicate(line)) {
+      if (line && cfg.llm.lines?.retryOnDup && !extra.__dupRetry) {
+        log('info', 'llm duplicate retry', { kind })
+        return generate(kind, s, { ...extra, __dupRetry: true })
+      }
       if (line) log('info', 'llm rejected: duplicate', { kind, line })
       else if (raw) log('info', 'llm rejected: constraint', { kind, raw: clip(raw, 40) })
       return fallback()
@@ -1099,14 +1152,11 @@ export function apply(ctx, rawConfig) {
       usageSpikeCount += 1
       lastSpikeAt = Date.now()
       send('cmd:fx:sweat')
-      setTimeout(
-        () =>
-          speak('turnEndBad', SPIKE_LINES[Math.floor(Math.random() * SPIKE_LINES.length)], {
-            force: true,
-            source: 'pool'
-          }),
-        350
-      )
+      setTimeout(() => {
+        void generate('spike', { tools: 0, tokens: turnTokens }).then((g) =>
+          speak('turnEndBad', g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
+        )
+      }, 350)
       pushEvent('usage', 'S2', '用量突增', true)
       log('info', 'usage spike', { turnTokens, base: Math.round(base), count: usageSpikeCount })
     } catch {}
@@ -1136,7 +1186,17 @@ export function apply(ctx, rawConfig) {
       setTimeout(() => {
         try {
           send('walk:nearby')
-          speak('morning', text + (where ? '，' + where : ''), { force: true, source: 'pool', style: 'greet' })
+          void generate('reunion', { tools: 0 })
+            .then((g) =>
+              speak('morning', g.text + (where ? '，' + where : ''), {
+                force: true,
+                source: g.source,
+                style: 'greet',
+                latencyMs: g.latencyMs,
+                tokens: g.tokens
+              })
+            )
+            .catch(() => speak('morning', text, { force: true, source: 'pool', style: 'greet' }))
         } catch {}
       }, 2500)
       pushEvent('reunion', 'S1', gap >= 7 * 86400000 ? '久别 7 天+' : '久别 2 天+', true)
@@ -1184,8 +1244,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.42.0',
-        petVersion: 'v1.1.5+patch-v42',
+        version: '0.43.0',
+        petVersion: 'v1.1.5+patch-v43',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -2004,7 +2064,15 @@ export function apply(ctx, rawConfig) {
         send('walk:center')
         setTimeout(() => send('freeze:3000'), 700)
       }
-      speak('approval', pick('dengdai'), { urgent: true, source: 'pool', style: 'remind' })
+      void generate('waitingInput', s).then((g) =>
+        speak('approval', g.text, {
+          urgent: true,
+          source: g.source,
+          style: 'remind',
+          latencyMs: g.latencyMs,
+          tokens: g.tokens
+        })
+      )
       writeReceipt()
       return
     }
@@ -2036,7 +2104,15 @@ export function apply(ctx, rawConfig) {
           send('walk:center')
           setTimeout(() => send('freeze:3000'), 700) // 走到中央后站定
         }
-        speak('approval', pick('dengdai'), { urgent: true, source: 'pool', style: 'remind' })
+        void generate('approval', s).then((g) =>
+          speak('approval', g.text, {
+            urgent: true,
+            source: g.source,
+            style: 'remind',
+            latencyMs: g.latencyMs,
+            tokens: g.tokens
+          })
+        )
         writeReceipt()
       }
       setTimeout(go, cfg.walkOnApproval ? 120 : 0)
@@ -2202,7 +2278,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v42', {
+  log('info', 'loaded v43', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
