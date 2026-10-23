@@ -8,6 +8,7 @@
         logFile: '{{PET_WORK}}\evidence\pet-bridge-main.log'
         logMaxBytes: 5242880
         stateFile: '{{PET_WORK}}\state.json'
+        stateV2File: '{{PET_WORK}}\bridge-state-v2.json'
         uiConfigFile: '{{PET_WORK}}\ui-config.json'
         balancePush: { enabled: true, everyNTurns: 5, startup: true }
         uiActionFile: '{{PET_WORK}}\ui-action.json'
@@ -60,6 +61,7 @@
         logFile: '{{PET_WORK}}\evidence\pet-bridge-main.log'
         activityFile: '{{PET_WORK}}\activity.txt'
         stateFile: '{{PET_WORK}}\state.json'
+        stateV2File: '{{PET_WORK}}\bridge-state-v2.json'
         uiConfigFile: '{{PET_WORK}}\ui-config.json'
         evidenceDir: '{{PET_WORK}}\evidence'
         heartbeatFile: '{{PET_WORK}}\evidence\ui-route-mounted.json'
