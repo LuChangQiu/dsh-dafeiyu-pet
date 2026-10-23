@@ -193,7 +193,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v40'
+export const name = 'dsh-pet-bridge-v42'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -212,7 +212,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v40] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v42] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -928,6 +928,8 @@ export function apply(ctx, rawConfig) {
   }
 
   // ---------- Phase-1：今日统计 / 事件环形缓冲 / companion 情绪模型 / 互动 ----------
+  let lastLlmCalls = 0
+  let lastLlmCost = 0
   const today = {
     date: new Date().toISOString().slice(0, 10),
     turns: 0,
@@ -956,6 +958,12 @@ export function apply(ctx, rawConfig) {
   try {
     if (cfg.companionFile && fs.existsSync(cfg.companionFile))
       Object.assign(companion, JSON.parse(fs.readFileSync(cfg.companionFile, 'utf8')))
+  } catch {}
+  try {
+    if (cfg.stateFileV2 && fs.existsSync(cfg.stateFileV2)) {
+      const prev = JSON.parse(fs.readFileSync(cfg.stateFileV2, 'utf8'))
+      if (prev && prev.today && prev.today.date === today.date) Object.assign(today, prev.today)
+    }
   } catch {}
   const updateLastContext = (ok) => {
     companion.lastContext = {
@@ -991,15 +999,16 @@ export function apply(ctx, rawConfig) {
       }
     }, cfg.stateClass?.debounceMs || 300)
   }
+  const levelOf = (a) => (a >= 60 ? '黏人' : a >= 30 ? '亲近' : a >= 10 ? '熟悉' : '陌生')
   const stateWords = () => {
     const moodW = companion.mood >= 40 ? '开心' : companion.mood <= -20 ? '有点低落' : '平静'
     const energyW = companion.energy < 30 ? '困了' : companion.energy > 70 ? '有精神' : '有点累'
-    const affW =
-      companion.affinity >= 60 ? '黏人' : companion.affinity >= 30 ? '亲近' : companion.affinity >= 10 ? '熟悉' : '陌生'
+    const affW = levelOf(companion.affinity)
     return { mood: moodW, energy: energyW, affinity: affW }
   }
   const saveCompanion = () => {
     try {
+      companion.level = levelOf ? levelOf(companion.affinity) : companion.level
       companion.updatedAt = new Date().toISOString()
       if (cfg.companionFile) {
         const t = cfg.companionFile + '.tmp'
@@ -1175,8 +1184,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.40.0',
-        petVersion: 'v1.1.5+patch-v40',
+        version: '0.42.0',
+        petVersion: 'v1.1.5+patch-v42',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -1199,7 +1208,7 @@ export function apply(ctx, rawConfig) {
         },
         currentSessionId: currentSessionId ? String(currentSessionId).slice(0, 16) : null,
         today,
-        companion: { ...companion, words: stateWords() },
+        companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
         userActiveCount: sessionsPayload().filter((x) => x.role === 'user').length,
         backgroundCount: sessionsPayload().filter((x) => x.role !== 'user').length,
@@ -1699,6 +1708,7 @@ export function apply(ctx, rawConfig) {
     const recEarly = touchSession(session)
     if (!passesFilter(session)) {
       recEarly.state = recEarly.role === 'user' ? recEarly.state : 'background'
+      if (t === 'turn/start' && recEarly.role !== 'user') today.agentCalls += 1
       return
     }
     lastEventAt = Date.now()
@@ -1855,6 +1865,7 @@ export function apply(ctx, rawConfig) {
       return
     }
     if (t === 'turn/start') {
+      today.turns += 1
       setStatus('thinking', { turn: stats.turns + 1, tool: null, step: 0 })
       {
         const r = sessionRegistry.get(String(session.id))
@@ -1917,7 +1928,6 @@ export function apply(ctx, rawConfig) {
         setStatus('error', { message: reasonKind })
         pushEvent('error', 'S1', reasonKind, true)
       }
-      today.turns += 1
       today.longestTurnMs = Math.max(today.longestTurnMs, dur)
       if (cfg.actions?.enabled) {
         if (ok) act('stretch')
@@ -2192,7 +2202,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v40', {
+  log('info', 'loaded v42', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',
