@@ -30,6 +30,13 @@ if (process.argv[3]) {
   payload.state.runtime = runtime
   console.log('fixture runtime injected:', JSON.stringify(runtime))
 }
+// 可选：注入合成多会话视图（真实环境由联动插件 task-46 写 sessions[]）
+// 用法：node test/make-fixture.mjs <out> '' '{"supported":true,"othersCount":2,...}'
+if (process.argv[4]) {
+  const sessionList = JSON.parse(process.argv[4])
+  payload.state.sessionList = sessionList
+  console.log('fixture sessionList injected:', JSON.stringify(sessionList).slice(0, 200))
+}
 fs.mkdirSync(path.dirname(outFile), { recursive: true })
 fs.writeFileSync(outFile, 'window.__FIXTURE__ = ' + JSON.stringify(payload, null, 2) + ';\n', 'utf8')
 console.log('fixture written:', outFile)

@@ -386,7 +386,9 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
       state,
       tool: runtime?.tool ?? null,
       role: 'main',
+      step: runtime?.step ?? null,
       lastUserMessageAt: null,
+      lastUserMessageAgeMs: null,
       lastSeenAt: runtime?.heartbeatAt ?? stateFile?.updatedAt ?? null,
       lastSeenAgeMs: runtime?.heartbeatAgeMs ?? null,
       isCurrent: true,
@@ -398,6 +400,8 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
       supported: false,
       currentSessionId: single.sessionId,
       activeSessionCount: activeSessionCount ?? 1,
+      userActiveCount: 1,
+      backgroundCount: 0,
       total: 1,
       othersCount: 0,
       groups: [
@@ -423,6 +427,8 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
       const role = String(item.role ?? 'main').toLowerCase()
       const lastSeenAt = firstString(item.lastSeenAt, item.lastEventAt, item.updatedAt)
       const lastSeenMs = timeMs(lastSeenAt)
+      const lastUserMessageAt = firstString(item.lastUserMessageAt, item.lastUserMessage)
+      const lastUserMessageMs = timeMs(lastUserMessageAt)
       return {
         sessionId: sid,
         workspace,
@@ -430,10 +436,12 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
         state: RUNTIME_STATE_META[state] ? state : 'idle',
         tool: firstString(item.tool, item.toolName),
         role,
-        lastUserMessageAt: firstString(item.lastUserMessageAt, item.lastUserMessage),
+        step: Number.isFinite(item.step) ? item.step : null,
+        lastUserMessageAt,
+        lastUserMessageAgeMs: lastUserMessageMs === null ? null : Math.max(0, now - lastUserMessageMs),
         lastSeenAt,
         lastSeenAgeMs: lastSeenMs === null ? null : Math.max(0, now - lastSeenMs),
-        isCurrent: Boolean(sid && currentSessionId && sid === currentSessionId),
+        isCurrent: Boolean(item.current) || Boolean(sid && currentSessionId && sid === currentSessionId),
         isBackground: SESSION_BACKGROUND_ROLES.has(role) || state === 'background',
         label: meta.label,
         tone: meta.tone
@@ -466,13 +474,23 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
     return aMax - bMax
   })
 
+  const userRaw = Number.isFinite(stateFile?.userActiveCount) ? Math.max(0, stateFile.userActiveCount) : null
+  const backgroundRaw = Number.isFinite(stateFile?.backgroundCount) ? Math.max(0, stateFile.backgroundCount) : null
+  const userSessions = sessions.filter((s) => !s.isBackground)
+  const backgroundSessions = sessions.filter((s) => s.isBackground)
+  const userActiveCount = userRaw ?? userSessions.length
+  const backgroundCount = backgroundRaw ?? backgroundSessions.length
+  const currentIsUser = sessions.some((s) => s.isCurrent && !s.isBackground)
   const total = sessions.length
   return {
     supported: true,
     currentSessionId,
     activeSessionCount: activeSessionCount ?? total,
+    userActiveCount,
+    backgroundCount,
     total,
-    othersCount: Math.max(0, (activeSessionCount ?? total) - (currentSessionId ? 1 : 0)),
+    // 「另有 N 个对话在跑」只算真人会话（不含团队/子代理后台）
+    othersCount: Math.max(0, userActiveCount - (currentIsUser ? 1 : 0)),
     groups
   }
 }

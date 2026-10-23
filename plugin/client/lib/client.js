@@ -1078,9 +1078,12 @@ window.__ModuleLoader__.load({
                 'span',
                 { style: S.hint },
                 sl.othersCount > 0
-                  ? '另有 ' + sl.othersCount + ' 个对话在跑'
+                  ? '另有 ' +
+                      sl.othersCount +
+                      ' 个对话在跑' +
+                      (sl.backgroundCount > 0 ? ' · 后台 ' + sl.backgroundCount : '')
                   : sl.supported
-                    ? '仅当前会话'
+                    ? '仅当前会话' + (sl.backgroundCount > 0 ? ' · 后台 ' + sl.backgroundCount : '')
                     : '单会话兼容模式'
               )
             },
@@ -1121,10 +1124,16 @@ window.__ModuleLoader__.load({
                     h('span', { style: S.sessionTitle }, sess.title || '(未命名会话)'),
                     h('span', { style: S.sessionMeta }, sess.label || sess.state),
                     sess.tool ? h('span', { style: S.sessionMeta }, '工具 ' + sess.tool) : null,
+                    sess.step != null ? h('span', { style: S.sessionMeta }, 'step ' + sess.step) : null,
                     h(
                       'span',
                       { style: S.sessionMeta },
-                      sess.lastSeenAgeMs == null ? '无活动时间' : '最后活动 ' + fmtAge(sess.lastSeenAgeMs)
+                      '用户消息 ' + (sess.lastUserMessageAgeMs == null ? '—' : fmtAge(sess.lastUserMessageAgeMs))
+                    ),
+                    h(
+                      'span',
+                      { style: S.sessionMeta },
+                      sess.lastSeenAgeMs == null ? '最后活动 —' : '最后活动 ' + fmtAge(sess.lastSeenAgeMs)
                     ),
                     sess.sessionId ? h('span', { style: S.sessionId }, String(sess.sessionId).slice(0, 18)) : null
                   )

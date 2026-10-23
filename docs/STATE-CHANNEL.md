@@ -55,3 +55,9 @@ state:{"state":"thinking","tool":null,"since":"ISO","step":2,"turn":5,"heartbeat
 - `state.json` 新增：`currentSessionId`、`activeSessionCount`（其它在跑会话数）、`sessions[]`（最近 20 个，按最近活动排序，`current` 标记）。
 - 桌宠只跟当前会话冒泡/动作；其它会话（含同工作区并行）标 `background` 安静；团队/子代理始终 background。
 - TTL 30min 无真人消息移出列表；面板按 `workspace` 分组、当前标「跟随中」、顶部显示「另有 N 个对话在跑」。
+
+## 7. 权威状态文件切换（v33，C' 方案，不重启 host）
+- **原因**：v26~v31 的状态心跳 interval 未纳入 dispose，reload 会遗留旧 5s 写者继续覆盖 `state.json`（v32 已修 dispose，但旧写者只能靠 host 重启清除）。
+- **v33 起**：权威状态写 **`bridge-state-v2.json`**（`config.stateFileV2`），**停止写 `state.json`**；旧写者继续写旧文件但被忽略。
+- 读取方：面板/verifier **优先读 `bridge-state-v2.json`**，`state.json` 仅兜底；字段与旧版兼容（version/pet/status/sessions/...）。
+- **host 下次自然重启后**（旧写者消失）：把 `stateFileV2` 指回 `state.json` 或把 v2 内容合并回 state.json，并删除/归档 `bridge-state-v2.json`；本文件（STATE-CHANNEL）保留迁移步骤。

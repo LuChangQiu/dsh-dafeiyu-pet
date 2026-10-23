@@ -87,6 +87,7 @@ const DEFAULTS = {
   lifecycle: { autoStart: true, startScript: '', bootstrapScript: '', releaseZipUrl: '', bootstrapStateFile: '' },
   uiActionFile: '',
   petConfigFile: '',
+  stateFileV2: '',
   balancePush: { enabled: true, everyNTurns: 5, startup: true },
   petSettings: { size: 0.72, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
@@ -183,7 +184,7 @@ function clip(s, n) {
     .slice(0, n)
 }
 
-export const name = 'dsh-pet-bridge-v32'
+export const name = 'dsh-pet-bridge-v33'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
@@ -202,7 +203,7 @@ export function apply(ctx, rawConfig) {
         } catch {}
         fs.appendFileSync(cfg.logFile, line + '\n')
       }
-      if (level !== 'debug') console.log('[pet-bridge-v32] ' + line)
+      if (level !== 'debug') console.log('[pet-bridge-v33] ' + line)
     } catch {}
   }
   const safe = (v) => {
@@ -867,7 +868,8 @@ export function apply(ctx, rawConfig) {
   }
 
   const writeState = () => {
-    if (!cfg.stateFile) return
+    const target = cfg.stateFileV2 || ''
+    if (!target) return
     try {
       const state = {
         updatedAt: new Date().toISOString(),
@@ -885,8 +887,8 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.32.0',
-        petVersion: 'v1.1.5+patch-v32',
+        version: '0.33.0',
+        petVersion: 'v1.1.5+patch-v33',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -934,7 +936,7 @@ export function apply(ctx, rawConfig) {
         })(),
         logsRecent: []
       }
-      fs.writeFileSync(cfg.stateFile, JSON.stringify(state), 'utf8')
+      fs.writeFileSync(target, JSON.stringify(state), 'utf8')
     } catch {}
   }
   let lastUiRaw = ''
@@ -1801,7 +1803,7 @@ export function apply(ctx, rawConfig) {
     else ctx.on('dispose', dispose)
   } catch {}
 
-  log('info', 'loaded v32', {
+  log('info', 'loaded v33', {
     dryRun: cfg.dryRun,
     pools: cfg.poolsDir ? 'on' : 'embedded',
     receipt: cfg.receiptFile ? 'on' : 'off',

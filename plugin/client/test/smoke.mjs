@@ -908,6 +908,97 @@ test('无 sessions 字段 → 单会话兼容模式', () => {
   assert.equal(r.groups[0].sessions[0].label, '空闲')
 })
 
+test('计数：userActiveCount 只算真人、backgroundCount 单列（不含子代理）', () => {
+  const r = normalizeSessions(
+    {
+      currentSessionId: 'u1',
+      activeSessionCount: 4,
+      userActiveCount: 2,
+      backgroundCount: 2,
+      sessions: [
+        { sessionId: 'u1', workspace: 'w', title: 'im#u1', role: 'user', state: 'thinking', lastSeenAt: sessAgo(1000) },
+        { sessionId: 'u2', workspace: 'w2', title: 'im#u2', role: 'user', state: 'tool', lastSeenAt: sessAgo(2000) },
+        {
+          sessionId: 't1',
+          workspace: 'w',
+          title: 'im#t1',
+          role: 'subagent',
+          state: 'background',
+          lastSeenAt: sessAgo(3000)
+        },
+        {
+          sessionId: 't2',
+          workspace: 'w3',
+          title: 'im#t2',
+          role: 'teammate',
+          state: 'background',
+          lastSeenAt: sessAgo(4000)
+        }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  assert.equal(r.userActiveCount, 2)
+  assert.equal(r.backgroundCount, 2)
+  // 另有 1 个真人对话（u2），子代理不算「对话」
+  assert.equal(r.othersCount, 1)
+  assert.equal(r.total, 4)
+  assert.equal(r.groups.length, 3)
+})
+
+test('分项计数缺省时从 sessions 推导；current 字段兼容', () => {
+  const r = normalizeSessions(
+    {
+      sessions: [
+        { sessionId: 'a', workspace: 'w', role: 'user', state: 'thinking', lastSeenAt: sessAgo(1000), current: true },
+        { sessionId: 'b', workspace: 'w2', role: 'user', state: 'idle', lastSeenAt: sessAgo(2000) },
+        { sessionId: 'c', workspace: 'w2', role: 'subagent', state: 'background', lastSeenAt: sessAgo(3000) }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  assert.equal(r.supported, true)
+  assert.equal(r.userActiveCount, 2)
+  assert.equal(r.backgroundCount, 1)
+  assert.equal(r.othersCount, 1)
+  assert.equal(r.groups.length, 2)
+  assert.equal(r.groups[0].sessions[0].sessionId, 'a')
+})
+
+test('lastUserMessageAt 解析为年龄；无值时 null（UI 显示 —）', () => {
+  const r = normalizeSessions(
+    {
+      currentSessionId: 's1',
+      sessions: [
+        {
+          sessionId: 's1',
+          workspace: 'w',
+          role: 'user',
+          state: 'idle',
+          lastUserMessageAt: sessAgo(120000),
+          lastSeenAt: sessAgo(1000)
+        },
+        {
+          sessionId: 's2',
+          workspace: 'w2',
+          role: 'user',
+          state: 'idle',
+          lastUserMessageAt: null,
+          lastSeenAt: sessAgo(2000)
+        }
+      ]
+    },
+    null,
+    { now: SESS_NOW }
+  )
+  const s1 = r.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === 's1')
+  const s2 = r.groups.flatMap((g) => g.sessions).find((s) => s.sessionId === 's2')
+  assert.equal(s1.lastUserMessageAgeMs, 120000)
+  assert.equal(s2.lastUserMessageAgeMs, null)
+})
+
 test('多工作区：当前会话所在组排最前，组内按最近活动排序', () => {
   const r = normalizeSessions(
     {
