@@ -36,11 +36,13 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 ## 版本配对（插件 ↔ 桌宠）
 | 组件 | 位置 | 版本标识 |
 |---|---|---|
-| 插件 server | `plugin/server` | `version`（当前 0.19.0） |
+| 插件 server | `plugin/server` | `package.json` 的 `version`（以文件为准） |
 | 管理面板 client | `plugin/client` | 与 server 同步 |
-| 桌宠源码 | `pet/` | `petVersion`（`v1.1.5+patch-v19`，插件上报） |
+| 桌宠源码 | `pet/` | `petVersion`（`v1.1.5+patch-v<server版本号>`，插件运行时上报） |
 
-插件 `state.json` 同时上报 `version` 与 `petVersion`；两处版本在**同一个 commit** 更新，避免漂移。
+插件 `bridge-state-v2.json` 同时上报 `version` 与 `petVersion`；两处版本在**同一个 commit** 更新，避免漂移。
+
+> 给 AI Agent / DSH 的安装说明见 [`AGENTS.md`](AGENTS.md)。
 
 ## 发行包（免 Python，可选）
 - 打包：`scripts\pet-build-release.ps1 -Version 1.1.5-dsh.1` → `dafeiyu-pet-win64-<ver>.zip` + `.sha256`。
