@@ -41,10 +41,17 @@ state:{"state":"thinking","tool":null,"since":"ISO","step":2,"turn":5,"heartbeat
 兼容：状态值等价别名（面板可映射）：`approval→waiting_approval`、`toolcall→tool`、`running→background`、`failed→error`、`completed→done`、`offline→disconnected`。
 
 ## 4. 可靠性
-- 心跳：插件内部 5s 刷新一次 `heartbeatAt` 并推 `state:`（桌宠离线时跳过）；`state.json` 为**变化即写 + 定时落盘（约 17~24s 周期）**，面板用 `heartbeatAt` 判失联时按 **30s 阈值**（即使落盘有周期也安全）。
+- 心跳：插件每 5s 刷新 `heartbeatAt`、推 `state:`，并**同步写 `state.json`**（5s 落盘）；面板判失联阈值 30s（>6 个心跳周期）。
 - 断线：`petOnline=false` → `disconnected`；恢复后回 `idle`。
 - 重启恢复：插件重新加载时从 `attribution.json` 恢复活跃会话，状态初始 `idle`，随下一事件更新；桌宠重启后自动重新建立 pipe 并继续收 `state:`（`bootstrap/start-pet` 由 DSH 启动或自举脚本负责）。
 
 ## 5. 面板映射（plugin-ui 已实现）
 面板按 `state.json.status` 显示实时状态、工具名、耗时（`now - since`）、心跳/失联；无该字段时显示「状态通道未就绪」并按 `updatedAt` 兜底。
 
+
+## 6. 多工作区 / 多对话（task-46，v30）
+- 会话注册表：每个 session 记录 `{sessionId, workspace(cwd), title(工作区名#短id), role(user|teammate|subagent), lastUserMessageAt, state, tool, step, lastSeenAt}`。
+- **当前跟随**：最近一条**真人消息**的会话；只有用户在新会话发消息才切换（≥2.5s 防抖）；后台事件不切换；**切换静默**（不冒泡）。
+- `state.json` 新增：`currentSessionId`、`activeSessionCount`（其它在跑会话数）、`sessions[]`（最近 20 个，按最近活动排序，`current` 标记）。
+- 桌宠只跟当前会话冒泡/动作；其它会话（含同工作区并行）标 `background` 安静；团队/子代理始终 background。
+- TTL 30min 无真人消息移出列表；面板按 `workspace` 分组、当前标「跟随中」、顶部显示「另有 N 个对话在跑」。
