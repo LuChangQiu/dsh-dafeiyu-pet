@@ -15,8 +15,8 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\rollback.ps1 -RestoreBackup
 #>
 param(
-  [string]$ProfileDir = 'C:\Users\xiqi\.dsh\profiles\web',
-  [string]$PetWorkDir = 'E:\project\AI提效\tool\pet-integration-src\pet-work',
+  [string]$ProfileDir = '%USERPROFILE%\.dsh\profiles\web',
+  [string]$PetWorkDir = '%PET_WORK%',
   [int]$HostPid = 39484,
   [switch]$RestoreBackup,
   [switch]$KeepUiConfig,
@@ -115,3 +115,4 @@ if (-not $DryRun) {
   Write-Ok '回滚完成；浏览器刷新后设置页不再出现「大肥鱼联动」'
   Write-Host '  如需整文件恢复：-RestoreBackup；如需重新安装：scripts\install.ps1' -ForegroundColor Gray
 }
+

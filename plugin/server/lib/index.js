@@ -1091,7 +1091,7 @@ export function apply(ctx, rawConfig) {
         if (raw === lastRaw) return
         lastRaw = raw
         const spec = JSON.parse(raw)
-        log('info', 'TEST HOOK event', spec)
+        log('info', 'TESTHOOK event', spec)
         if (spec.type === 'approval') {
           stats.approvals += 1
           if (cfg.walkOnApproval) send('walk:center')
@@ -1113,7 +1113,7 @@ export function apply(ctx, rawConfig) {
         }
       } catch {}
     }, 1500)
-    log('warn', 'TEST HOOK enabled (test-only)', { file: cfg.testHookFile })
+    log('warn', 'TESTHOOK enabled (test-only)', { file: cfg.testHookFile })
   }
 
   const dispose = () => { try { clearInterval(timer) } catch {}; try { clearInterval(bubbleTimer) } catch {}; try { if (hookTimer) clearInterval(hookTimer) } catch {}; sessions.clear() }
@@ -1144,3 +1144,4 @@ export function apply(ctx, rawConfig) {
     logLevel: cfg.logLevel,
   })
 }
+

@@ -17,8 +17,8 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
 #>
 param(
-  [string]$ProfileDir = 'C:\Users\xiqi\.dsh\profiles\web',
-  [string]$PetWorkDir = 'E:\project\AI提效\tool\pet-integration-src\pet-work',
+  [string]$ProfileDir = '%USERPROFILE%\.dsh\profiles\web',
+  [string]$PetWorkDir = '%PET_WORK%',
   [int]$HostPid = 39484,
   [switch]$DryRun,
   [switch]$SkipVerify,
@@ -122,12 +122,12 @@ $marker —— 由独立插件 dsh-pet-bridge-ui 提供（host 路由 /pet-bridg
       name: 'dsh-pet-bridge-ui'
       config:
         channel: '/pet-bridge-ui'
-        logFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'
-        activityFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\activity.txt'
-        stateFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\state.json'
-        uiConfigFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\ui-config.json'
-        evidenceDir: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence'
-        heartbeatFile: 'E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\ui-route-mounted.json'
+        logFile: '%PET_WORK%\evidence\pet-bridge-main.log'
+        activityFile: '%PET_WORK%\activity.txt'
+        stateFile: '%PET_WORK%\state.json'
+        uiConfigFile: '%PET_WORK%\ui-config.json'
+        evidenceDir: '%PET_WORK%\evidence'
+        heartbeatFile: '%PET_WORK%\evidence\ui-route-mounted.json'
         defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
@@ -207,3 +207,4 @@ Write-Host @"
   2) 回滚：scripts\rollback.ps1（加 -DryRun 可预览）
   3) 状态/配置契约见 README.md
 "@ -ForegroundColor Gray
+
