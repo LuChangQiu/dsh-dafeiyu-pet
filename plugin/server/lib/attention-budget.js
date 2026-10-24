@@ -3,6 +3,7 @@
 // 说明：本模块只返回「是否允许/原因/频率系数/日志计数」，不直接说话、不碰 pipe、不读 DSH 内容。
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 export const ATTENTION_DEFAULTS = Object.freeze({
   proactivePerDay: 3,
@@ -17,6 +18,18 @@ export const ATTENTION_DEFAULTS = Object.freeze({
   })
 })
 
+// 隐私：topic 只要 hash 前 16 hex（sha256(salt + ':' + topic)）；salt 为安装级随机值，仅存本地状态文件、不进日志。
+// 不接受也不存储用户原文；`topicAvoid` 只存 hash 列表。
+const TOPIC_KEY_RE = /^[a-f0-9]{16}$/
+const SALT_RE = /^[a-f0-9]{32,64}$/
+export const hashTopicKey = (topic, salt) => {
+  if (!salt || topic === null || topic === undefined || topic === '') return null
+  return crypto
+    .createHash('sha256')
+    .update(String(salt) + ':' + String(topic))
+    .digest('hex')
+    .slice(0, 16)
+}
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x))
 const num = (x, d = 0) => (Number.isFinite(Number(x)) ? Number(x) : d)
 
@@ -39,22 +52,23 @@ export const isNightMinutes = (minutes, config = {}) => {
   return minutes >= start || minutes < end
 }
 
-const emptyState = (dayKey, config = {}) => ({
+const emptyState = (dayKey, config = {}, salt = null) => ({
   version: 1,
+  topicSalt: salt,
   dayKey,
   proactiveUsed: 0,
   proactiveMax: clamp(num(config.proactivePerDay, ATTENTION_DEFAULTS.proactivePerDay), 0, 4),
   hardCap: ATTENTION_DEFAULTS.proactiveHardCap,
   lastProactiveAt: null,
-  rejection: { lastAt: null, count: 0, kind: null, pauseUntilMs: null, topic: null },
+  rejection: { lastAt: null, count: 0, kind: null, pauseUntilMs: null, topicKey: null },
   topicAvoid: {},
   updatedAt: null
 })
 
 // 状态反序列化（容错；非法/缺失 → 当天空状态；不崩溃）
-export const deserializeBudgetState = (json, { nowMs = Date.now(), config = {} } = {}) => {
+export const deserializeBudgetState = (json, { nowMs = Date.now(), config = {}, salt = null } = {}) => {
   const dayKey = localDayKey(nowMs)
-  const base = emptyState(dayKey, config)
+  const base = emptyState(dayKey, config, salt)
   if (!json) return base
   let raw = json
   if (typeof json === 'string') {
@@ -67,8 +81,10 @@ export const deserializeBudgetState = (json, { nowMs = Date.now(), config = {} }
   if (!raw || typeof raw !== 'object') return base
   const rej = raw.rejection && typeof raw.rejection === 'object' ? raw.rejection : {}
   const topics = raw.topicAvoid && typeof raw.topicAvoid === 'object' ? { ...raw.topicAvoid } : {}
+  const topicSalt = typeof raw.topicSalt === 'string' && SALT_RE.test(raw.topicSalt) ? raw.topicSalt : salt
   return {
     version: 1,
+    topicSalt,
     dayKey: typeof raw.dayKey === 'string' ? raw.dayKey : dayKey,
     proactiveUsed: Math.max(0, num(raw.proactiveUsed)),
     proactiveMax: clamp(num(raw.proactiveMax, base.proactiveMax), 0, ATTENTION_DEFAULTS.proactiveHardCap),
@@ -79,9 +95,9 @@ export const deserializeBudgetState = (json, { nowMs = Date.now(), config = {} }
       count: Math.max(0, num(rej.count)),
       kind: rej.kind === 'quiet' || rej.kind === 'ignored' ? rej.kind : null,
       pauseUntilMs: Number.isFinite(Number(rej.pauseUntilMs)) ? Number(rej.pauseUntilMs) : null,
-      topic: typeof rej.topic === 'string' ? rej.topic.slice(0, 40) : null
+      topicKey: typeof rej.topicKey === 'string' && TOPIC_KEY_RE.test(rej.topicKey) ? rej.topicKey : null
     },
-    topicAvoid: topics,
+    topicAvoid: Object.fromEntries(Object.entries(topics).filter(([k]) => TOPIC_KEY_RE.test(k))),
     updatedAt: raw.updatedAt || null
   }
 }
@@ -140,7 +156,9 @@ export const createAttentionBudget = (opts = {}) => {
       topicAvoidDays: Math.max(0, num(config.rejection?.topicAvoidDays, ATTENTION_DEFAULTS.rejection.topicAvoidDays))
     }
   }
-  let st = deserializeBudgetState(state, { nowMs: now(), config: cfg })
+  const salt = opts.salt || (state && state.topicSalt) || crypto.randomBytes(16).toString('hex')
+  let st = deserializeBudgetState(state, { nowMs: now(), config: cfg, salt })
+  st.topicSalt = salt
 
   const rollover = (nowMs) => {
     const key = dayKeyFn(nowMs)
@@ -179,8 +197,9 @@ export const createAttentionBudget = (opts = {}) => {
   }
 
   const topicAvoided = (topic, nowMs) => {
-    if (!topic) return false
-    const until = Number(st.topicAvoid[topic] || 0)
+    const topicKey = typeof topic === 'string' && TOPIC_KEY_RE.test(topic) ? topic : hashTopicKey(topic, salt)
+    if (!topicKey) return false
+    const until = Number(st.topicAvoid[topicKey] || 0)
     return until > nowMs
   }
 
@@ -191,6 +210,10 @@ export const createAttentionBudget = (opts = {}) => {
   const canSpeak = (ctx = {}) => {
     const nowMs = Number.isFinite(Number(ctx.nowMs)) ? Number(ctx.nowMs) : now()
     rollover(nowMs)
+    // 安全例外 S0（approval/等待输入）：绕过全部抑制门与拒绝暂停（不占主动预算）
+    if (ctx.isS0 === true) {
+      return { allowed: true, reason: 's0', reasons: [], suppressed: false, counted: false, ...view(nowMs) }
+    }
     const suppressed = suppression(ctx, nowMs)
     if (suppressed.suppressed) {
       return {
@@ -201,9 +224,7 @@ export const createAttentionBudget = (opts = {}) => {
         ...view(nowMs)
       }
     }
-    if (ctx.isReaction === true) {
-      return { allowed: true, reason: 'reaction', reasons: [], suppressed: false, counted: false, ...view(nowMs) }
-    }
+    // 显式 quiet/拒绝暂停是硬约束：事件反应也不越过（S0 已在上面例外）
     if (rejectionPauseActive(nowMs)) {
       return {
         allowed: false,
@@ -213,6 +234,9 @@ export const createAttentionBudget = (opts = {}) => {
         frequencyFactor: frequencyFactor(nowMs),
         ...view(nowMs)
       }
+    }
+    if (ctx.isReaction === true) {
+      return { allowed: true, reason: 'reaction', reasons: [], suppressed: false, counted: false, ...view(nowMs) }
     }
     if (topicAvoided(ctx.topic, nowMs)) {
       return { allowed: false, reason: 'topic-avoid', reasons: ['topic-avoid'], suppressed: false, ...view(nowMs) }
@@ -243,6 +267,7 @@ export const createAttentionBudget = (opts = {}) => {
 
   // 记录一次成功的主动开口（调用方在真正说完后调用；事件反应不要调用）
   const recordProactive = (ctx = {}) => {
+    if (ctx.isReaction === true) return { ok: false, reason: 'reaction-not-proactive', ...view(now()) }
     const nowMs = Number.isFinite(Number(ctx.nowMs)) ? Number(ctx.nowMs) : now()
     rollover(nowMs)
     const gate = canSpeak({ ...ctx, nowMs })
@@ -267,8 +292,9 @@ export const createAttentionBudget = (opts = {}) => {
     if (count >= cfg.rejection.ignoredThreshold) {
       pauseUntilMs = ts + cfg.rejection.pauseHours * 3600 * 1000
     }
-    st.rejection = { lastAt: atIso, count, kind, pauseUntilMs, topic: topic ? String(topic).slice(0, 40) : prev.topic }
-    if (topic) st.topicAvoid[String(topic).slice(0, 40)] = ts + cfg.rejection.topicAvoidDays * 86400 * 1000
+    const topicKey = hashTopicKey(topic, salt)
+    st.rejection = { lastAt: atIso, count, kind, pauseUntilMs, topicKey: topicKey || prev.topicKey }
+    if (topicKey) st.topicAvoid[topicKey] = ts + cfg.rejection.topicAvoidDays * 86400 * 1000
     st.updatedAt = atIso
     return { ok: true, ...view(ts) }
   }
@@ -278,14 +304,15 @@ export const createAttentionBudget = (opts = {}) => {
     const ts = Number.isFinite(Number(nowMs)) ? Number(nowMs) : now()
     rollover(ts)
     const atIso = new Date(ts).toISOString()
+    const topicKey = hashTopicKey(topic, salt)
     st.rejection = {
       lastAt: atIso,
       count: 0,
       kind: 'quiet',
       pauseUntilMs: ts + cfg.rejection.pauseHours * 3600 * 1000,
-      topic: topic ? String(topic).slice(0, 40) : st.rejection.topic
+      topicKey: topicKey || st.rejection.topicKey
     }
-    if (topic) st.topicAvoid[String(topic).slice(0, 40)] = ts + cfg.rejection.topicAvoidDays * 86400 * 1000
+    if (topicKey) st.topicAvoid[topicKey] = ts + cfg.rejection.topicAvoidDays * 86400 * 1000
     st.updatedAt = atIso
     return { ok: true, ...view(ts) }
   }
@@ -294,7 +321,7 @@ export const createAttentionBudget = (opts = {}) => {
   const recordUserInteraction = ({ nowMs = null } = {}) => {
     const ts = Number.isFinite(Number(nowMs)) ? Number(nowMs) : now()
     rollover(ts)
-    st.rejection = { lastAt: null, count: 0, kind: null, pauseUntilMs: null, topic: null }
+    st.rejection = { lastAt: null, count: 0, kind: null, pauseUntilMs: null, topicKey: null }
     st.topicAvoid = {}
     st.updatedAt = new Date(ts).toISOString()
     return { ok: true, cleared: true, ...view(ts) }
@@ -318,6 +345,7 @@ export const createAttentionBudget = (opts = {}) => {
 
   const getState = () => ({
     ...st,
+    topicSalt: salt,
     rejection: { ...st.rejection },
     topicAvoid: { ...st.topicAvoid },
     proactiveMax: cfg.proactivePerDay

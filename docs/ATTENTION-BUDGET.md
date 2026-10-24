@@ -43,33 +43,34 @@
 | 用户无视（60s 无回应）N 次 | `ignoredThreshold=2` → 暂停主动 **24h**，`kind='ignored'` | `rejection{lastAt,count,kind,pauseUntilMs,topic}` |
 | 用户显式「安静/静一静/下班」 | 立即暂停主动 **24h**，`kind='quiet'` | 同上 |
 | 暂停期内 | 不主动；频率 ×0.5；换更安静方式（接线层执行） | `frequencyFactor()` |
-| 同 topic | 拒绝后 **7 天**内不碰该 topic | `topicAvoid{topic: untilMs}` |
+| 同 topic | 拒绝后 **7 天**内不碰该 topic | `topicAvoid{topicKey: untilMs}`（topicKey=加盐 hash 前 16 hex） |
 | 用户主动互动一次 | **立即清零** streak/pause/topicAvoid | `recordUserInteraction()` |
 
-- 状态文件（接线层建议）：`pet-work/attention-budget.json`；**原子写**（tmp + rename），仅在状态变化时节流落盘，不在热路径写。
+- 状态文件（接线层建议）：`pet-work/attention-budget.json`（含 `topicSalt` + 计数 + `rejection.topicKey` + `topicAvoid` hash 表）；**原子写**（tmp + rename），仅在状态变化时节流落盘，不在热路径写；文件仅本地（LOCAL ONLY），不上传/不导出。
 - 反序列化容错：缺失/非法 JSON → 当天空状态，不崩溃；`proactiveMax` clamp 到 0..4。
-- 不记录拒绝原因文本；`topic` 只做 40 字符摘要标签，不写用户原文。
+- **topic 隐私（P2 修）**：只存 `topicKey = sha256(salt + ':' + topic)` 的**前 16 hex**；`salt` 为安装级随机值，随状态文件本地保存、**不进日志**；不存 topic/用户原文。无 salt 时不写 topic（避免未加盐字典攻击）。`topicAvoid` 只存 hash 列表。
 
 ## 4. 模块 API（`plugin/server/lib/attention-budget.js`）
 
 | API | 作用 |
 |---|---|
 | `createAttentionBudget({now, dayKeyFn, config, state})` | 创建实例；clock/dayKey 可注入（测试用） |
-| `canSpeak({nowMs,isReaction,topic,mode,dnd,fullscreen,typing})` | 判定是否允许；返回 `{allowed,reason,reasons,suppressed,frequencyFactor,used,max,remaining,...}`；reason：`ok/reaction/night/mode-quiet/dnd/fullscreen/typing/rejection-pause/topic-avoid/budget` |
-| `recordProactive({nowMs,...ctx})` | 发言成功后计数；被拦截则不计数 |
+| `canSpeak({nowMs,isReaction,isS0,topic,mode,dnd,fullscreen,typing})` | 判定是否允许；**S0（isS0:true）安全例外直通**；**显式 quiet/ignored 暂停优先于 isReaction**（反应也不越过）；返回 `{allowed,reason,reasons,suppressed,frequencyFactor,used,max,remaining,...}`；reason：`ok/reaction/night/mode-quiet/dnd/fullscreen/typing/rejection-pause/topic-avoid/budget` |
+| `recordProactive({nowMs,...ctx})` | 发言成功后计数；被拦截则不计数；**`isReaction:true` 直接拒绝（reason=`reaction-not-proactive`）** |
 | `recordReaction()` | 事件反应（不计数） |
 | `recordIgnored({topic,nowMs})` | 无视一次；达到阈值 → 24h 暂停 |
 | `recordQuiet({topic,nowMs})` | 显式静音 → 24h 暂停 |
 | `recordUserInteraction({nowMs})` | 清零拒绝/话题冷却 |
 | `suppression(ctx,nowMs)` / `frequencyFactor(nowMs)` / `topicAvoided(topic,nowMs)` | 单点查询 |
 | `view(nowMs)` / `logView(nowMs)` / `getState()` / `rollover(nowMs)` | 面板视图 / 日志计数 / 持久化状态 / 切日 |
-| `serializeBudgetState` / `deserializeBudgetState` / `readBudgetState(file)` / `writeBudgetStateAtomic(file,state)` | 持久化工具（非热路径） |
+| `serializeBudgetState` / `deserializeBudgetState` / `readBudgetState(file)` / `writeBudgetStateAtomic(file,state)` | 持久化工具（非热路径；状态含 `topicSalt`，非法/缺失容错） |
+| `hashTopicKey(topic, salt)` | topic → 加盐 sha256 前 16 hex；无 salt 返回 null（不落 topic） |
 | `ATTENTION_DEFAULTS` | 默认配置（3/4、23:30–08:00、拒绝 2 次/24h/0.5/7d） |
 
 ## 5. 日志与隐私
 
-- 日志只允许：`{dayKey, used, max, hardCap, paused, rejectionCount, rejectionKind, frequencyFactor, topicAvoidCount}`（`logView()`）。
-- 禁止：用户文本、拒绝原因原文、路径、会话 ID、topic 原文（topic 仅摘要标签，且不落日志文本）。
+- 日志只允许：`{dayKey, used, max, hardCap, paused, rejectionCount, rejectionKind, frequencyFactor, topicAvoidCount}`（`logView()`）；**不含 salt/topicKey 原值/topic 原文**。
+- 禁止：用户文本、topic 原文、拒绝原因原文、路径、会话 ID、salt、topicKey（日志里只出现计数）。
 - 不新增 timer；落盘由接线层在状态变化后节流调用（如 ≥30s 合并）。
 
 ## 6. 接线点（窗口后，另开分支）
@@ -88,5 +89,5 @@
 
 ## 8. 验收（本轮）
 
-- 单测 **13/13**：默认预算/硬上限 clamp/反应不计/切日重置+拒绝跨日/5 类抑制门/无视 2 次暂停+24h 恢复+频率 0.5/显式静音/用户互动清零/topic 7 天/序列化容错/原子写无 tmp 残留/日志仅计数枚举/本地时间助手。
+- 单测 **16/16**：默认预算/硬上限 clamp/反应不计/切日重置+拒绝跨日/5 类抑制门/无视 2 次暂停+24h 恢复+频率 0.5/显式静音/用户互动清零/topic 7 天/序列化容错/原子写无 tmp 残留/日志仅计数枚举/本地时间助手/S0 直通/quiet 下反应也不越过/recordProactive 拒绝 reaction/topic 加盐 hash 不落原文。
 - `node plugin/server/test/attention-budget.test.mjs` 退出码 0；<1s；不启 DSH、不碰 pipe。

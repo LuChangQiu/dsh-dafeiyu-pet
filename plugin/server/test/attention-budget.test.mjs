@@ -10,6 +10,7 @@ import {
   serializeBudgetState,
   writeBudgetStateAtomic,
   readBudgetState,
+  hashTopicKey,
   localDayKey,
   localMinutesOfDay,
   isNightMinutes
@@ -175,8 +176,9 @@ run('state serialize/deserialize roundtrip + clamp + corrupt fallback', () => {
   const restored = deserializeBudgetState(raw, { nowMs: baseMs })
   assert.equal(restored.proactiveUsed, 1)
   assert.equal(restored.rejection.count, 1)
-  assert.equal(restored.rejection.topic, 'x')
-  assert.ok(restored.topicAvoid.x > baseMs)
+  const expectedKey = hashTopicKey('x', restored.topicSalt)
+  assert.equal(restored.rejection.topicKey, expectedKey)
+  assert.ok(restored.topicAvoid[expectedKey] > baseMs)
   const clamped = deserializeBudgetState('{"proactiveMax":99,"proactiveUsed":-5}', { nowMs: baseMs })
   assert.equal(clamped.proactiveMax, 4)
   assert.equal(clamped.proactiveUsed, 0)
@@ -203,6 +205,40 @@ run('atomic persistence: write/read roundtrip, no tmp leftovers, corrupt file sa
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+run('privacy: topic stored as salted hash only; raw text never persisted', () => {
+  const b = mk()
+  b.recordQuiet({ topic: '用户说的秘密 工作 topic', nowMs: baseMs })
+  const st = b.getState()
+  assert.match(st.topicSalt, /^[a-f0-9]{32,64}$/)
+  assert.match(st.rejection.topicKey, /^[a-f0-9]{16}$/)
+  for (const key of Object.keys(st.topicAvoid)) assert.match(key, /^[a-f0-9]{16}$/)
+  const raw = serializeBudgetState(st)
+  assert.equal(raw.includes('用户说的秘密'), false)
+  assert.equal(raw.includes('工作'), false)
+  assert.equal(JSON.stringify(b.logView(baseMs)).includes('用户说的秘密'), false)
+  // 无 salt 时不可用 hash → 不存 topic（避免未加盐字典攻击）
+  assert.equal(hashTopicKey('x', null), null)
+})
+
+run('P3: explicit quiet blocks event reactions too; S0 safety bypasses', () => {
+  const b = mk()
+  b.recordQuiet({ nowMs: baseMs })
+  const reaction = b.canSpeak({ nowMs: baseMs, isReaction: true })
+  assert.equal(reaction.allowed, false)
+  assert.equal(reaction.reason, 'rejection-pause')
+  const s0 = b.canSpeak({ nowMs: baseMs, isS0: true })
+  assert.equal(s0.allowed, true)
+  assert.equal(s0.reason, 's0')
+})
+
+run('P3: recordProactive rejects reaction calls (reaction-not-proactive)', () => {
+  const b = mk()
+  const r = b.recordProactive({ nowMs: baseMs, isReaction: true })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'reaction-not-proactive')
+  assert.equal(b.view(baseMs).proactiveUsed, 0)
 })
 
 run('logView exposes counts/enums only (no free text)', () => {
