@@ -4189,8 +4189,12 @@ class PetWindow(QWidget):
 
         # ---- 鲸鱼娘 2D 帧动画（默认开启；资产缺失/异常自动回退原三视图） ----
         self._whale = None
-        self._whale_force = None          # 外部动作（act:）强制播放的动作名
+        self._whale_force = None          # 外部动作（act:/state:/演出）强制播放的动作名
         self._whale_micro_at = 0          # 下一次 idle 小动作的 tick
+        self._whale_hold_until = 0.0      # 单次动作播完后保持末帧到什么时候（墙上时间；0=不保持）
+        self._whale_pat_cd = 0.0          # 点击摸头 / 嘴硬演出冷却（内部时钟秒）
+        self._whale_cry_cd = 0.0          # 摔哭冷却（29 §2.3：30 分钟）
+        self._bridge_mute_until = 0.0     # 桥侧 mute 到什么时候（闷声时不演梗）
         try:
             _wcfg = self.cfg.get("whale")
             if not isinstance(_wcfg, dict):
@@ -6159,6 +6163,12 @@ class PetWindow(QWidget):
         phys = self._enh_phys
         if phys is None:
             return False
+        # 鲸鱼娘：抛掷飞行中不站姿（fall 帧），落地再接 land / 硬摔 cry
+        try:
+            if self._whale_active():
+                self._whale_force_play("fall")
+        except Exception:
+            pass
         geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
         dt = max(0.001, self.tick_ms / 1000.0)
         phys["t"] = float(phys.get("t", 0.0)) + dt
@@ -6191,6 +6201,8 @@ class PetWindow(QWidget):
         if hit:
             phys["bounces"] += 1
             speed = (vx * vx + vy * vy) ** 0.5
+            if speed > 650:
+                phys["hard"] = True           # 硬摔标记：落地接 cry（有冷却、深夜限制）
             if speed > 650 and phys["bounces"] <= 4:
                 self._enh_dizzy_until = self._secs() + max(0.6, min(2.0, 0.6 + speed / 1600.0))
                 try:
@@ -6201,11 +6213,16 @@ class PetWindow(QWidget):
         # 落地：低速触底 → 压扁回弹（地面摩擦 0.3）+ 结束飞行
         on_floor = y >= bottom - 1
         if on_floor and abs(vy) < 260 and abs(vx) < 90:
+            hard = bool(phys.get("hard"))
             self._enh_phys = None
             self._enh_land = 1.0
             self._enh_dizzy_until = max(self._enh_dizzy_until, self._secs() + 0.35)
             self.rest_until = self.t * self.tick_ms + random.randint(4000, 9000)
             self._set_dir("down", 1)
+            try:
+                self._whale_fall_land(hard)
+            except Exception:
+                pass
         return True
 
     def _edge_side(self):
@@ -6568,7 +6585,7 @@ class PetWindow(QWidget):
             bottom = BUBBLE_H + MARGIN + self.cur_h
             # 鲸鱼娘帧动画：帧画布带脚底留白，按 foot_ratio 对齐落地点；挂件形象 / 回退时走原逻辑
             whale = getattr(self, "_whale", None)
-            if whale is not None and name != "挂件":
+            if whale is not None and name != "挂件" and self._whale_active():
                 pix = whale.pixmap(h)
                 if pix is None or pix.isNull():
                     return
@@ -6624,8 +6641,15 @@ class PetWindow(QWidget):
         top = bottom - pet_h
         p.save()
         try:
+            # 鲸鱼娘帧图自带表情（帧内眨眼/表情），笔绘的眨眼/腮红锚点按经典精灵比例算，
+            # 画上去会落到脸外 —— 鲸鱼娘接管时先关掉这两项（Lead 审计 P0 简单方案）。
+            whale_drawn = False
+            try:
+                whale_drawn = self._whale_active()
+            except Exception:
+                whale_drawn = False
             # 1) 眨眼：60~110ms 的眼睑线（无美术时的降级近似）
-            if now < fx.get("blink_until", 0.0):
+            if now < fx.get("blink_until", 0.0) and not whale_drawn:
                 p.setPen(QColor(40, 44, 66, 210))
                 for sgn in (-1, 1):
                     ex = cx + sgn * pet_w * 0.17
@@ -6633,7 +6657,7 @@ class PetWindow(QWidget):
                     p.drawLine(QPointF(ex - pet_w * 0.055, ey), QPointF(ex + pet_w * 0.055, ey))
                 p.setPen(Qt.PenStyle.NoPen)
             # 2) 害羞腮红
-            if now < fx.get("shy_until", 0.0):
+            if now < fx.get("shy_until", 0.0) and not whale_drawn:
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(255, 150, 170, 150))
                 for sgn in (-1, 1):
@@ -7031,9 +7055,43 @@ class PetWindow(QWidget):
         p.setOpacity(1.0)
 
     # ---------- 鲸鱼娘 2D 帧动画 ----------
+    # 单次动作播完后保持末帧的时长（秒；缺省 = 播完回 idle；0 = 保持到被状态变化/用户操作打断）
+    _WHALE_HOLD_S = {
+        "sleep": 0.0, "think": 0.0, "waitPeek": 0.0, "lonelySit": 0.0, "hum": 0.0,
+        "eat": 1.8, "eatSatisfied": 1.2, "sneak": 1.5, "dance": 1.2, "fall": 0.0,
+        "caught": 0.8, "cry": 0.8, "pat": 0.6, "tsundere": 0.6, "report": 0.6,
+    }
+
     def _whale_active(self):
+        """鲸鱼娘帧动画是否接管绘制：资产可用 + 用户没选挂件/自定义形象（不静默覆盖）。"""
         w = getattr(self, "_whale", None)
-        return w is not None and getattr(w, "ok", False)
+        if w is None or not getattr(w, "ok", False):
+            return False
+        if getattr(self, "skin", SKIN_PET) == SKIN_WIDGET:
+            return False
+        try:
+            if self._current_skin_ref("pet"):
+                return False      # 用户自己的三维形象优先，鲸鱼娘不覆盖
+        except Exception:
+            pass
+        wcfg = getattr(self, "cfg", {}).get("whale")
+        if isinstance(wcfg, dict) and wcfg.get("on", True) is False:
+            return False
+        return True
+
+    def _whale_gag_ok(self):
+        """现在能不能演"梗"：深夜 23:30–08:00 / 免打扰 / 全屏 / 桥侧静音只留基础待机（28 §4.8）。"""
+        try:
+            if self._hold_now():
+                return False
+            if time.time() < float(getattr(self, "_bridge_mute_until", 0.0) or 0.0):
+                return False
+            hh = time.localtime().tm_hour * 60 + time.localtime().tm_min
+            if hh >= 23 * 60 + 30 or hh < 8 * 60:
+                return False
+        except Exception:
+            return True
+        return True
 
     def _whale_play(self, name, restart=True):
         """外部（act: 指令）触发一次帧动作；返回是否播放成功。"""
@@ -7043,33 +7101,89 @@ class PetWindow(QWidget):
         w.play(name, restart=restart)
         return True
 
+    def _whale_force_play(self, name):
+        """强制播放一次 clip/composite（用户操作 / DSH 状态 / 演出共用）；返回是否可播。
+
+        重复设置同名动作不重置"保持末帧"计时：播完保持末帧等状态变化；
+        单次动作保持多久见 _WHALE_HOLD_S（缺省 = 播完回 idle）。
+        """
+        w = getattr(self, "_whale", None)
+        if w is None or not w.has(name):
+            return False
+        if getattr(self, "_whale_force", None) != name:
+            self._whale_force = name
+            self._whale_hold_until = 0.0
+        return True
+
+    def _whale_clear_force(self):
+        self._whale_force = None
+        self._whale_hold_until = 0.0
+
+    def _whale_fall_land(self, hard=False):
+        """A 线落地：先播 land 压扁回弹；硬摔且允许演梗时接 cry（30 分钟冷却，深夜不演）。"""
+        w = getattr(self, "_whale", None)
+        if w is None or not self._whale_active():
+            return
+        now = self._secs()
+        if hard and w.has("cry") and self._whale_gag_ok() and now >= getattr(self, "_whale_cry_cd", 0.0):
+            self._whale_cry_cd = now + 1800.0          # 29 §2.3：摔哭冷却 30 分钟
+            if self._whale_force_play("cry"):
+                self._bridge_bubble_kind = ""
+                self.say("呜……摔疼了啦", seconds=3.8)
+                return
+        if w.has("land"):
+            self._whale_force_play("land")
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
-        if w is None:
+        if w is None or not self._whale_active():
             return
         try:
+            now = time.time()
+            # 用户操作优先：拖拽/抛掷一开始就清掉外部强制动作（act: 播一半也打断）
+            if self.dragging:
+                self._whale_clear_force()
             force = self._whale_force
             if force:
                 if w.has(force):
                     if w.cur != force:
                         w.play(force, restart=True)
-                    if w.finished:          # 单次动作播完 → 回到待机
-                        self._whale_force = None
+                    if w.finished:                  # 单次动作播完：按配方保持末帧 / 回 idle
+                        hold = self._WHALE_HOLD_S.get(force)
+                        if hold is None:
+                            self._whale_clear_force()
+                        elif hold <= 0:
+                            pass                    # 一直保持末帧，等状态变化/用户操作
+                        elif not self._whale_hold_until:
+                            self._whale_hold_until = now + hold
+                        elif now >= self._whale_hold_until:
+                            self._whale_clear_force()
                 else:
-                    self._whale_force = None
-            elif self.dragging:
-                w.play("drag")
-            elif self.target is not None:
-                w.play("walk")
-            elif w.finished or w.cur in ("", "walk", "drag"):
-                w.play("idleBase")
-            elif w.cur == "idleBase" and self.t >= self._whale_micro_at:
-                n = random.choice(("idleShift", "idleSettle", "idleStretch"))
-                if w.has(n):
-                    w.play(n, restart=True)
-                self._whale_micro_at = self.t + random.randint(300, 700)
-            w.tick(self.tick_ms)
+                    self._whale_clear_force()
+                force = self._whale_force
+            if not force:
+                if self.dragging:
+                    w.play("drag")
+                elif self.target is not None:
+                    # 上下移动没有对应的走路帧：用 idleBase + 位移（P1）
+                    dx = self.target[0] - (self.x() + self.width() / 2)
+                    dy = self.target[1] - (self.y() + self.height() / 2)
+                    w.play("walk" if abs(dx) >= abs(dy) * 0.7 else "idleBase")
+                elif w.finished or w.cur in ("", "walk", "drag"):
+                    w.play("idleBase")
+                elif w.cur == "idleBase" and self.t >= self._whale_micro_at:
+                    if self._whale_gag_ok():        # 深夜/免打扰只留呼吸，不做 idle 微动作（D3）
+                        n = random.choice(("idleShift", "idleSettle", "idleStretch"))
+                        if w.has(n):
+                            w.play(n, restart=True)
+                    self._whale_micro_at = self.t + int(
+                        random.uniform(8.0, 25.0) * 1000.0 / max(1, self.tick_ms))
+            # tool = 慢速 walk（×1.6，STATE-MAP §3）
+            step_ms = self.tick_ms
+            if w.cur == "walk" and str(getattr(self, "_bridge_state", {}).get("state") or "") == "tool":
+                step_ms *= 1.6
+            w.tick(step_ms)
         except Exception as _whale_exc:      # 帧动画异常不影响主循环，限频记录（约每 20 秒最多 1 条）
             if self.t - getattr(self, '_whale_err_t', -10**9) > 200:
                 self._whale_err_t = self.t
@@ -8175,6 +8289,54 @@ class PetWindow(QWidget):
             self._bridge_bubble_kind = ""
             self.action, self.action_t = "stretch", 0.8
 
+    def _whale_click_react(self):
+        """点击鲸鱼娘：摸头/戳身体 → pat（身体偶尔嘴硬 tsundere）；偷吃中点击 → caught。
+
+        冷却 20 秒、深夜/免打扰不演梗；返回 True 表示这次点击已由帧动画接住。
+        """
+        if not self._whale_active():
+            return False
+        w = getattr(self, "_whale", None)
+        if w is None:
+            return False
+        now = self._secs()
+        force = getattr(self, "_whale_force", None)
+        # 睡着被戳：先醒过来（act:sleep / 失联打盹都可能停在 sleep）
+        if force == "sleep" and w.cur == "sleep" and w.has("wake"):
+            self._whale_force_play("wake")
+            return True
+        # 偷吃被抓包：sneak 播到一半被点 → 打断成 caught（STATE-MAP §5）
+        if force == "sneak" and w.cur == "sneak" and w.has("caught"):
+            self._whale_force_play("caught")
+            self._bridge_bubble_kind = "remind"
+            self.say("！才、才没有偷吃", seconds=3.6, again=True)
+            return True
+        if not self._whale_gag_ok() or now < getattr(self, "_whale_pat_cd", 0.0):
+            return False
+        try:                         # 头（上半）/ 身体：头摸头，身体偶尔嘴硬
+            gp = getattr(self, "last_press_pos", None)
+            lp = self.mapFromGlobal(gp) if gp is not None else None
+            rel = (lp.y() - (BUBBLE_H + MARGIN)) if lp is not None else 0
+            head = rel < max(1, self.cur_h) * 0.40
+        except Exception:
+            head = True
+        name = "pat" if (head or random.random() < 0.6) else "tsundere"
+        if not self._whale_force_play(name):
+            return False
+        self._whale_pat_cd = now + 20.0
+        self.jump_t = max(getattr(self, "jump_t", 0.0), 0.4)
+        self._bridge_bubble_kind = "love" if name == "pat" else "remind"
+        if name == "pat":
+            self.say(random.choice(("呼噜呼噜……再摸一下", "别、别摸头啦", "嗯？找我干嘛")),
+                     seconds=3.2, again=True)
+            try:
+                getattr(self, "_bridge_fx_play", lambda _n: None)("love")
+            except Exception:
+                pass
+        else:
+            self.say(random.choice(("才没有很开心呢", "哼，只有这次哦")), seconds=3.2, again=True)
+        return True
+
     def _on_single_click(self):
         """单击：蹦跳 + 回嘴 + 顺手刷一下余额。
 
@@ -8183,6 +8345,11 @@ class PetWindow(QWidget):
         看得见的部分是零延迟，只有那句可能在 0.3~0.8 秒内被撤销的话在等。
         """
         self.refresh_balance(silent=True)      # 点一下顺手刷新余额
+        try:
+            if self._whale_click_react():      # 鲸鱼娘：摸头 pat / 身体 tsundere / 偷吃被抓 caught
+                return
+        except Exception:
+            pass
         try:
             if self._bridge_zone_react():
                 return
@@ -10849,6 +11016,10 @@ def main():
             except Exception:
                 ms = 60000
             bridge_state["mute_until"] = now + ms / 1000.0
+            try:
+                w._bridge_mute_until = bridge_state["mute_until"]   # 闷声时也不演梗（D3）
+            except Exception:
+                pass
             return "muted"
         muted = now < bridge_state["mute_until"]
 
@@ -10937,9 +11108,7 @@ def main():
             elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn"):
                 # 鲸鱼娘 2D 帧动作：eat / steal(偷吃) / sleep / wave / dance / turn
                 clip = {"steal": "sneak"}.get(act, act)
-                wh = getattr(w, "_whale", None)
-                if wh is not None and wh.has(clip):
-                    w._whale_force = clip
+                if getattr(w, "_whale_active", lambda: False)() and w._whale_force_play(clip):
                     return "acted:" + act
                 return "unknownact:" + act
             elif act in ("press", "squash"):
@@ -10949,6 +11118,14 @@ def main():
                 w.raise_()
             elif act == "hide":
                 w.hide()
+            elif getattr(w, "_whale_active", lambda: False)():
+                # D1：任意 clip / composite 直通（pat/caught/tsundere/report/fall/land/cry/think…）；
+                # 梗动作在深夜 23:30–08:00 / 免打扰 / 静音时只回 idle（28 §4.8）
+                _clip = {"steal": "sneak"}.get(act, act)
+                _basic = ("sleep", "wake", "idleBase", "walk", "drag", "fall", "land")
+                if (act in _basic or w._whale_gag_ok()) and w._whale_force_play(_clip):
+                    return "acted:" + act
+                return "gagged:" + act
             else:
                 return "unknownact:" + act
             return "acted:" + act
@@ -11065,16 +11242,18 @@ def main():
                     "tool": "walk",
                     "waiting_approval": "waitPeek",
                     "approval": "waitPeek",
+                    "waiting_input": "waitPeek",
                     "done": "cheer",
                     "error": "errorSequence",
                     "cry": "cry",
+                    "disconnected": "lonelySit",
                 }
                 _wh = getattr(w, "_whale", None)
                 if _name in ("idle", "background", ""):
-                    w._whale_force = None
+                    w._whale_clear_force()
                 elif _wh is not None and _name in _whale_map and _wh.has(_whale_map[_name]):
                     if getattr(w, "_whale_force", None) != _whale_map[_name]:
-                        w._whale_force = _whale_map[_name]
+                        w._whale_force_play(_whale_map[_name])
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
                     w.say("我在等你的确认哦", seconds=8.0, queue=True)
