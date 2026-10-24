@@ -1,5 +1,6 @@
-// task-104 切片2：state-machine 纯函数（无 IO/无 timer/无随机）
-// 消费 config/state-map.json：事件 → state/subkind/计数/优先级/minDwell/TTL
+// task-104 切片2：state-machine 纯函数（无 IO / 无 timer / 无随机）
+// 消费 config/state-map.json：事件 → state/subkind/stateClass/perform/presentation/计数
+// 契约：STATE-SEMANTICS v1.1 / FIXTURE-CLARIFICATION v3.1（fixtures v1.3 / schema 3）
 const classifyTool = (name, rules) => {
   const n = String(name || '')
   const has = (arr) => Array.isArray(arr) && arr.some((p) => p && n.startsWith(p))
@@ -15,24 +16,73 @@ const classifyTool = (name, rules) => {
   if (has(rules.readPrefixes)) return 'read'
   return 'unknown'
 }
+
+const STATE_LEVEL_DEFAULT = {
+  tool: 'S3',
+  thinking: 'S3',
+  error: 'S1',
+  done: 'S1',
+  job: 'S3',
+  model_switch: 'S2',
+  session_focus: 'S3',
+  sleep: 'S3',
+  offline: 'S3',
+  compaction: 'S1',
+  approval: 'S0',
+  waiting_input: 'S0',
+  cost: 'S1',
+  idle: 'S3'
+}
+
+const META_KEYS = new Set([
+  'slow',
+  'afterMs',
+  'bubbleChance',
+  'fxChance',
+  'perform',
+  'petBehavior',
+  'preferredComposite',
+  'preferredPlayable',
+  'covers',
+  'note'
+])
+
+const isNightTime = (iso) => {
+  if (!iso) return false
+  const m = String(iso).match(/T(\d{2}):(\d{2})/)
+  if (!m) return false
+  const hh = Number(m[1])
+  const mm = Number(m[2])
+  return (hh === 23 && mm >= 30) || hh < 6
+}
+
 export function createStateMachine(opts = {}) {
   const {
     stateMap,
     now = () => Date.now(),
     mode = () => 'normal',
     initialState = 'idle',
-    initialCounters = null
+    initialCounters = null,
+    preconditions = null,
+    sessionRole = null,
+    currentSessionId = null
   } = opts
   if (!stateMap || !stateMap.states || !stateMap.events) throw new Error('state-map missing')
   const states = stateMap.states
   const events = stateMap.events
   const timing = stateMap.timing || {}
   const priorityTable = stateMap.priority || {}
+
   let current = 'idle'
   let subkind = null
   let since = now()
+  let curSessionId = currentSessionId || (preconditions && preconditions.currentSessionId) || null
+  const isBackground = !!(sessionRole && sessionRole !== 'main')
+  const pre = preconditions || {}
+
   const counters = {
     turn: 0,
+    step: 0,
     toolCalls: 0,
     toolResults: 0,
     approvalsAsked: 0,
@@ -40,11 +90,149 @@ export function createStateMachine(opts = {}) {
     retry: 0,
     backgroundCount: 0,
     unknownEventCount: 0,
+    unknownIntentKind: 0,
     dispatchCount: 0,
-    unknownIntentKind: 0
+    activeSwitchCount: 0,
+    jobs: { active: 0, completedToday: 0, failedToday: 0 }
   }
+  if (initialCounters && typeof initialCounters === 'object') {
+    for (const [k, v] of Object.entries(initialCounters)) {
+      if (k === 'jobs' && v && typeof v === 'object') counters.jobs = { ...counters.jobs, ...v }
+      else counters[k] = v
+    }
+  }
+
   const toolCallIds = new Set()
-  const approvalIds = new Set()
+  const toolResultIds = new Set()
+  const approvalAskedIds = new Set()
+  const approvalDecidedIds = new Set()
+  const retryTimestamps = []
+  let lastToolClass = null
+  let presentationOverride = null
+
+  const stateDef = (name) => states[name] || null
+  const priorityOf = (name) => (stateDef(name) && Number(stateDef(name).priority)) || priorityTable.E2 || 60
+  const ttlOf = (name) => (stateDef(name) && Number(stateDef(name).ttlMs)) || 0
+  const minDwellOf = (name) => (stateDef(name) && Number(stateDef(name).minDwellMs)) || 0
+
+  // 派生初始状态（插件内部信号，不是 DSH 事件）
+  const offlineAfterMs = Number(timing.pluginOfflineAfterMs) || 30000
+  if (Number(pre.heartbeatAgoMs) >= offlineAfterMs && stateDef('offline')) {
+    current = 'offline'
+    subkind = 'heartbeat_lost'
+  } else if (stateDef('sleep') && Number(pre.lastEventAgoMin) >= 35 && isNightTime(pre.now)) {
+    current = 'sleep'
+    subkind = 'night'
+  } else if (initialState && stateDef(initialState)) {
+    current = String(initialState)
+  }
+  if (current === 'approval' && Number(pre.askedAgeMs) >= (ttlOf('approval') || 300000)) {
+    current = 'thinking'
+    subkind = 'step'
+  }
+
+  const normalizePresentation = (p) => {
+    if (!p || typeof p !== 'object') return {}
+    const out = {}
+    for (const [k, v] of Object.entries(p)) {
+      if (k === 'level') out.bubbleLevel = v
+      else if (k === 'surface' || k === 'bubble') continue
+      else out[k] = v
+    }
+    if ('bubble' in p && p.bubble === 'none') {
+      out.bubbleKind = null
+      out.bubbleLevel = null
+    }
+    return out
+  }
+  const mergeFields = (base, overlay) => {
+    if (!overlay) return base
+    const out = { ...(base || {}) }
+    for (const [k, v] of Object.entries(overlay)) out[k] = v
+    return out
+  }
+  const resolvePresentation = (target, sub, route, override = null) => {
+    const def = stateDef(target)
+    const pr = stateMap.presentationRules || {}
+    const defaults = pr.defaults || {}
+    let base = null
+    const subEntry = def && def.subkinds && sub ? def.subkinds[sub] : null
+    if (subEntry) {
+      // L2：命中即整体替换 L3（条目本身即 presentation；剥离 subkind meta keys）
+      base = {}
+      for (const [k, v] of Object.entries(subEntry.presentation || subEntry)) {
+        if (!META_KEYS.has(k)) base[k] = v
+      }
+    } else if (def && def.presentation) {
+      base = { ...def.presentation }
+    } else if (defaults[target]) {
+      base = { ...defaults[target] }
+    } else if (defaults._global) {
+      base = { ...defaults._global }
+    }
+    // L1：events[type].presentation 字段级合并（当前 0 使用；clip/composite 由 guard 拒绝）
+    const L1 = route && route.presentation ? route.presentation : null
+    if (L1) base = mergeFields(base, L1)
+    const out = normalizePresentation(base)
+    if (out.composite && out.clip) delete out.clip
+    if (!out.bubbleKind) {
+      out.bubbleKind = null
+      out.bubbleLevel = null
+    } else if (!out.bubbleLevel) {
+      out.bubbleLevel = STATE_LEVEL_DEFAULT[target] || 'S3'
+    }
+    if (target === 'cost' && sub === 'limit100') out.expression = 'sad'
+    if (override) for (const [k, v] of Object.entries(override)) out[k] = v
+    return out
+  }
+
+  function tick(ts) {
+    if (!current || current === 'idle') return
+    const ttl = ttlOf(current)
+    if (ttl > 0 && ts - since > ttl) {
+      current = 'idle'
+      subkind = null
+      since = ts
+    }
+  }
+
+  const applyCounters = (type, event) => {
+    const d = event.data || {}
+    if (type === 'turn/start') counters.turn += 1
+    else if (type === 'step/start') counters.step += 1
+    else if (type === 'tool/call') {
+      const id = String(d.callId || d.id || `${type}:${counters.dispatchCount}`)
+      if (!toolCallIds.has(id)) {
+        toolCallIds.add(id)
+        counters.toolCalls += 1
+      }
+      lastToolClass = classifyTool(d.name || d.tool || 'unknown', stateMap.toolSubkindMap || {})
+    } else if (type === 'tool/result') {
+      const id = String(d.callId || d.id || `${type}:${counters.dispatchCount}`)
+      if (!toolResultIds.has(id)) {
+        toolResultIds.add(id)
+        counters.toolResults += 1
+      }
+    } else if (type === 'approval/asked') {
+      const id = String(d.id || d.callId || `${type}:${counters.dispatchCount}`)
+      if (!approvalAskedIds.has(id)) {
+        approvalAskedIds.add(id)
+        counters.approvalsAsked += 1
+      }
+    } else if (type === 'approval/decided') {
+      const id = String(d.id || d.callId || `${type}:${counters.dispatchCount}`)
+      if (!approvalDecidedIds.has(id)) {
+        approvalDecidedIds.add(id)
+        counters.approvalsDecided += 1
+      }
+    } else if (type === 'llm/retry') {
+      counters.retry += 1
+      retryTimestamps.push(Number.isFinite(d.at) ? d.at : Number.MAX_SAFE_INTEGER)
+    } else if (type === 'job/registered') counters.jobs.active += 1
+    else if (type === 'job/settled') counters.jobs.active = Math.max(0, counters.jobs.active - 1)
+    else if (type === 'session/event' && d.background) counters.backgroundCount += 1
+  }
+
   const intentKindOf = (d) => {
     const direct = d && d.intent && d.intent.kind
     if (direct) return String(direct)
@@ -60,169 +248,127 @@ export function createStateMachine(opts = {}) {
     if (raw === 'plan-review' || raw === 'plan_review') return 'plan_review'
     if (raw === 'freeform') return 'freeform'
     if (raw === 'multi') return 'multi'
-    if (raw === 'choice' || raw === '') return 'choice'
     return 'choice'
   }
-  let lastToolClass = null
-
-  const stateDef = (name) => states[name] || null
-  const priorityOf = (name) => (stateDef(name) && Number(stateDef(name).priority)) || priorityTable.E2 || 60
-  const ttlOf = (name) => (stateDef(name) && Number(stateDef(name).ttlMs)) || 0
-  const minDwellOf = (name) => (stateDef(name) && Number(stateDef(name).minDwellMs)) || 0
-  if (initialState && stateDef(initialState)) current = String(initialState)
-
-  const normalizePresentation = (p) => {
-    if (!p || typeof p !== 'object') return null
-    const out = { ...p }
-    if ('level' in out) {
-      out.bubbleLevel = out.level
-      delete out.level
+  const resolveSubkindRule = (route, event) => {
+    const d = event.data || {}
+    const qs = Array.isArray(d.questions) ? d.questions : []
+    const withIntent = qs.find((q) => q && q.intent && q.intent.kind)
+    const kind = (d.intent && d.intent.kind) || d.questionKind || (withIntent && withIntent.intent.kind)
+    const isMulti = qs.some((q) => q && q.multiSelect === true)
+    const rawKind = kind ? String(kind) : isMulti ? 'multi' : 'choice'
+    const mapped =
+      (route.subkindRule.map && (route.subkindRule.map[rawKind] || route.subkindRule.map[rawKind.toLowerCase()])) ||
+      route.subkindRule.unknown ||
+      'choice'
+    const known =
+      route.subkindRule.map && (route.subkindRule.map[rawKind] || route.subkindRule.map[rawKind.toLowerCase()])
+    if (!known && route.subkindRule.unknownCounter) {
+      counters[route.subkindRule.unknownCounter] = (counters[route.subkindRule.unknownCounter] || 0) + 1
     }
-    if ('bubble' in out && out.bubble === 'none') {
-      out.bubbleKind = null
-      out.bubbleLevel = null
-    }
-    if ('surface' in out) delete out.surface
-    delete out.bubble
-    return out
-  }
-  const mergeFields = (base, overlay) => {
-    if (!overlay) return base
-    const out = { ...(base || {}) }
-    for (const [k, v] of Object.entries(overlay)) {
-      if (v === null) out[k] = null
-      else out[k] = v
-    }
-    return out
-  }
-  const resolvePresentation = (target, sub) => {
-    const def = stateDef(target)
-    if (!def)
-      return (
-        normalizePresentation(
-          (stateMap.presentationRules &&
-            stateMap.presentationRules.defaults &&
-            stateMap.presentationRules.defaults._global) ||
-            null
-        ) || {}
-      )
-    const pr = stateMap.presentationRules || {}
-    const defaults = pr.defaults || {}
-    const L4 = defaults[target] || defaults._global || null
-    const L3 = def.presentation || null
-    let base = L4 ? { ...L4 } : null
-    if (L3) base = { ...L3 }
-    const subEntry = def.subkinds && sub ? def.subkinds[sub] : null
-    if (subEntry) {
-      const subPres = subEntry.presentation || subEntry
-      const metaKeys = new Set(
-        (stateMap.presentationResolution && stateMap.presentationResolution.subkindMetaKeys) || [
-          'bubbleChance',
-          'afterMs',
-          'slow'
-        ]
-      )
-      const clean = {}
-      const extra = {}
-      for (const [k, v] of Object.entries(subPres)) {
-        if (metaKeys.has(k)) extra[k] = v
-        else clean[k] = v
-      }
-      base = { ...(base || {}), ...clean, ...extra }
-    }
-    const out = normalizePresentation(base) || {}
-    if (out.bubbleKind && !out.bubbleLevel) {
-      const lv = { inner: 'S3', normal: 'S1', remind: 'S0' }
-      if (lv[out.bubbleKind]) out.bubbleLevel = lv[out.bubbleKind]
-    }
-    return out
-  }
-
-  function tick(ts) {
-    if (!current || current === 'idle') return
-    const ttl = ttlOf(current)
-    if (ttl > 0 && ts - since > ttl) {
-      current = 'idle'
-      subkind = null
-      since = ts
-    }
+    return mapped
   }
 
   function handle(event, ctx = {}) {
+    presentationOverride = null
+    const explicitNow = Number.isFinite(ctx.now)
+    const ts = explicitNow ? ctx.now : now()
     if (!event || !event.t) return snapshot()
-    const ts = Number.isFinite(ctx.now) ? ctx.now : now()
-    tick(ts)
     const type = String(event.t)
-    counters.dispatchCount += 1
     const route = events[type]
     if (!route) {
       counters.unknownEventCount += 1
       return snapshot()
     }
-    let target = String(route.target || '')
-    let dynSub = null
-    if (route.activeSwitch) {
-      const d = event.data || {}
-      const sessionId = d.sessionId || d.session_id || null
-      const currentSessionId = d.currentSessionId || d.current_session_id || null
-      const isHuman = d.isHuman !== false
-      const sessionChanged =
-        d.sessionChanged === true ||
-        (!!sessionId && !!currentSessionId && String(sessionId) !== String(currentSessionId))
-      if (isHuman && sessionChanged) {
-        target = String(route.activeSwitch.target || 'session_focus')
-        dynSub = route.activeSwitch.subkind || 'switch'
-        counters.activeSwitchCount = (counters.activeSwitchCount || 0) + 1
-      }
+    if (isBackground && route.source !== 'plugin-internal') {
+      counters.backgroundCount += 1
+      return snapshot()
     }
+    tick(ts)
+    const m = String(ctx.mode || mode())
+    if (Array.isArray(route.modes) && !route.modes.includes(m)) return snapshot()
+
+    applyCounters(type, event)
+
+    if (route.panelOnly || route.kind === 'panelOnly') return snapshot()
+
+    let target = route.target ? String(route.target) : ''
+    let dynSub = null
+
+    if (type === 'user/message') {
+      const d = event.data || {}
+      const isHuman = !d.source || d.source.kind === 'user' || d.source.kind === undefined
+      const sid = d.sessionId || d.session_id || null
+      const changed = d.sessionChanged === true || (!!sid && !!curSessionId && String(sid) !== String(curSessionId))
+      if (isHuman && changed) {
+        curSessionId = String(sid)
+        counters.activeSwitchCount += 1
+        target = String((route.activeSwitch && route.activeSwitch.target) || 'session_focus')
+        dynSub = (route.activeSwitch && route.activeSwitch.subkind) || 'switch'
+      } else if (sid) curSessionId = String(sid)
+    }
+
     if (route.targetFromReasonMap && route.reasonMap) {
       const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
-      const rm = route.reasonMap[rk] ||
-        (rk ? null : route.reasonMap.incomplete) || { state: 'done', subkind: 'incomplete' }
+      const rm = route.reasonMap[rk] || route.reasonMap.incomplete || { state: 'done', subkind: 'incomplete' }
       target = rm.state || target
       dynSub = rm.subkind || dynSub
-      if (route.reportRule && rk === 'completed' && event.data && event.data.reportDue === true)
+      const reportDue =
+        (event.preconditions && event.preconditions.reportDue === true) ||
+        (event.data && event.data.reportDue === true) ||
+        pre.reportDue === true
+      if (route.reportRule && rk === 'completed' && reportDue && target === 'done') {
         dynSub = route.reportRule.subkind || 'report'
+      }
     } else if (route.reasonMap) {
       const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
       const rm = route.reasonMap[rk] || route.reasonMap.default
       if (rm) {
         target = rm.state || target
-        dynSub = rm.subkind || null
+        dynSub = rm.subkind || dynSub
       }
     }
-    if (!target || !stateDef(target)) return snapshot()
-    if (false) {
-      const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
-      const rm = route.reasonMap[rk] || route.reasonMap.default || null
-      if (rm) {
-        target = rm.state || target
-        dynSub = rm.subkind || null
+
+    // compaction/end(error) 是 state-exit：compaction → error
+    if (type === 'compaction/end' && event.data && event.data.error) {
+      target = 'error'
+      dynSub = 'unknown'
+      presentationOverride = { bubbleLevel: 'S2' }
+    }
+
+    // job/settled exitRule：活跃 job 归零才回 thinking/step
+    if (type === 'job/settled' && route.exitRule) {
+      const status = String((event.data && event.data.status) || 'completed')
+      if (counters.jobs.active > 0) {
+        target = String(route.target || 'job')
+        dynSub = status
+      } else {
+        target = String(route.exitState || 'thinking')
+        dynSub = route.exitSubkind || 'step'
       }
     }
-    if (!target || !stateDef(target)) return snapshot()
-    // 事件归因/模式闸门（配置驱动；默认放行）
-    const m = String(ctx.mode || mode())
-    if (route.modes && !route.modes.includes(m)) return snapshot()
-    // tool subkind：优先 subkindFrom(toolType) 映射
-    let sub = route.subkind || dynSub || null
-    if (!sub && route.subkindRule) {
-      const d = event.data || {}
-      const qs = Array.isArray(d.questions) ? d.questions : []
-      const withIntent = qs.find((q) => q && q.intent && q.intent.kind)
-      let kind = (d.intent && d.intent.kind) || d.questionKind || (withIntent && withIntent.intent.kind)
-      let isMulti = qs.some((q) => q && q.multiSelect === true)
-      let baseKind = kind ? String(kind) : isMulti ? 'multi' : qs.length === 0 ? 'choice' : 'choice'
-      const mapped =
-        (route.subkindRule.map && (route.subkindRule.map[baseKind] || route.subkindRule.map[baseKind.toLowerCase()])) ||
-        route.subkindRule.unknown ||
-        'choice'
-      const known =
-        route.subkindRule.map && (route.subkindRule.map[baseKind] || route.subkindRule.map[baseKind.toLowerCase()])
-      if (!known && route.subkindRule.unknownCounter)
-        counters[route.subkindRule.unknownCounter] = (counters[route.subkindRule.unknownCounter] || 0) + 1
-      sub = mapped
+
+    // llm/retry 升级：窗口内达到阈值 → error/rate_limit
+    if (type === 'llm/retry' && route.escalate) {
+      const windowMs = Number(route.escalate.windowMs) || 60000
+      const threshold = Number(route.escalate.count) || 3
+      const t = Number.isFinite(event.data && event.data.at) ? event.data.at : ts
+      const recent = retryTimestamps.filter((x) => t - x <= windowMs)
+      if (recent.length >= threshold) {
+        const then = String(route.escalate.then || 'error/rate_limit')
+        const parts = then.split('/')
+        target = parts[0]
+        dynSub = parts[1] || 'rate_limit'
+      } else {
+        target = ''
+        dynSub = null
+      }
     }
+
+    if (!target || !stateDef(target)) return snapshot()
+
+    let sub = dynSub || route.subkind || null
+    if (!sub && route.subkindRule) sub = resolveSubkindRule(route, event)
     if (!sub && route.subkindFrom === 'toolType') {
       const name = String((event.data && (event.data.name || event.data.tool)) || '')
       sub = classifyTool(name, stateMap.toolSubkindMap || {})
@@ -235,15 +381,7 @@ export function createStateMachine(opts = {}) {
       const tn = String((event.data && (event.data.toolName || event.data.name || event.data.tool)) || '')
       sub = tn ? classifyTool(tn, stateMap.toolSubkindMap || {}) : lastToolClass || 'unknown'
     }
-    if (!sub && route.subkindFrom === 'intent') {
-      const k = intentKindOf(event.data || {})
-      sub = intentEnum(k)
-      if (
-        !['choice', 'plan_review', 'freeform', 'multi'].includes(String(k).toLowerCase()) &&
-        !['plan-review', 'plan_review', 'freeform', 'multi', 'choice', ''].includes(String(k).toLowerCase())
-      )
-        counters.unknownIntentKind += 1
-    }
+    if (!sub && route.subkindFrom === 'intent') sub = intentEnum(intentKindOf(event.data || {}))
     if (!sub && route.subkindFrom === 'failure.code') {
       const code = String(
         (event.data && event.data.failure && event.data.failure.code) || (event.data && event.data.code) || ''
@@ -251,51 +389,14 @@ export function createStateMachine(opts = {}) {
       const cm = route.codeMap || {}
       sub = cm[code] || cm[String(code).toUpperCase()] || cm.default || 'unknown'
     }
-    // 最小停留：低优先级事件不得抢高优先级状态（同优先级允许切换）
-    const dwell = ts - since
-    if (current !== target && dwell < minDwellOf(current) && priorityOf(target) < priorityOf(current)) {
-      return snapshot()
+    if (!sub && route.subkindFrom === 'status') sub = String((event.data && event.data.status) || 'unknown')
+
+    if (explicitNow && current !== target) {
+      const dwell = ts - since
+      if (dwell < minDwellOf(current) && priorityOf(target) < priorityOf(current)) return snapshot()
     }
-    counters.toolTypes = counters.toolTypes || {}
-    if (type === 'turn/start') counters.turn += 1
-    if (type === 'step/start') counters.step = (counters.step || 0) + 1
-    if (type === 'tool/call') {
-      const id = String((event.data && (event.data.callId || event.data.id)) || `${type}:${counters.dispatchCount}`)
-      if (!toolCallIds.has(id)) {
-        toolCallIds.add(id)
-        counters.toolCalls += 1
-      }
-      const key = (event.data && (event.data.name || event.data.tool)) || 'unknown'
-      lastToolClass = classifyTool(key, stateMap.toolSubkindMap || {})
-    }
-    if (type === 'tool/result') {
-      const id = String((event.data && (event.data.callId || event.data.id)) || `${type}:${counters.dispatchCount}`)
-      if (!toolCallIds.has('r:' + id)) {
-        toolCallIds.add('r:' + id)
-        counters.toolResults += 1
-      }
-    }
-    if (type === 'approval/asked') {
-      const id = String((event.data && (event.data.id || event.data.callId)) || `${type}:${counters.dispatchCount}`)
-      if (!approvalIds.has('a:' + id)) {
-        approvalIds.add('a:' + id)
-        counters.approvalsAsked += 1
-      }
-    }
-    if (type === 'approval/decided') {
-      const id = String((event.data && (event.data.id || event.data.callId)) || `${type}:${counters.dispatchCount}`)
-      if (!approvalIds.has('d:' + id)) {
-        approvalIds.add('d:' + id)
-        counters.approvalsDecided += 1
-      }
-    }
-    if (type === 'llm/retry') counters.retry += 1
-    if (type === 'session/event' && event.data && event.data.background) counters.backgroundCount += 1
-    if (type === 'user/message' && event.data && event.data.sessionChanged)
-      counters.activeSwitchCount = (counters.activeSwitchCount || 0) + 1
-    counters.jobs = counters.jobs || { active: 0, completedToday: 0, failedToday: 0 }
-    if (type === 'job/registered') counters.jobs.active = (counters.jobs.active || 0) + 1
-    if (type === 'job/settled') counters.jobs.active = Math.max(0, (counters.jobs.active || 0) - 1)
+
+    if (current !== target || subkind !== sub) counters.dispatchCount += 1
     current = target
     subkind = sub
     since = ts
@@ -309,8 +410,8 @@ export function createStateMachine(opts = {}) {
       subkind: subkind || null,
       stateClass: def.stateClass || null,
       perform: def.perform !== false,
-      presentation: resolvePresentation(current, subkind),
-      counters: { ...counters },
+      presentation: resolvePresentation(current, subkind, null, presentationOverride),
+      counters: JSON.parse(JSON.stringify(counters)),
       since
     }
   }
@@ -323,6 +424,6 @@ export function createStateMachine(opts = {}) {
       subkind = null
       since = now()
     },
-    _debug: { stateDef, priorityOf }
+    _debug: { stateDef, priorityOf, events, counters }
   }
 }

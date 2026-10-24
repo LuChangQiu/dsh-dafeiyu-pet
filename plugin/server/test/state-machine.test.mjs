@@ -38,7 +38,10 @@ for (const line of lines) {
     now: () => 0,
     mode: () => mode,
     initialState: pre.state,
-    initialCounters: pre.counters || null
+    initialCounters: pre.counters || null,
+    preconditions: pre,
+    sessionRole: pre.sessionRole || null,
+    currentSessionId: pre.currentSessionId || null
   })
   let snap = m.snapshot()
   for (const ev of (fx.given && fx.given.events) || []) snap = m.handle(ev, { mode })
