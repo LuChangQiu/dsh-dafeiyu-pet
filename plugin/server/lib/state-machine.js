@@ -29,7 +29,38 @@ export function createStateMachine({
   let current = 'idle'
   let subkind = null
   let since = now()
-  const counters = { turn: 0, tool: 0, approval: 0, retry: 0, toolTypes: {} }
+  const counters = {
+    turn: 0,
+    toolCalls: 0,
+    toolResults: 0,
+    approvalsAsked: 0,
+    approvalsDecided: 0,
+    retry: 0,
+    backgroundCount: 0,
+    unknownEventCount: 0,
+    dispatchCount: 0,
+    unknownIntentKind: 0
+  }
+  const toolCallIds = new Set()
+  const approvalIds = new Set()
+  const intentKindOf = (d) => {
+    const direct = d && d.intent && d.intent.kind
+    if (direct) return String(direct)
+    if (d && d.questionKind) return String(d.questionKind)
+    const qs = d && Array.isArray(d.questions) ? d.questions : []
+    const withIntent = qs.find((q) => q && q.intent && q.intent.kind)
+    if (withIntent) return String(withIntent.intent.kind)
+    if (qs.some((q) => q && q.multiSelect)) return 'multi'
+    return 'choice'
+  }
+  const intentEnum = (k) => {
+    const raw = String(k || '').toLowerCase()
+    if (raw === 'plan-review' || raw === 'plan_review') return 'plan_review'
+    if (raw === 'freeform') return 'freeform'
+    if (raw === 'multi') return 'multi'
+    if (raw === 'choice' || raw === '') return 'choice'
+    return 'choice'
+  }
   let lastToolClass = null
 
   const stateDef = (name) => states[name] || null
@@ -60,8 +91,12 @@ export function createStateMachine({
     const ts = Number.isFinite(ctx.now) ? ctx.now : now()
     tick(ts)
     const type = String(event.t)
+    counters.dispatchCount += 1
     const route = events[type]
-    if (!route) return snapshot()
+    if (!route) {
+      counters.unknownEventCount += 1
+      return snapshot()
+    }
     let target = String(route.target || '')
     let dynSub = null
     if (route.reasonMap) {
@@ -90,7 +125,15 @@ export function createStateMachine({
       const tn = String((event.data && (event.data.toolName || event.data.name || event.data.tool)) || '')
       sub = tn ? classifyTool(tn, stateMap.toolSubkindMap || {}) : lastToolClass || 'unknown'
     }
-    if (!sub && route.subkindFrom === 'intent') sub = String((event.data && event.data.intent) || 'unknown')
+    if (!sub && route.subkindFrom === 'intent') {
+      const k = intentKindOf(event.data || {})
+      sub = intentEnum(k)
+      if (
+        !['choice', 'plan_review', 'freeform', 'multi'].includes(String(k).toLowerCase()) &&
+        !['plan-review', 'plan_review', 'freeform', 'multi', 'choice', ''].includes(String(k).toLowerCase())
+      )
+        counters.unknownIntentKind += 1
+    }
     if (!sub && route.subkindFrom === 'failure.code') {
       const code = String(
         (event.data && event.data.failure && event.data.failure.code) || (event.data && event.data.code) || ''
@@ -105,14 +148,39 @@ export function createStateMachine({
     }
     counters.toolTypes = counters.toolTypes || {}
     if (type === 'turn/start') counters.turn = Number((event.data && event.data.turn) || counters.turn + 1)
-    if (type === 'tool/call') counters.tool += 1
-    if (type === 'approval/asked') counters.approval += 1
-    if (type === 'llm/retry') counters.retry += 1
+    if (type === 'step/start') counters.step = (counters.step || 0) + 1
     if (type === 'tool/call') {
+      const id = String((event.data && (event.data.callId || event.data.id)) || `${type}:${counters.dispatchCount}`)
+      if (!toolCallIds.has(id)) {
+        toolCallIds.add(id)
+        counters.toolCalls += 1
+      }
       const key = (event.data && (event.data.name || event.data.tool)) || 'unknown'
-      counters.toolTypes[key] = (counters.toolTypes[key] || 0) + 1
       lastToolClass = classifyTool(key, stateMap.toolSubkindMap || {})
     }
+    if (type === 'tool/result') {
+      const id = String((event.data && (event.data.callId || event.data.id)) || `${type}:${counters.dispatchCount}`)
+      if (!toolCallIds.has('r:' + id)) {
+        toolCallIds.add('r:' + id)
+        counters.toolResults += 1
+      }
+    }
+    if (type === 'approval/asked') {
+      const id = String((event.data && (event.data.id || event.data.callId)) || `${type}:${counters.dispatchCount}`)
+      if (!approvalIds.has('a:' + id)) {
+        approvalIds.add('a:' + id)
+        counters.approvalsAsked += 1
+      }
+    }
+    if (type === 'approval/decided') {
+      const id = String((event.data && (event.data.id || event.data.callId)) || `${type}:${counters.dispatchCount}`)
+      if (!approvalIds.has('d:' + id)) {
+        approvalIds.add('d:' + id)
+        counters.approvalsDecided += 1
+      }
+    }
+    if (type === 'llm/retry') counters.retry += 1
+    if (type === 'session/event' && event.data && event.data.background) counters.backgroundCount += 1
     current = target
     subkind = sub
     since = ts
@@ -127,7 +195,7 @@ export function createStateMachine({
       stateClass: def.stateClass || null,
       perform: def.perform !== false,
       presentation: resolvePresentation(current, subkind),
-      counters: { ...counters, toolTypes: { ...counters.toolTypes } },
+      counters: { ...counters },
       since
     }
   }
