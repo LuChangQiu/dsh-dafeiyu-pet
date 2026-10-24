@@ -5,6 +5,7 @@
   "name": "dsh-dafeiyu-pet",
   "scripts": {
     "verify:detached": "node scripts/harness/plugin-harness.mjs",
+    "verify:whale-assets": "node scripts/test-whale-assets.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "prettier --write \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "nodecheck": "node scripts/lint.mjs"

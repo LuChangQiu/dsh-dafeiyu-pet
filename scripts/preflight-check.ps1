@@ -67,6 +67,8 @@ Invoke-Step "unit: privacy" { & node scripts/test-privacy.mjs }
 Invoke-Step "unit: team-view" { & node scripts/test-team-view.mjs }
 Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }`r`nInvoke-Step "unit: detached harness" { & node scripts/harness/plugin-harness.mjs }
 
+Invoke-Step "unit: whale-assets" { & node scripts/test-whale-assets.mjs }
+
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="
