@@ -12,9 +12,15 @@ if($DryRun){
   exit 0
 }
 
-# 1) 前置门禁（含 reviewer APPROVED 校验）
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'mount-check.ps1') -TargetCommit $TargetCommit
-if($LASTEXITCODE -ne 0){ throw 'mount-check failed' }
+# 1) 前置门禁（含 reviewer APPROVED 校验）——用 Start-Process 隔离 stdout/stderr，避免写成 PowerShell 错误流
+$mcOut=Join-Path $env:TEMP 'mount-check.out'
+$mcErr=Join-Path $env:TEMP 'mount-check.err'
+Remove-Item $mcOut,$mcErr -ErrorAction SilentlyContinue
+$mc=Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'mount-check.ps1'),'-TargetCommit',$TargetCommit) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $mcOut -RedirectStandardError $mcErr
+if($mc.ExitCode -ne 0){
+  $detail=((Get-Content $mcOut -Raw -ErrorAction SilentlyContinue) + (Get-Content $mcErr -Raw -ErrorAction SilentlyContinue))
+  throw ('mount-check failed: ' + $detail.Trim())
+}
 
 # 2) 从 commit 构建暂存包（zip，避免二进制管道损坏）
 $stage=Join-Path $repo "build\$newPkg"
