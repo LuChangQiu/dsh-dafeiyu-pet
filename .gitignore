@@ -20,3 +20,6 @@ secret-scan-report.txt
 
 # 验证证据（截图/录屏）不入库，放 pet-work/evidence 或本地
 /deliverables/
+
+__pycache__/
+*.pyc
