@@ -56,6 +56,7 @@ const FX_14 = [
   'sad'
 ]
 const acts = new Set()
+const unknowns = []
 const fx = new Set(FX_14)
 let source = 'fallback(task-92 pending)'
 try {
@@ -70,9 +71,11 @@ try {
 } catch (e) {
   console.error('manifest read failed:', e.message)
 }
-for (const k of fallbackClips) acts.add(k)
-for (const k of fallbackComposites) acts.add(k)
-const out = { version: 1, generatedFrom: source, acts: [...acts].sort(), fx: [...fx].sort() }
+if (!acts.size) {
+  for (const k of fallbackClips) acts.add(k)
+  for (const k of fallbackComposites) acts.add(k)
+}
+const out = { version: 1, generatedFrom: source, unknowns, acts: [...acts].sort(), fx: [...fx].sort() }
 const target = join(root, 'docs', 'generated', 'act-fx-whitelist.json')
 mkdirSync(dirname(target), { recursive: true })
 const check = process.argv.includes('--check')
