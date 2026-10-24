@@ -61,6 +61,7 @@
 > 本契约不再内联清单；生成物 `docs/generated/act-fx-whitelist.json` 仅作兼容视图：
 > `acts` = vocabulary.ACT_WHITELIST（28）；`fx`（兼容字段名 v1）= vocabulary.EXPRESSION_WHITELIST（14）。
 > 代码新逻辑一律读 vocabulary：ACT=28、FX=7、EXPRESSION=14、BUBBLE=独立白名单；校验 key 必须 ∈ 对应集合。
+> **一致性比较口径（v1.2）**：vocabulary v1.2 起提供平铺字段 `ACT_ALL`(28)/`EXPRESSION_ALL`(14)/`FX_ALL`(7)/`BUBBLE_ALL`；校验器以 `*_ALL` 为比较口径（嵌套仅供展示）。兼容视图 `whitelist.acts = ACT_ALL(28)`、`whitelist.fx = EXPRESSION_ALL(14)`；`--check` 按此对比。
 
 > 由 `scripts/gen-act-fx-whitelist.mjs` 从 manifest 17 clips + 11 composites + 29 §7 的 14 表情生成；`--check` 防漂移。以下为生成器说明，实际清单以 JSON 为准。
 - `FX_WHITELIST`（29 §7 的 14 表情名，见生成 JSON）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
