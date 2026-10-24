@@ -85,7 +85,16 @@ for (const line of lines) {
   }
 }
 if (failures.length) {
-  console.error(JSON.stringify(failures.slice(0, 8), null, 1))
+  for (const f of failures)
+    console.error(
+      'FAIL',
+      f.id,
+      JSON.stringify(f.flags || f.error),
+      'got',
+      JSON.stringify(f.got || null),
+      'want',
+      JSON.stringify(f.want || null)
+    )
 }
 console.log(`state-machine fixtures: ${pass}/${pass + fail} pass`)
 if (fail) process.exit(1)

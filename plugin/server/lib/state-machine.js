@@ -226,7 +226,7 @@ export function createStateMachine(opts = {}) {
       return snapshot()
     }
     counters.toolTypes = counters.toolTypes || {}
-    if (type === 'turn/start') counters.turn = Number((event.data && event.data.turn) || counters.turn + 1)
+    if (type === 'turn/start') counters.turn += 1
     if (type === 'step/start') counters.step = (counters.step || 0) + 1
     if (type === 'tool/call') {
       const id = String((event.data && (event.data.callId || event.data.id)) || `${type}:${counters.dispatchCount}`)
