@@ -30,6 +30,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\selfcheck.ps1 -Human
 - 输出 `healthy=true` 即表示桌宠本体可用；DSH 联动相关项（插件 / patch / 自启）缺失只记为 `warn`，不影响独立运行；
 - 如未启动桌宠，自检会显示 `pipe-down`（先按第 3 步启动再看，或直接运行 `.\selfcheck.ps1 -Repair -Yes` 让它拉起）。
 
+> **首次运行时桌宠尚未启动，`pipe` 可能显示 down/error，属预期**；做完第 3 步启动桌宠后，再跑一次
+> `.\selfcheck.ps1 -Human` 确认 `healthy=true` 即可。
+
 ### 第 3 步：启动并验证
 
 **zip 用户（推荐）**
@@ -134,6 +137,7 @@ node pet-work\tools\pet-cmd.mjs ping
 ## 6. 验收清单（zip 用户）
 
 - [ ] 解压后 `大肥鱼桌宠.exe` 可启动，窗口标题「大肥鱼桌宠」，形象为鲸鱼娘（非 classic）；
+- [ ] 首次流程：**先启动桌宠 → 再运行 `.\selfcheck.ps1 -Human` → `healthy=true`**（未启动时 `pipe-down` 属预期）；
 - [ ] 解压目录运行 `.\selfcheck.ps1 -Human` → `healthy=true`、`pipe` ok（或仅 DSH 联动项 warn）；
 - [ ] 可选：`.\selfcheck.ps1 -Repair -Yes` 注册开机自启（packaged 模式下任务指向 exe）；
 - [ ] DSH 联动（可选）：重启 `dsh web` 后设置页出现管理面板；
