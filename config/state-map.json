@@ -168,7 +168,15 @@
     "step/start": { "target": "thinking", "subkind": "step", "tier": "E1", "debounceMs": 300 },
     "user/message": {
       "target": "thinking", "subkind": "user", "when": "source.kind==='user' && session===current", "tier": "E1",
-      "activeSwitch": { "target": "session_focus", "subkind": "switch", "debounceMs": 2500, "when": "source.kind==='user' && session!==current", "deactivatePrevious": "perform:false" }
+      "activeSwitch": {
+        "target": "session_focus", "subkind": "switch", "debounceMs": 2500,
+        "trigger": { "isHuman": "event.source.kind==='user'", "sessionChanged": "event.data.sessionId !== preconditions.currentSessionId" },
+        "sessionChangedComputed": true,
+        "condition": "event.source.kind==='user' && event.data.sessionId !== preconditions.currentSessionId",
+        "deactivatePrevious": "perform:false",
+        "counter": "activeSwitchCount",
+        "note": "sessionChanged 由 state-machine 计算，不是 DSH 字段；未来事件带同名也忽略"
+      }
     },
     "tool/call": { "target": "tool", "subkindFrom": "toolType", "tier": "E1", "debounceMs": 300 },
     "tool/result": { "target": "thinking", "subkind": "step", "when": "all calls settled", "tier": "E1" },
@@ -202,7 +210,10 @@
     },
     "llm/retry": { "target": null, "escalate": { "count": 3, "windowMs": 60000, "then": "error/rate_limit" }, "tier": "E1" },
     "turn/end": {
-      "target": "done|error", "subkindFrom": "reason.kind", "tier": "E0|E2",
+      "target": null, "targetFromReasonMap": true, "reasonPriority": "reasonMap-only",
+      "subkindFrom": "reason.kind", "tier": "E0|E2",
+      "note": "最终 state 只由 reasonMap[reason.kind].state 决定；不得用上一状态/默认 thinking 覆盖；unknown→incomplete；completed+reportDue→subkind report",
+      "reportRule": { "when": "reason.kind==='completed' && preconditions.reportDue===true", "subkind": "report" },
       "reasonMap": {
         "completed": { "state": "done", "subkind": "completed", "bubbleLevel": "S1", "perform": true },
         "error": { "state": "error", "subkind": "unknown", "bubbleLevel": "S1", "perform": true },
@@ -214,10 +225,18 @@
     },
     "compaction/start": { "target": "compaction", "subkind": "start", "tier": "E1" },
     "compaction/end": { "target": "thinking", "subkind": "step", "tier": "E1" },
-    "job/registered": { "target": "job", "subkind": "started", "tier": "E1", "cooldownMs": 180000 },
-    "job/settled": { "target": "job", "subkindFrom": "status", "tier": "E1", "debounceMs": 30000 },
-    "model/selection": { "target": "model_switch", "subkind": "selection", "tier": "E2", "cooldownMs": 60000 },
-    "request/context": { "target": "model_switch", "subkind": "route", "tier": "E2", "cooldownMs": 60000, "panelOnly": true },
+    "job/registered": { "kind": "state", "target": "job", "subkind": "started", "tier": "E1", "cooldownMs": 180000 },
+    "job/settled": {
+      "kind": "state", "target": "job", "subkindFrom": "status", "tier": "E1", "debounceMs": 30000,
+      "exitRule": "remaining=jobs.active-1; remaining>0 ? job(status) : thinking/step",
+      "exitState": "thinking", "exitSubkind": "step"
+    },
+    "model/selection": { "kind": "state", "target": "model_switch", "subkind": "selection", "tier": "E2", "cooldownMs": 60000 },
+    "request/context": {
+      "kind": "panelOnly", "target": null, "stateUnchanged": true, "panelOnly": true,
+      "tier": "E2", "cooldownMs": 60000,
+      "note": "只更新面板 model/route；不改变 state、不演出、不产 state-machine counter"
+    },
     "session/created": { "target": null, "counters": ["sessions"] },
     "assistant/message": {
       "target": null, "stateUnchanged": true, "counters": [],
@@ -232,7 +251,22 @@
     "session/title": { "target": null, "panelOnly": true },
     "working-directory/change": { "target": null, "oneShot": true, "tier": "E2", "cooldownMs": 300000 },
     "agent/status": { "target": "idle", "when": "idle && no open turn", "tier": "E1", "fallbackOnly": true },
-    "agent/error": { "target": "error", "subkind": "unknown", "tier": "E0", "cooldownMs": 600000 }
+    "agent/error": { "target": "error", "subkind": "unknown", "tier": "E0", "cooldownMs": 600000 },
+    "cost/warn80": {
+      "source": "plugin-internal", "target": "cost", "subkind": "warn80", "tier": "E2",
+      "condition": "alerts.cost.enabled && todayUsageRatio>=0.8", "maxPerDay": 1,
+      "note": "cost 账本派生，不是 DSH 事件；默认关"
+    },
+    "cost/limit100": {
+      "source": "plugin-internal", "target": "cost", "subkind": "limit100", "tier": "E2",
+      "condition": "alerts.cost.enabled && todayUsageRatio>=1.0", "maxPerDay": 1,
+      "note": "同上；默认关"
+    },
+    "timer/sleep": {
+      "source": "plugin-internal", "target": "sleep", "subkind": "night", "tier": "E1",
+      "condition": "idle>=35min && localTime>=23:30", "s0Wake": true,
+      "note": "idle/night 计时器派生；S0 可唤醒；pet 本地 120s 打盹不属此事件"
+    }
   },
   "attribution": {
     "nonActiveSessions": { "perform": false, "note": "非当前会话（含子代理/团队/后台）一律 perform:false；只更新计数/情绪/面板" },
@@ -279,6 +313,7 @@
     "rules": {
       "subkindReplacement": "L2 命中即整体替换 L3，不做字段合并",
       "eventFieldMerge": "L1 对 base 字段级合并：出现 key 覆盖、null 抑制、缺省继承",
+      "L1Guard": "L1 当前 0 使用；若启用，不得在 PERFORMANCE script 权威下直接设 clip/composite（会构成事件直连动作），仅允许非动作字段（expression/bubbleKind/bubbleLevel/gaze 等）或 PERFORMANCE 层禁用/降级时使用；违反者 fixture/集成 FAIL（reviewer guard）",
       "aliasNormalization": "加载期全局归一化（level→bubbleLevel、surface、bubble-none）；链内不再处理",
       "oneShot": "不在链内：resolve 只出 baseline，renderer 之后叠加 oneShot，结束回 baseline",
       "background": "perform:false 只抑制渲染；解析链照常；fixtures presentation:null=不校验",
@@ -302,22 +337,30 @@
     },
     "stateMachineKeysCanonical": ["turn", "step", "toolCalls", "toolResults", "approvalsAsked", "approvalsDecided", "retry", "jobs.active", "backgroundCount", "unknownEventCount", "unknownIntentKind", "dispatchCount", "activeSwitchCount"],
     "rule": "state fixtures 的 expect.counters 只允许 stateMachine 表 key；出现 perfCost/panel key → fixture invalid: counter ownership FAIL；绝对期望（回放后累计），tool/approval 按 id 去重；turn/step 为事件次数，与 data.turn 数值无关",
+    "initRule": "preconditions.counters 为事件前初始值，深度合并到零态（如 {jobs:{active:1}}）；事件按 given.events 数组顺序回放；expect.counters 为回放后绝对值（v3.1）",
     "dedupe": { "toolCalls": "callId", "toolResults": "callId", "approvalsAsked": "id", "approvalsDecided": "id", "jobs.active": "jobId", "backgroundCount": "session" }
   },
   "fixtureSchema": {
     "version": 3,
+    "addendum": "v3.1",
     "count": {"state": 54, "performance": 32},
     "files": ["docs/state-fixtures.draft.jsonl", "docs/performance-fixtures.draft.jsonl"],
     "requiredPreconditions": ["state"],
     "preconditionsRule": "schema 3 起 given.preconditions.state 必填（无先前状态显式写 idle）；preconditions.counters 承载初始计数（不再接受顶层点号 key）",
     "requiredExpect": ["state"],
-    "noRouteEvents": ["assistant/message", "session/title"],
+    "noRouteEvents": ["assistant/message", "session/title", "request/context"],
+    "eventClasses": {
+      "state": ["turn/start", "step/start", "tool/call", "tool/result", "approval/asked", "approval/decided", "user-questions/request", "userQuestions.settled", "compaction/start", "compaction/end", "job/registered", "job/settled", "model/selection", "session/disposed", "turn/end"],
+      "pureOneShot": ["goal/change", "plan/mode", "team/task", "team/member", "working-directory/change"],
+      "panelOnly": ["request/context", "schedule/change", "session/title", "assistant/message"],
+      "internal": ["cost/warn80", "cost/limit100", "timer/sleep"]
+    },
     "oneShotRule": {
       "stateExit": ["approval/decided", "userQuestions.settled"],
       "pureOneShot": ["goal/change", "plan/mode", "team/task", "team/member", "working-directory/change"],
       "rule": "state-exit 改 state（stateUnchanged:false）；pure oneShot state 不变（state 回显当前值，stateUnchanged:true）；每条 fixture 必须有 expect.state"
     },
-    "clarification": ["docs/FIXTURE-CLARIFICATION-v1.md", "docs/FIXTURE-CLARIFICATION-v2.md"]
+    "clarification": ["docs/FIXTURE-CLARIFICATION-v1.md", "docs/FIXTURE-CLARIFICATION-v2.md", "docs/FIXTURE-CLARIFICATION-v3.md", "docs/FIXTURE-CLARIFICATION-v3.1.md"]
   },
   "oneShots": {
     "approval_return": { "on": "approval/decided", "clip": "turnStop", "expression": "idleSmile", "bubbleLevel": "S3", "move": "back", "cooldownMs": 15000 },

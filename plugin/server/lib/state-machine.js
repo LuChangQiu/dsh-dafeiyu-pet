@@ -161,7 +161,38 @@ export function createStateMachine(opts = {}) {
     }
     let target = String(route.target || '')
     let dynSub = null
-    if (route.reasonMap) {
+    if (route.activeSwitch) {
+      const d = event.data || {}
+      const sessionId = d.sessionId || d.session_id || null
+      const currentSessionId = d.currentSessionId || d.current_session_id || null
+      const isHuman = d.isHuman !== false
+      const sessionChanged =
+        d.sessionChanged === true ||
+        (!!sessionId && !!currentSessionId && String(sessionId) !== String(currentSessionId))
+      if (isHuman && sessionChanged) {
+        target = String(route.activeSwitch.target || 'session_focus')
+        dynSub = route.activeSwitch.subkind || 'switch'
+        counters.activeSwitchCount = (counters.activeSwitchCount || 0) + 1
+      }
+    }
+    if (route.targetFromReasonMap && route.reasonMap) {
+      const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
+      const rm = route.reasonMap[rk] ||
+        (rk ? null : route.reasonMap.incomplete) || { state: 'done', subkind: 'incomplete' }
+      target = rm.state || target
+      dynSub = rm.subkind || dynSub
+      if (route.reportRule && rk === 'completed' && event.data && event.data.reportDue === true)
+        dynSub = route.reportRule.subkind || 'report'
+    } else if (route.reasonMap) {
+      const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
+      const rm = route.reasonMap[rk] || route.reasonMap.default
+      if (rm) {
+        target = rm.state || target
+        dynSub = rm.subkind || null
+      }
+    }
+    if (!target || !stateDef(target)) return snapshot()
+    if (false) {
       const rk = String((event.data && event.data.reason && event.data.reason.kind) || '')
       const rm = route.reasonMap[rk] || route.reasonMap.default || null
       if (rm) {
