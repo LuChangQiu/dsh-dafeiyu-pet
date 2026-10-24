@@ -190,7 +190,8 @@ export async function createMockChatServer(opts = {}) {
         let freq = state.frequencyPerDay
         if (payload.frequencyPerDay != null) {
           freq = Number(payload.frequencyPerDay)
-          if (!Number.isFinite(freq) || freq < 1 || freq > 24)
+          // 30 §4.4：主动开口 ≤4 次/天（UI 只提供 1/2/4）
+          if (!Number.isFinite(freq) || freq < 1 || freq > 4)
             return rpcError(res, rpcId, 'INVALID_INPUT', 'frequencyPerDay')
         }
         if (payload.enabled === true) {

@@ -1567,8 +1567,11 @@ await testAsync(
     assert.match(html, /chat\.settings\.set/)
     assert.match(html, /id="quietMode"/)
     assert.match(html, /id="freq"/)
+    assert.doesNotMatch(html, /option value="8"/)
     assert.match(html, /id="memEnabled"/)
     assert.match(html, /id="btnSaveSettings"/)
+    assert.match(html, /id="btnDisable"/)
+    assert.match(html, /enabled: false/)
     assert.match(html, /id="quietState"/)
     // 隐私说明 / 清空确认
     assert.match(html, /高风险敏感信息/)
@@ -1594,16 +1597,16 @@ await testAsync('chat mock B3：settings.get 默认值 + set 静音/频率/记�
     assert.equal(s0.result.memoryEnabled, true)
     const set = await chatRpc(url, 'chat.settings.set', {
       quietMode: true,
-      frequencyPerDay: 8,
+      frequencyPerDay: 2,
       memoryEnabled: false
     })
     assert.equal(set.ok, true)
     assert.equal(set.result.settings.quietMode, true)
-    assert.equal(set.result.settings.frequencyPerDay, 8)
+    assert.equal(set.result.settings.frequencyPerDay, 2)
     assert.equal(set.result.settings.memoryEnabled, false)
     const s1 = await chatRpc(url, 'chat.settings.get', {})
     assert.equal(s1.result.quietMode, true)
-    assert.equal(s1.result.frequencyPerDay, 8)
+    assert.equal(s1.result.frequencyPerDay, 2)
     assert.equal(s1.result.memoryEnabled, false)
     assert.equal(h.state.writes, 0)
   })
@@ -1655,6 +1658,9 @@ await testAsync('chat mock B3：settings 白名单/频率范围校验；关闭�
     assert.equal(unknown.error.code, 'INVALID_INPUT')
     const badFreq = await chatRpc(url, 'chat.settings.set', { frequencyPerDay: 0 })
     assert.equal(badFreq.error.code, 'INVALID_INPUT')
+    // 30 §4.4 主动开口 ≤4 次/天：8 视为超限
+    const badFreqHi = await chatRpc(url, 'chat.settings.set', { frequencyPerDay: 8 })
+    assert.equal(badFreqHi.error.code, 'INVALID_INPUT')
     const freq = await chatRpc(url, 'chat.settings.set', { frequencyPerDay: 2 })
     assert.equal(freq.ok, true)
     assert.equal(freq.result.settings.frequencyPerDay, 2)
@@ -1670,6 +1676,31 @@ await testAsync('chat mock B3：settings 白名单/频率范围校验；关闭�
     const on = await chatRpc(url, 'chat.settings.set', { enabled: true })
     assert.equal(on.ok, true)
     assert.equal(on.result.settings.enabled, true)
+    assert.equal(h.state.writes, 0)
+  })
+})
+
+await testAsync('chat mock B3.1：关闭聊天（enabled:false）→ 禁用态；同意记录保留、可再开启', async () => {
+  await withChatMock({ enabled: true }, async (h, url) => {
+    const off = await chatRpc(url, 'chat.settings.set', { enabled: false })
+    assert.equal(off.ok, true)
+    assert.equal(off.result.settings.enabled, false)
+    assert.equal(off.result.settings.consent.version, 'v1')
+    const st = await chatRpc(url, 'chat.state.get', {})
+    assert.equal(st.ok, false)
+    assert.equal(st.error.code, 'CHAT_DISABLED')
+    const sg = await chatRpc(url, 'chat.settings.get', {})
+    assert.equal(sg.ok, true)
+    assert.equal(sg.result.enabled, false)
+    assert.equal(sg.result.consent.version, 'v1')
+    // UI 再开启始终显式带 consent {version,at}
+    const on = await chatRpc(url, 'chat.settings.set', {
+      enabled: true,
+      consent: { version: 'v1', at: '2026-01-03T00:00:00.000Z' }
+    })
+    assert.equal(on.ok, true)
+    assert.equal(on.result.settings.enabled, true)
+    assert.equal(on.result.settings.consent.version, 'v1')
     assert.equal(h.state.writes, 0)
   })
 })
