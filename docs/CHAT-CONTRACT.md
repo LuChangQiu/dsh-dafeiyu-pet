@@ -9,14 +9,14 @@
 | method | payload | result |
 |---|---|---|
 | `chat.state.get` | `{}` | `{enabled,quietMode,frequencyPerDay,memoryEnabled,stage,stageLabel,memoryCount,todayChats,busy,lastAt}`（`stage` R0–R3 仅 decode 为 `stageLabel`，不返回 affinity 数值） |
-| `chat.send` | `{text≤500, clientMsgId?}` | `{id,reply:{text≤80,parts≤2},act?,fx?,moodWord,latencyMs,firstSentence,fallback?}`；失败 `{ok:false,error:{code},reply:<21字池短句>,fallback:true}` |
+| `chat.send` | `{text≤500, clientMsgId?}` | `{id,reply:{text≤80,parts≤2},act?,fx?,moodWord,latencyMs,firstSentence,fallback?}`；**act/fx 服务端白名单**（仅已实现动作名，LLM 不得任意指定）；text/parts 长度校验，越界 400 |；失败 `{ok:false,error:{code},reply:<21字池短句>,fallback:true}` |
 | `chat.history.get` | `{limit≤100,before?}` | `[{id,at,role:'user'|'her',text,kind}]`（仅聊天内容，无 DSH 原文/路径） |
 | `chat.history.clear` | `{confirm:true}` | `{ok,cleared:n}` |
 | `memory.list` | `{limit≤50,offset?}` | `[{id,at,kind,text≤80摘要,importance,source}]`（`sensitivity=high` 不返回） |
 | `memory.delete` | `{id}` | `{ok}`（软删） |
 | `memory.forget` | `{query}` | `{ok,deleted:n}`（模糊删） |
 | `memory.clear` | `{confirm:true}` | `{ok,cleared:n}`（硬清空；关系回 R1 不惩罚） |
-| `memory.export` | `{dir?}` | `{ok,path}`（P2；仅本地、排除 high/路径/DSH 内容） |
+| `memory.export` | `{dir?}` | `{ok,exported:true,basename?}`（P2；仅本地；**不返回绝对 path**，排除 high/路径/DSH 内容） |
 | `chat.settings.get` | `{}` | `{enabled,consent,quietMode,frequencyPerDay,memoryEnabled,historyRetentionDays,updatedAt}` |
 | `chat.settings.set` | 白名单 `{enabled?,quietMode?,frequencyPerDay?,memoryEnabled?}` | `{ok,settings}`；首次 `enabled=true` 须带 `consent:{version:'v1',at:ISO}` |
 
@@ -43,3 +43,13 @@
 - 默认 `enabled=false` → 所有方法返回 `403 CHAT_DISABLED/pending`；
 - mock LLM 固定回复 + 可注入 `LLM_FAILED`/`BUDGET_EXCEEDED`；**不写盘、不调真 LLM、不造持久历史/记忆**（临时内存，退出即清）；
 - 仅 dev 用，不进用户文档；不碰真实 pet-work。
+
+
+## 契约测试（P1 条件，`scripts/test-chat-backend.mjs` 覆盖）
+1. `high` 内容：不落 history/memory、不返回 UI、不可导出；日志无原文。
+2. `enabled=true` 首次必须带 `consent{version,at}`，缺失 400。
+3. TTL 清理（>historyRetentionDays）、`clearHistory`/`clearMemory` 分离且需 confirm、清空后关系 R1。
+4. `chat.enabled=false` → 所有方法 403 `CHAT_DISABLED`。
+5. mock harness 不写盘：运行后无新增/修改 `memory.json`/`chat-history.json`/`chat-settings.json`，退出即清。
+6. `memory.export` 响应不含绝对路径。
+7. `chat.send` 的 act/fx 仅白名单；非白名单→剔除或 400（按实现），text/parts 越界→400。
