@@ -6121,8 +6121,9 @@ class PetWindow(QWidget):
                         if side in ("left", "right"):
                             self._set_dir(side, -1 if side == "left" else 1)
                 elif self._enh_edge:
-                    # 拖离超过 40px 才解除（滞回，防抖）
-                    self._enh_edge = None
+                    # 拖离超过 40px 才解除（滞回，防抖；23 §4.2 释放阈值）
+                    if self._edge_distance() > 40:
+                        self._enh_edge = None
         elif self._enh_phys is not None:
             self._enh_edge = None
         return self._enh_tick_physics()
@@ -6197,6 +6198,15 @@ class PetWindow(QWidget):
         except Exception:
             pass
         return None
+
+    def _edge_distance(self):
+        """距最近屏幕边缘的像素距离（40px 释放滞回用）。"""
+        try:
+            geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+            x, y, w, h = self.x(), self.y(), self.width(), self.height()
+            return min(x - geo.left(), geo.right() - (x + w), y - geo.top(), geo.bottom() - (y + h))
+        except Exception:
+            return 9999
 
     def _enh_state(self, now):
         """paintEvent 用：一帧增强参数（关闭时返回中性值 = 原渲染）。"""
@@ -6333,6 +6343,9 @@ class PetWindow(QWidget):
                 elif val == "bottom":
                     self.move(self.x(), geo.bottom() - h + 1)
                 self._enh_edge = None if val == "none" else {"side": val, "since_ms": self.t * self.tick_ms}
+                # 验收/贴边后保持：清 wander 目标 + 原地待 10s，避免立刻被散步带走
+                self.target = None
+                self.rest_until = self.t * self.tick_ms + 10000
                 self.update()
                 return "edge:" + str(val)
         except Exception as exc:
