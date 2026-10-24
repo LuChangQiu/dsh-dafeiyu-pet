@@ -19,13 +19,14 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createMockCtx, createMockServices, mockSession, mockEvent } from './mock-ctx.mjs'
 
-const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
 const pluginPath = path.join(repo, 'plugin', 'server', 'lib', 'index.js')
 
+console.error('HARNESS-START')
 const checks = []
 const check = (name, cond, detail = '') => {
   checks.push({ name, ok: !!cond, detail })
@@ -34,7 +35,10 @@ const check = (name, cond, detail = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const failures = []
 const uncaught = []
-process.on('uncaughtException', (e) => uncaught.push(String((e && e.stack) || e)))
+process.on('uncaughtException', (e) => {
+  console.error('UNCAUGHT:', (e && e.stack) || e)
+  process.exit(3)
+})
 process.on('unhandledRejection', (e) => uncaught.push(String((e && e.stack) || e)))
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-harness-'))
