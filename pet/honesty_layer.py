@@ -110,6 +110,9 @@ class StateHonesty:
             self.error_streak += 1
         else:
             self.error_streak = 0
+            # P1 修复：任何非 error 续的新 state 事件都取消 pending cry——
+            # error×2 后即使紧接着 done/成功状态，也不能再哭（cry_at 必须清掉）。
+            self.cry_at = 0.0
         return {'prev': prev, 'was_stuck': was_stuck, 'error_streak': self.error_streak}
 
     def is_busy(self):
@@ -122,7 +125,8 @@ class StateHonesty:
             return False
         if self.stuck_active:
             return False
-        if now - self.last_event_at < self.config.stuck_after_s:
+        if now - self.last_event_at <= self.config.stuck_after_s:
+            # 严格"超过"：从最后一次 state 事件起算，恰好 25s 不算卡住（避免边界抖动误判）
             return False
         self.stuck_active = True
         self.stuck_since = now

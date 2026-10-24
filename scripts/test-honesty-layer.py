@@ -91,5 +91,35 @@ w3.note_state('waiting_input', now=0.0)
 check('disabled 时不补等待短句', w3.waiting_line() == '')
 check('waiting_input 不会进入卡住', StateHonesty({}).stuck_due(100.0) is False)
 
+# ---------- P1：error×2 后成功 → 取消 pending cry ----------
+pc = StateHonesty({})
+pc.note_state('error', now=0.0)
+pc.note_state('error', now=1.0)
+pc.schedule_cry(1.0)
+check('P1: error×2 已安排 cry', pc.take_cry_due(99.0) is True)  # 先消费掉一次，下面重新安排
+pc.note_state('error', now=10.0)
+pc.note_state('error', now=11.0)
+pc.schedule_cry(11.0)
+pc.note_state('done', now=11.2)
+check('P1: done 后 take_cry_due 不再触发', pc.take_cry_due(12.5) is False)
+check('P1: done 后 streak 重置（只算首次承认）', pc.error_streak == 0 and pc.error_line() == pc.config.error_lines[0])
+pc.note_state('error', now=20.0)
+check('P1: done 后再 error 只算首次', pc.error_should_cry() is False and pc.error_line() == pc.config.error_lines[0])
+
+# ---------- P2：卡住边界（严格 >25s）与"同 thinking 反复事件不被误判" ----------
+bd = StateHonesty({})
+bd.note_state('thinking', now=0.0)
+check('P2: 恰好 25.0s 不判卡住', bd.stuck_due(25.0) is False)
+check('P2: 25.001s 判卡住', bd.stuck_due(25.001) is True)
+bd2 = StateHonesty({})
+bd2.note_state('thinking', now=0.0)
+for i in range(1, 6):
+    bd2.note_state('thinking', now=i * 20.0)   # 周期心跳/重复事件
+check('P2: 重复 thinking 事件持续刷新，不误判卡住', bd2.stuck_due(99.0) is False)
+bd3 = StateHonesty({})
+bd3.note_state('tool', now=0.0)
+check('P2: tool 状态同样按最后事件起算', bd3.stuck_due(25.001) is True)
+
+
 print('\n%s honesty-layer: %d passed, %d failed' % ('PASS' if fail == 0 else 'FAIL', ok, fail))
 sys.exit(0 if fail == 0 else 1)
