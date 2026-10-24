@@ -2593,7 +2593,7 @@ export function apply(ctx, rawConfig) {
      * @param {any} res
      */
     const serveHome = (req, res) => {
-      const html = renderHomeHtml()
+      const html = renderHomeHtml({ channel: cfg.channel })
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
@@ -2607,7 +2607,7 @@ export function apply(ctx, rawConfig) {
      * @param {any} res
      */
     const serveChat = (req, res) => {
-      const html = renderChatHtml()
+      const html = renderChatHtml({ channel: cfg.channel })
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',

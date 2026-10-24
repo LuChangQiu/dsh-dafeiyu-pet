@@ -12,7 +12,7 @@
  * - 响应式：≥720px 双列，<720px 单列；深浅色跟随系统。
  */
 
-import { PORTRAIT_SRC, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
+import { portraitSrc, DEFAULT_CHANNEL, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
 
 /** 工具类型 → 图标/中文（与 STATE-CHANNEL toolType 对齐，未知类型显示原值）。 */
 const TOOL_TYPE_META = {
@@ -51,8 +51,13 @@ const EVENT_KIND_LABEL = {
   event: '事件'
 }
 
-/** 组装主页 HTML（自包含；无外部依赖）。 */
-export function renderHomeHtml() {
+/**
+ * 组装主页 HTML（自包含；无外部依赖）。
+ * @param {{ channel?: string }} [options] 同源通道前缀（默认 DEFAULT_CHANNEL；由 host 传 cfg.channel）
+ */
+export function renderHomeHtml(options = {}) {
+  const channel = (options && options.channel) || DEFAULT_CHANNEL
+  const portraitUrl = portraitSrc(channel)
   const toolMetaJson = JSON.stringify(TOOL_TYPE_META)
   const toneJson = JSON.stringify(TONE_COLOR)
   const classToneJson = JSON.stringify(STATE_CLASS_TONE)
@@ -127,7 +132,7 @@ export function renderHomeHtml() {
     '  <p class="pagetitle" id="pageMeta">🐋 大肥鱼主页 · 读取中…</p>',
     '  <header class="top" id="top">',
     '    <div class="avatar" id="avatarSlot"><span class="fb" aria-hidden="true">29</span><img src="' +
-      PORTRAIT_SRC +
+      portraitUrl +
       '" alt="' +
       PORTRAIT_ALT +
       '" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></div>',
@@ -262,7 +267,7 @@ export function renderHomeHtml() {
     '  var TONE = ' + toneJson + ';',
     '  var CLASS_TONE = ' + classToneJson + ';',
     '  var KIND_LABEL = ' + kindJson + ';',
-    '  var CHANNEL = "/pet-bridge-ui";',
+    '  var CHANNEL = ' + JSON.stringify(channel) + ';',
     '  var REFRESH_MS = 5000;',
     '  var polling = null;',
     '  var timelineFilter = "all";',

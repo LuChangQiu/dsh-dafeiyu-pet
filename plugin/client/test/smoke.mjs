@@ -1713,7 +1713,10 @@ await testAsync('portrait：本地镜像 PNG 可用、与仓库 assets 同字节
   const buf = p.readPortrait()
   assert.ok(buf && buf.length > 10000, '本地镜像 portrait 应存在且 >10KB')
   assert.deepEqual([...buf.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic')
-  assert.equal(p.PORTRAIT_SRC, '/pet-bridge-ui/asset/portrait.png')
+  // src 由 channel 推导（默认值 = 既有同源通道；不写死）
+  assert.equal(p.DEFAULT_CHANNEL, '/pet-bridge-ui')
+  assert.equal(p.portraitSrc(), '/pet-bridge-ui/asset/portrait.png')
+  assert.equal(p.portraitSrc('/custom-ui'), '/custom-ui/asset/portrait.png')
   assert.match(p.PORTRAIT_ATTRIBUTION, /YunYueSama/)
   assert.match(p.PORTRAIT_ATTRIBUTION, /codex-deepseek-pet/)
   assert.match(p.PORTRAIT_ATTRIBUTION, /大肥鱼项目署名许可 1\.0/)
@@ -1724,8 +1727,33 @@ await testAsync('portrait：本地镜像 PNG 可用、与仓库 assets 同字节
   const mirror = fs.readFileSync(path.join(libDir, 'assets', 'whale-girl', 'portrait.png'))
   const repoAsset = fs.readFileSync(path.join(here, '..', '..', '..', 'assets', 'whale-girl', 'portrait.png'))
   assert.ok(mirror.equals(repoAsset), 'lib/assets 镜像应与 assets/whale-girl/portrait.png 同字节')
+  // 镜像署名的目录说明需与镜像位置一致（不是 pet-work 原目录）
+  const mirrorAttr = fs.readFileSync(path.join(libDir, 'assets', 'whale-girl', 'ATTRIBUTION.md'), 'utf8')
+  assert.match(
+    mirrorAttr,
+    /plugin\/client\/lib\/assets\/whale-girl\//,
+    '镜像 ATTRIBUTION 目录应为 plugin/client/lib/assets/...'
+  )
+  assert.match(mirrorAttr, /YunYueSama/)
+  assert.doesNotMatch(mirrorAttr, /本目录（`pet-work\/assets/, '不得保留原目录表述为“本目录”')
   // 降级：读不到时返回 null（供页面 onerror/色板使用）
   assert.equal(typeof p.resetPortraitCache, 'function')
+})
+
+await testAsync('channel 跟随：portrait src / RPC_URL / 主页 CHANNEL 均由传入 channel 推导（默认不变）', async () => {
+  const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
+  const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
+  const chat = renderChatHtml({ channel: '/custom-ui' })
+  assert.match(chat, /src="\/custom-ui\/asset\/portrait\.png"/)
+  assert.match(chat, /var RPC_URL = "\/custom-ui\/chat\/rpc"/)
+  assert.doesNotMatch(chat, /src="\/pet-bridge-ui\/asset\/portrait\.png"/)
+  const home = renderHomeHtml({ channel: '/custom-ui' })
+  assert.match(home, /src="\/custom-ui\/asset\/portrait\.png"/)
+  assert.match(home, /var CHANNEL = "\/custom-ui"/)
+  assert.doesNotMatch(home, /src="\/pet-bridge-ui\/asset\/portrait\.png"/)
+  // 默认（未传）= 既有通道，行为不变
+  assert.match(renderChatHtml(), /src="\/pet-bridge-ui\/asset\/portrait\.png"/)
+  assert.match(renderHomeHtml(), /var CHANNEL = "\/pet-bridge-ui"/)
 })
 
 await testAsync('renderChatHtml（B4）：头像位本地镜像 + 29 色板降级 + 署名 footer、无外链', async () => {
@@ -1769,13 +1797,22 @@ await testAsync('client.js（B4）：设置页形象位 + 署名；3D（实验�
   assert.doesNotMatch(src, /https?:\/\/github\.com\/YunYueSama/, '设置页署名不带外链 scheme')
 })
 
-await testAsync('index.js（B4）：GET 头像路由挂在同 channel；缺失时 404 由页面降级', async () => {
-  const src = fs.readFileSync(path.join(libDir, 'index.js'), 'utf8')
-  assert.match(src, /import \{ PORTRAIT_ROUTE_SUFFIX, readPortrait \} from '\.\/portrait\.js'/)
-  assert.match(src, /\[cfg\.channel \+ PORTRAIT_ROUTE_SUFFIX\]: servePortrait/)
-  assert.match(src, /'content-type': 'image\/png'/)
-  assert.match(src, /res\.writeHead\(404/)
-})
+await testAsync(
+  'index.js（B4）：GET 头像路由挂在同 channel；页面渲染传 cfg.channel；缺失时 404 由页面降级',
+  async () => {
+    const src = fs.readFileSync(path.join(libDir, 'index.js'), 'utf8')
+    assert.match(src, /import \{ PORTRAIT_ROUTE_SUFFIX, readPortrait \} from '\.\/portrait\.js'/)
+    assert.match(src, /\[cfg\.channel \+ PORTRAIT_ROUTE_SUFFIX\]: servePortrait/)
+    assert.match(src, /renderHomeHtml\(\{ channel: cfg\.channel \}\)/, '主页渲染需传 cfg.channel（头像 src 跟随路由）')
+    assert.match(
+      src,
+      /renderChatHtml\(\{ channel: cfg\.channel \}\)/,
+      '聊天页渲染需传 cfg.channel（头像 src 跟随路由）'
+    )
+    assert.match(src, /'content-type': 'image\/png'/)
+    assert.match(src, /res\.writeHead\(404/)
+  }
+)
 
 await testAsync('chat mock（B4）：GET /asset/portrait.png → PNG；portrait:false → 404（降级路径）', async () => {
   await withChatMock({}, async (h, url) => {

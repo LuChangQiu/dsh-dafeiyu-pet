@@ -13,10 +13,19 @@
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-/** 资产路由后缀（挂到 `<channel>` 前缀下；页面 src 为 PORTRAIT_SRC）。 */
+/** 默认同源通道（与 host 配置 `cfg.channel` 的默认值一致；页面渲染应传 cfg.channel）。 */
+export const DEFAULT_CHANNEL = '/pet-bridge-ui'
+/** 资产路由后缀（挂到 `<channel>` 前缀下）。 */
 export const PORTRAIT_ROUTE_SUFFIX = '/asset/portrait.png'
-/** 页面引用的同源头像地址（与 channel 固定前缀一致）。 */
-export const PORTRAIT_SRC = '/pet-bridge-ui' + PORTRAIT_ROUTE_SUFFIX
+/**
+ * 页面引用的同源头像地址：**由 channel 推导**（与 `mountWebRoute` 注册的
+ * `[cfg.channel + PORTRAIT_ROUTE_SUFFIX]` 保持一致），避免换 channel 后头像 404。
+ * @param {string} [channel] 同源通道前缀（默认 DEFAULT_CHANNEL）
+ * @returns {string}
+ */
+export function portraitSrc(channel = DEFAULT_CHANNEL) {
+  return String(channel || DEFAULT_CHANNEL) + PORTRAIT_ROUTE_SUFFIX
+}
 /** 本地镜像相对 lib/ 的路径。 */
 export const PORTRAIT_MIRROR_REL = 'assets/whale-girl/portrait.png'
 /** 头像 alt 文案。 */

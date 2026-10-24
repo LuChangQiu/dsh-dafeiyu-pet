@@ -1,7 +1,7 @@
 # ATTRIBUTION / 素材署名与许可
 
-> 本目录（`pet-work/assets/whale-girl/`）是「大肥鱼 / DeepSeek 鲸鱼娘」**2D 桌面宠物动画帧资产**，由 `codex-deepseek-pet` 仓库的角色动画素材筛选、裁剪、降采样而来。
-> 生成任务：task-92（character-scout）｜生成日期：2026-10-24
+> 本目录（`plugin/client/lib/assets/whale-girl/`）是「大肥鱼 / DeepSeek 鲸鱼娘」**2D 桌面宠物动画帧资产**的发布镜像，由 `codex-deepseek-pet` 仓库的角色动画素材筛选、裁剪、降采样而来（原始生成目录：`pet-work/assets/whale-girl/`，镜像与仓库 `assets/whale-girl/` 同字节）。
+> 生成任务：task-92（character-scout）｜生成日期：2026-10-24｜镜像用途：task-107 B4 随插件 `lib` 分发的形象位头像
 
 ## 1. 署名（分发/展示/发布时必须保留）
 

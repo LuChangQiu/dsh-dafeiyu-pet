@@ -12,7 +12,7 @@
  * - B4（task-107）：头像位使用本地镜像 portrait.png（署名见页面 footer），未装资产降级为 29 色板。
  */
 
-import { PORTRAIT_SRC, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
+import { portraitSrc, DEFAULT_CHANNEL, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
 
 /** 聊天页静态文案。 */
 const CHAT_TEXTS = {
@@ -75,8 +75,13 @@ const ERROR_TEXT = {
   NETWORK: '连接不稳定，重试一次'
 }
 
-/** 组装聊天页 HTML（自包含；同源 RPC mock-first；无外链）。 */
-export function renderChatHtml() {
+/**
+ * 组装聊天页 HTML（自包含；同源 RPC mock-first；无外链）。
+ * @param {{ channel?: string }} [options] 同源通道前缀（默认 DEFAULT_CHANNEL；由 host 传 cfg.channel）
+ */
+export function renderChatHtml(options = {}) {
+  const channel = (options && options.channel) || DEFAULT_CHANNEL
+  const portraitUrl = portraitSrc(channel)
   return [
     '<!doctype html>',
     '<html lang="zh-CN">',
@@ -137,7 +142,7 @@ export function renderChatHtml() {
     '    <div class="avatar" id="avatarSlot"><span class="fb" aria-hidden="true">' +
       CHAT_TEXTS.avatarPlaceholder +
       '</span><img src="' +
-      PORTRAIT_SRC +
+      portraitUrl +
       '" alt="' +
       PORTRAIT_ALT +
       '" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></div>',
@@ -216,7 +221,7 @@ export function renderChatHtml() {
     '<script>',
     '(function(){',
     '  "use strict";',
-    '  var RPC_URL = "/pet-bridge-ui/chat/rpc";',
+    '  var RPC_URL = ' + JSON.stringify(channel + '/chat/rpc') + ';',
     '  var MAX_TEXT = 500;',
     '  var T = ' +
       JSON.stringify({
