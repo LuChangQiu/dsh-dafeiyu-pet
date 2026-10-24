@@ -1,7 +1,7 @@
-# CHAT-CONTRACT（task-90，v1 定稿）
+# CHAT-CONTRACT（task-90，v1.1 定稿）
 
 > DSH 桌宠聊天后端契约。默认 **关闭**（`chat.enabled=false`）；关闭时端点 403 `CHAT_DISABLED`。
-> 传输：**RPC 信封** `POST /pet-bridge-ui/chat`（同源 cookie 鉴权；401/403 同现有面板）。请求 `{rpcId, method, payload}`，响应 `{rpcId, ok, result?, error?}`；`error={code,message,retryable}`。
+> 传输：**RPC 信封** `POST /pet-bridge-ui/chat/rpc`（同源 cookie 鉴权；401/403 同现有面板）。请求 `{rpcId, method, payload}`，响应 `{rpcId, ok, result?, error?}`；`error={code,message,retryable}`。
 > 人设：`30-companion-persona-spec.md §4.2`（鲸鱼娘朋友、≤40 字/≤2 句、先接情绪、关系阶段/情绪/最近≤5 记忆；不装真人、不 PUA/恋爱、不窥探、不读 DSH 原文）。
 > 存储：`pet-work/memory.json`、`chat-settings.json`、`chat-history.json`（服务端内部，原子写；不对 UI 暴露文件格式）。
 
@@ -53,3 +53,15 @@
 5. mock harness 不写盘：运行后无新增/修改 `memory.json`/`chat-history.json`/`chat-settings.json`，退出即清。
 6. `memory.export` 响应不含绝对路径。
 7. `chat.send` 的 act/fx 仅白名单；非白名单→剔除或 400（按实现），text/parts 越界→400。
+
+
+## act/fx 白名单（v1.1，服务端校验丢弃非法值）
+- `FX_WHITELIST`（29 §7 的 14 表情名）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
+- `ACT_WHITELIST`（28 状态动作名）：`peek, jump, spin, shake, stretch, nod, walk, freeze, walk:center, walk:nearby, sit, cry, fall`
+- `chat.send.reply.act/fx` 仅接受上述集合；非法值丢弃并记 `chat act/fx rejected`，不报错。
+- `moodWord` 仅 `开心|平静|有点低落`（由 companion.words.mood 派生）。
+
+## v1.1 测试补充
+- RPC 路径 `/pet-bridge-ui/chat/rpc` 与页面 `/pet-bridge-ui/chat` 不冲突（GET/POST 分离可验证）。
+- act/fx 非白名单值丢弃（响应不含非法名）。
+- `consent` 形状为 `{version:'v1',at:ISO}` 或 null（不是布尔）。
