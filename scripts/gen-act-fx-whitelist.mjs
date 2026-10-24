@@ -56,7 +56,6 @@ const FX_14 = [
   'sad'
 ]
 const acts = new Set()
-const unknowns = []
 const fx = new Set(FX_14)
 let source = 'fallback(task-92 pending)'
 try {
@@ -65,7 +64,13 @@ try {
     const a = m.actions || m.clips || {}
     const c = m.composites || {}
     for (const k of Object.keys(a)) acts.add(k)
-    for (const k of Object.keys(c)) acts.add(k)
+    const META = new Set(['note', 'notes', 'description', 'version', 'meta'])
+    const unknowns = []
+    for (const k of Object.keys(c)) {
+      if (META.has(k)) {
+        unknowns.push('composites.' + k)
+      } else acts.add(k)
+    }
     if (acts.size) source = 'manifest'
   }
 } catch (e) {
