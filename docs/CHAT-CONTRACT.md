@@ -55,7 +55,13 @@
 7. `chat.send` 的 act/fx 仅白名单；非白名单→剔除或 400（按实现），text/parts 越界→400。
 
 
-## act/fx 白名单（v1.2：代码生成，唯一真源 docs/generated/act-fx-whitelist.json；已切仓库内真源 assets/whale-girl/manifest.json）
+## act/fx/expression 词表（vocabulary 唯一真源）
+
+> **唯一真源：`deliverables/pet-integration/docs/vocabulary.draft.json`**（ACT/FX/EXPRESSION/BUBBLE 分开声明）。
+> 本契约不再内联清单；生成物 `docs/generated/act-fx-whitelist.json` 仅作兼容视图：
+> `acts` = vocabulary.ACT_WHITELIST（28）；`fx`（兼容字段名 v1）= vocabulary.EXPRESSION_WHITELIST（14）。
+> 代码新逻辑一律读 vocabulary：ACT=28、FX=7、EXPRESSION=14、BUBBLE=独立白名单；校验 key 必须 ∈ 对应集合。
+
 > 由 `scripts/gen-act-fx-whitelist.mjs` 从 manifest 17 clips + 11 composites + 29 §7 的 14 表情生成；`--check` 防漂移。以下为生成器说明，实际清单以 JSON 为准。
 - `FX_WHITELIST`（29 §7 的 14 表情名，见生成 JSON）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
 - `ACT_WHITELIST`：**以 `docs/generated/act-fx-whitelist.json` 为唯一真源**（当前 `source=manifest`，**28 acts / 14 fx**，排除 composites.note 元数据）。本契约不再内联枚举。
