@@ -7070,8 +7070,10 @@ class PetWindow(QWidget):
                     w.play(n, restart=True)
                 self._whale_micro_at = self.t + random.randint(300, 700)
             w.tick(self.tick_ms)
-        except Exception:
-            pass
+        except Exception as _whale_exc:      # 帧动画异常不影响主循环，限频记录（约每 20 秒最多 1 条）
+            if self.t - getattr(self, '_whale_err_t', -10**9) > 200:
+                self._whale_err_t = self.t
+                print('鲸鱼娘帧动画异常:', repr(_whale_exc))
 
     def _sprite_key(self):
         if self.skin == SKIN_WIDGET:
