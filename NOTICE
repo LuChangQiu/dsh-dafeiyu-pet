@@ -1,4 +1,6 @@
-授权链总览与分发口径见仓库根 **`PROVENANCE.md`**：本项目仅内部/同事小范围使用，**暂不做公开 Release**；仓库只发 MIT 代码；内部包可含 2D 帧（附 NOTICE/ATTRIBUTION）；LOCAL ONLY 资产（BlueFatFish VRM 等）由用户本机自备导入，不进任何分发包。
+授权链总览与分发口径见仓库根 **`PROVENANCE.md`**：
+- **公开 Release（暂不做）**：如未来做，只发 MIT 代码 + 说明，不随角色素材；
+- **内部/同事私有包**：MIT 代码 + 2D 帧（附 NOTICE/ATTRIBUTION、非商业）+ 文档；**不含 LOCAL ONLY 资产**（BlueFatFish VRM 等由用户本机自备导入，不随包/不再分发）。
 
 本仓库包含：
 1) 上游 大肥鱼桌宠（RYANFFY/deepseek-dafeiyu-pet）MIT 代码与素材 —— 保留上游 LICENSE；素材仅限个人使用，不随本仓库代码再授权。
