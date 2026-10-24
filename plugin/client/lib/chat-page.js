@@ -9,7 +9,10 @@
  * - 默认关：`enabled=false` → 输入禁用、同意卡可用；不伪造：无后端/403/失败 → 明确 disabled/degraded。
  * - 隐私：high 服务端不返回；渲染一律 textContent；不显示绝对路径；不打印原文。
  * - 29：形象位为 29 色板占位（不画脸/不搬素材）；表情名按 29 §7。
+ * - B4（task-107）：头像位使用本地镜像 portrait.png（署名见页面 footer），未装资产降级为 29 色板。
  */
+
+import { PORTRAIT_SRC, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
 
 /** 聊天页静态文案。 */
 const CHAT_TEXTS = {
@@ -87,7 +90,10 @@ export function renderChatHtml() {
     '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
     '.wrap{max-width:860px;margin:0 auto;padding:18px 18px 120px}',
     '.head{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);flex-wrap:wrap}',
-    '.avatar{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;flex:0 0 auto;background:linear-gradient(135deg,#31366D 0%,#5060A3 55%,#789BD5 100%)}',
+    '.avatar{position:relative;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;flex:0 0 auto;overflow:hidden;background:linear-gradient(135deg,#31366D 0%,#5060A3 55%,#789BD5 100%)}',
+    '.avatar .fb{font-size:11px;letter-spacing:.5px;opacity:.92}',
+    '.avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}',
+    '.attribution{color:var(--muted);font-size:10px;margin-top:6px;line-height:1.7;word-break:break-word}',
     '.who{display:flex;flex-direction:column;min-width:0}.who .name{font-weight:700;font-size:15px}',
     '.who .sub{font-size:11px;color:var(--muted)}.spacer{flex:1 1 20px}',
     '.dot{width:7px;height:7px;border-radius:50%;background:var(--warn);display:inline-block;margin-right:5px;vertical-align:middle}',
@@ -128,7 +134,13 @@ export function renderChatHtml() {
     '<body>',
     '<div class="wrap">',
     '  <div class="head">',
-    '    <div class="avatar">' + CHAT_TEXTS.avatarPlaceholder + '</div>',
+    '    <div class="avatar" id="avatarSlot"><span class="fb" aria-hidden="true">' +
+      CHAT_TEXTS.avatarPlaceholder +
+      '</span><img src="' +
+      PORTRAIT_SRC +
+      '" alt="' +
+      PORTRAIT_ALT +
+      '" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></div>',
     '    <div class="who">',
     '      <div class="name">🐋 ' + CHAT_TEXTS.title + '</div>',
     '      <div class="sub">' + CHAT_TEXTS.avatarNote + '</div>',
@@ -198,6 +210,7 @@ export function renderChatHtml() {
       CHAT_TEXTS.inputPlaceholder +
       '" disabled><button class="btn primary" id="btnSend" disabled>发送</button></div>',
     '  <p class="foot">' + CHAT_TEXTS.boundaryFooter + '<br><span id="quota">' + CHAT_TEXTS.quotaHint + '</span></p>',
+    '  <p class="attribution" id="attribution">' + PORTRAIT_ATTRIBUTION + '</p>',
     '  <p class="err" id="errLine"></p>',
     '</div>',
     '<script>',

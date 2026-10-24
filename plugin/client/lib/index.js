@@ -27,6 +27,7 @@ import { promisify } from 'node:util'
 import { mountWebRoute } from './web-route.js'
 import { renderHomeHtml } from './home.js'
 import { renderChatHtml } from './chat-page.js'
+import { PORTRAIT_ROUTE_SUFFIX, readPortrait } from './portrait.js'
 
 const runFile = promisify(execFile)
 const STARTED_AT = Date.now()
@@ -2614,6 +2615,26 @@ export function apply(ctx, rawConfig) {
       })
       res.end(html)
     }
+    /**
+     * task-107 B4：形象位头像（本地镜像 PNG；未装资产/文件缺失 → 404，页面 onerror 降级 29 色板）。
+     * @param {any} req
+     * @param {any} res
+     */
+    const servePortrait = (req, res) => {
+      const data = readPortrait()
+      if (!data) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+        res.end('portrait not found')
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-length': data.length,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff'
+      })
+      res.end(data)
+    }
     const dispose = mountWebRoute({
       webServer: server,
       connection,
@@ -2622,7 +2643,8 @@ export function apply(ctx, rawConfig) {
       log,
       getRoutes: {
         [cfg.channel + '/home']: serveHome,
-        [cfg.channel + '/chat']: serveChat
+        [cfg.channel + '/chat']: serveChat,
+        [cfg.channel + PORTRAIT_ROUTE_SUFFIX]: servePortrait
       }
     })
     if (dispose === null) {

@@ -1705,6 +1705,95 @@ await testAsync('chat mock B3.1：关闭聊天（enabled:false）→ 禁用态�
   })
 })
 
+// ───────────────────────── 3.16 task-107 B4：形象位（本地镜像头像 + 降级 + 署名 + 3D 占位禁用） ─────────────────────────
+console.log('\n[3.16] 形象位 B4：头像本地镜像 + 色板降级 + 署名')
+
+await testAsync('portrait：本地镜像 PNG 可用、与仓库 assets 同字节、署名五要素、无外链 scheme', async () => {
+  const p = await import(pathToFileURL(path.join(libDir, 'portrait.js')).href)
+  const buf = p.readPortrait()
+  assert.ok(buf && buf.length > 10000, '本地镜像 portrait 应存在且 >10KB')
+  assert.deepEqual([...buf.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic')
+  assert.equal(p.PORTRAIT_SRC, '/pet-bridge-ui/asset/portrait.png')
+  assert.match(p.PORTRAIT_ATTRIBUTION, /YunYueSama/)
+  assert.match(p.PORTRAIT_ATTRIBUTION, /codex-deepseek-pet/)
+  assert.match(p.PORTRAIT_ATTRIBUTION, /大肥鱼项目署名许可 1\.0/)
+  assert.match(p.PORTRAIT_ATTRIBUTION, /未重绘|降采样/)
+  assert.match(p.PORTRAIT_ATTRIBUTION, /非官方/)
+  assert.doesNotMatch(p.PORTRAIT_ATTRIBUTION, /https?:\/\//, '署名不得带外链 scheme（自包含页面）')
+  // 镜像与仓库资产一致（防止镜像漂移）
+  const mirror = fs.readFileSync(path.join(libDir, 'assets', 'whale-girl', 'portrait.png'))
+  const repoAsset = fs.readFileSync(path.join(here, '..', '..', '..', 'assets', 'whale-girl', 'portrait.png'))
+  assert.ok(mirror.equals(repoAsset), 'lib/assets 镜像应与 assets/whale-girl/portrait.png 同字节')
+  // 降级：读不到时返回 null（供页面 onerror/色板使用）
+  assert.equal(typeof p.resetPortraitCache, 'function')
+})
+
+await testAsync('renderChatHtml（B4）：头像位本地镜像 + 29 色板降级 + 署名 footer、无外链', async () => {
+  const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
+  const html = renderChatHtml()
+  assert.match(html, /id="avatarSlot"/)
+  assert.match(html, /src="\/pet-bridge-ui\/asset\/portrait\.png"/)
+  assert.match(html, /class="fb"[^>]*>29</)
+  assert.match(html, /onerror="this\.remove\(\)"/)
+  assert.match(html, /id="attribution"/)
+  assert.match(html, /YunYueSama/)
+  assert.match(html, /非官方/)
+  assert.doesNotMatch(html, /https?:\/\//)
+  assert.doesNotMatch(html, /innerHTML/)
+})
+
+await testAsync('renderHomeHtml（B4）：头部头像位 + 色板降级 + 署名 + 3D 占位仍禁用', async () => {
+  const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
+  const html = renderHomeHtml()
+  assert.match(html, /id="avatarSlot"/)
+  assert.match(html, /src="\/pet-bridge-ui\/asset\/portrait\.png"/)
+  assert.match(html, /class="fb"[^>]*>29</)
+  assert.match(html, /onerror="this\.remove\(\)"/)
+  assert.match(html, /id="attribution"/)
+  assert.match(html, /YunYueSama/)
+  assert.match(html, /非官方/)
+  // 34 号「3D 渲染模式」占位：仍为关闭/禁用，不因 B4 解锁
+  assert.match(html, /3D 形象：关闭/)
+  assert.match(html, /3D 渲染模式」占位禁用/)
+  assert.match(html, /待 render\.mode/)
+  assert.doesNotMatch(html, /https?:\/\//)
+})
+
+await testAsync('client.js（B4）：设置页形象位 + 署名；3D（实验）按钮仍 disabled', async () => {
+  const src = fs.readFileSync(path.join(libDir, 'client.js'), 'utf8')
+  assert.match(src, /CHANNEL \+ '\/asset\/portrait\.png'/)
+  assert.match(src, /YunYueSama/)
+  assert.match(src, /非官方/)
+  assert.match(src, /'3D（实验）'/)
+  assert.match(src, /disabled: true,\s*title: '待 render\.mode 字段/, '3D（实验）占位仍 disabled')
+  assert.doesNotMatch(src, /https?:\/\/github\.com\/YunYueSama/, '设置页署名不带外链 scheme')
+})
+
+await testAsync('index.js（B4）：GET 头像路由挂在同 channel；缺失时 404 由页面降级', async () => {
+  const src = fs.readFileSync(path.join(libDir, 'index.js'), 'utf8')
+  assert.match(src, /import \{ PORTRAIT_ROUTE_SUFFIX, readPortrait \} from '\.\/portrait\.js'/)
+  assert.match(src, /\[cfg\.channel \+ PORTRAIT_ROUTE_SUFFIX\]: servePortrait/)
+  assert.match(src, /'content-type': 'image\/png'/)
+  assert.match(src, /res\.writeHead\(404/)
+})
+
+await testAsync('chat mock（B4）：GET /asset/portrait.png → PNG；portrait:false → 404（降级路径）', async () => {
+  await withChatMock({}, async (h, url) => {
+    const res = await fetch(url + '/pet-bridge-ui/asset/portrait.png')
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type'), /image\/png/)
+    const buf = Buffer.from(await res.arrayBuffer())
+    assert.deepEqual([...buf.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47])
+    assert.ok(buf.length > 10000)
+  })
+  await withChatMock({ portrait: false }, async (h, url) => {
+    const res = await fetch(url + '/pet-bridge-ui/asset/portrait.png')
+    assert.equal(res.status, 404, '未装资产模拟：404')
+    const html = await (await fetch(url + '/pet-bridge-ui/chat')).text()
+    assert.match(html, /id="avatarSlot"/, '页面仍自包含渲染（img onerror 降级）')
+  })
+})
+
 await testAsync('主页「互动」卡含聊天入口（B1）', async () => {
   const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
   const html = renderHomeHtml()

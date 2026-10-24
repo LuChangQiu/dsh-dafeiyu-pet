@@ -12,6 +12,8 @@
  * - 响应式：≥720px 双列，<720px 单列；深浅色跟随系统。
  */
 
+import { PORTRAIT_SRC, PORTRAIT_ALT, PORTRAIT_ATTRIBUTION } from './portrait.js'
+
 /** 工具类型 → 图标/中文（与 STATE-CHANNEL toolType 对齐，未知类型显示原值）。 */
 const TOOL_TYPE_META = {
   command: { icon: '⌨', label: '命令' },
@@ -69,7 +71,11 @@ export function renderHomeHtml() {
     '.wrap{max-width:1120px;margin:0 auto;padding:20px 22px 48px}',
     '.pagetitle{font-size:12px;color:var(--muted);margin:0 0 10px;letter-spacing:.02em}',
     '.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}',
-    '.avatar{font-size:26px;line-height:1}.who{display:flex;flex-direction:column;min-width:0}.who .word{font-size:16px;font-weight:700}',
+    '.avatar{position:relative;width:44px;height:44px;flex:0 0 auto;border-radius:50%;border:1px solid var(--line);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;background:linear-gradient(135deg,#31366D 0%,#5060A3 55%,#789BD5 100%)}',
+    '.avatar .fb{font-size:11px;letter-spacing:.5px;opacity:.92}',
+    '.avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}',
+    '.attribution{margin-top:6px;color:var(--muted);font-size:10px;line-height:1.7;word-break:break-word}',
+    '.who{display:flex;flex-direction:column;min-width:0}.who .word{font-size:16px;font-weight:700}',
     '.who .sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.spacer{flex:1 1 24px}.top-meta{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}',
     '.cost{font-weight:700;color:var(--fg)}.bar{width:120px;height:6px;border-radius:3px;background:var(--line-soft);overflow:hidden}',
@@ -120,7 +126,11 @@ export function renderHomeHtml() {
     '<div class="wrap">',
     '  <p class="pagetitle" id="pageMeta">🐋 大肥鱼主页 · 读取中…</p>',
     '  <header class="top" id="top">',
-    '    <div class="avatar">🐋</div>',
+    '    <div class="avatar" id="avatarSlot"><span class="fb" aria-hidden="true">29</span><img src="' +
+      PORTRAIT_SRC +
+      '" alt="' +
+      PORTRAIT_ALT +
+      '" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></div>',
     '    <div class="who">',
     '      <div class="word" id="statusWord">正在读取…</div>',
     '      <div class="sub" id="followLine">今日概览</div>',
@@ -193,7 +203,7 @@ export function renderHomeHtml() {
     '      <h2>她今天怎么样</h2>',
     '      <div class="words" id="companionWords"><div><div class="k">心情</div><div class="v">—</div></div><div><div class="k">精力</div><div class="v">—</div></div><div><div class="k">好感</div><div class="v">—</div></div></div>',
     '      <p class="empty" style="margin-top:8px" id="companionHint"></p>',
-    '      <p class="empty" style="margin-top:4px" id="renderStatus">3D 形象：关闭（实验计划中；角色设定以 29 角色圣经为准）</p>',
+    '      <p class="empty" style="margin-top:4px" id="renderStatus">3D 形象：关闭（「3D 渲染模式」占位禁用，待 render.mode 字段；角色设定以 29 角色圣经为准）</p>',
     '    </section>',
     '    <section class="card">',
     '      <h2>团队 <span class="muted" id="teamSource"></span></h2>',
@@ -242,6 +252,7 @@ export function renderHomeHtml() {
     '    </section>',
     '  </main>',
     '  <p class="foot" id="foot"></p>',
+    '  <p class="attribution" id="attribution">' + PORTRAIT_ATTRIBUTION + '</p>',
     '</div>',
     '<div class="toast" id="toast"></div>',
     '<script>',

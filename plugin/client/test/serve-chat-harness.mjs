@@ -13,6 +13,7 @@
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { PORTRAIT_ROUTE_SUFFIX, readPortrait } from '../lib/portrait.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const libDir = path.join(here, '..', 'lib')
@@ -28,6 +29,7 @@ const isIsoDate = (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v))
  * @param {boolean} [opts.quietMode] 初始静音
  * @param {string|null} [opts.sendError] chat.send 注入错误码
  * @param {number} [opts.port] 监听端口（0 = 随机）
+ * @param {boolean} [opts.portrait] 是否提供本地镜像头像路由（默认 true；false = 模拟未装资产 → 404 降级）
  */
 export async function createMockChatServer(opts = {}) {
   const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
@@ -216,6 +218,22 @@ export async function createMockChatServer(opts = {}) {
       res.end(html)
       return
     }
+    // task-107 B4：头像本地镜像（opts.portrait=false 模拟未装资产 → 404，页面 onerror 降级 29 色板）
+    if (req.method === 'GET' && url.pathname === '/pet-bridge-ui' + PORTRAIT_ROUTE_SUFFIX) {
+      const data = opts.portrait === false ? null : readPortrait()
+      if (!data) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+        res.end('portrait not found')
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-length': data.length,
+        'cache-control': 'no-store'
+      })
+      res.end(data)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/pet-bridge-ui/chat/rpc') {
       try {
         await handleRpc(req, res)
@@ -252,9 +270,20 @@ if (isMain) {
   const port = Number(opt('port') || process.env.MOCK_PORT || 3942)
   const enabled = args.includes('--enabled') || process.env.MOCK_ENABLED === '1'
   const sendError = opt('send-error') || process.env.MOCK_SEND_ERROR || null
-  const h = await createMockChatServer({ enabled, sendError, port })
+  const portrait = !args.includes('--no-portrait') && process.env.MOCK_NO_PORTRAIT !== '1'
+  const h = await createMockChatServer({ enabled, sendError, portrait, port })
   const { url } = await h.listen()
-  console.log('[chat-harness] ' + url + '/pet-bridge-ui/chat (enabled=' + enabled + ', sendError=' + sendError + ')')
+  console.log(
+    '[chat-harness] ' +
+      url +
+      '/pet-bridge-ui/chat (enabled=' +
+      enabled +
+      ', sendError=' +
+      sendError +
+      ', portrait=' +
+      portrait +
+      ')'
+  )
   process.on('SIGINT', async () => {
     await h.close()
     process.exit(0)

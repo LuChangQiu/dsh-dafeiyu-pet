@@ -2050,6 +2050,54 @@ window.__ModuleLoader__.load({
               title: '外观与渲染',
               right: h('span', { style: S.hint }, '待服务端（render.mode）')
             },
+            // task-107 B4：形象位（本地镜像头像；未装资产时 img onerror 降级为 29 色板）
+            h(
+              'div',
+              { style: S.row },
+              h('span', { style: S.label }, '形象'),
+              h(
+                'span',
+                {
+                  style: {
+                    position: 'relative',
+                    display: 'inline-flex',
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '50%',
+                    overflow: 'hidden',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '11px',
+                    color: '#fff',
+                    background: 'linear-gradient(135deg,#31366D 0%,#5060A3 55%,#789BD5 100%)'
+                  }
+                },
+                h('span', null, '29'),
+                h('img', {
+                  src: CHANNEL + '/asset/portrait.png',
+                  alt: '大肥鱼头像（二头身蓝紫长发鲸鱼娘）',
+                  width: 64,
+                  height: 64,
+                  loading: 'lazy',
+                  referrerPolicy: 'no-referrer',
+                  style: {
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover'
+                  },
+                  onError: (e) => {
+                    e.currentTarget.style.display = 'none'
+                  }
+                })
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '角色素材：YunYueSama · github.com/YunYueSama/codex-deepseek-pet · 大肥鱼项目署名许可 1.0 · 已裁剪/筛选/降采样（未重绘）· 非官方（DeepSeek 未推出/未认领任何拟人吉祥物）'
+            ),
             h(
               'div',
               { style: S.row },

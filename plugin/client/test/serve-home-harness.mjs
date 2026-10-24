@@ -14,6 +14,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { PORTRAIT_ROUTE_SUFFIX, readPortrait } from '../lib/portrait.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const libDir = path.join(here, '..', 'lib')
@@ -49,6 +50,22 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/pet-bridge-ui/chat') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
     res.end(chatHtml)
+    return
+  }
+  // task-107 B4：头像本地镜像（HARNESS_NO_PORTRAIT=1 模拟未装资产 → 404，页面 onerror 降级 29 色板）
+  if (req.method === 'GET' && url.pathname === '/pet-bridge-ui' + PORTRAIT_ROUTE_SUFFIX) {
+    const data = process.env.HARNESS_NO_PORTRAIT === '1' ? null : readPortrait()
+    if (!data) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+      res.end('portrait not found')
+      return
+    }
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'content-length': data.length,
+      'cache-control': 'no-store'
+    })
+    res.end(data)
     return
   }
   if (req.method === 'POST' && url.pathname.startsWith('/pet-bridge-ui/')) {
