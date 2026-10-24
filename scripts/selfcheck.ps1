@@ -204,7 +204,7 @@ function Test-Venv {
 
 # ---------- 3) 计划任务 ----------
 function Test-ScheduledTask {
-  $r = [ordered]@{ ok = $false; name = $TaskName; state = $null; action = $null; script = $null; exists = $false }
+  $r = [ordered]@{ ok = $false; name = $TaskName; state = $null; action = $null; script = $null; exists = $false; trigger = 'unknown'; delay = $null }
   $sevMissing = if ($script:Packaged) { 'warn' } else { 'error' }
   $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if (-not $t) {
@@ -225,14 +225,33 @@ function Test-ScheduledTask {
     if ($m2.Success) { $target = $m2.Groups[1].Value }
     elseif ($act.Execute -match '\.exe$') { $target = $act.Execute }
   }
+  $targetOk = $false
   if ($target) {
     $r.script = $target
     if (-not (Test-Path -LiteralPath $target)) {
       Add-Issue 'task-script-stale' $sevMissing "计划任务指向的目标不存在：$target"
-    } elseif ($r.state -notmatch 'Disabled') { $r.ok = $true }
+    } else { $targetOk = $true }
   } else {
     Add-Issue 'task-action-invalid' $sevMissing ("计划任务动作无法解析 start-pet.ps1/exe：" + $r.action)
   }
+  # P0：触发器必须是 AtLogOn（否则重启后不自启）；用 schtasks /Query /XML 解析 <LogonTrigger> 与 <Delay>
+  try {
+    $xml = (& schtasks.exe /Query /TN $TaskName /XML 2>$null) | Out-String
+    if ($xml -match '<LogonTrigger>') {
+      $r.trigger = 'Logon'
+      $dm = [regex]::Match($xml, '<Delay>([^<]+)</Delay>')
+      if ($dm.Success) { $r.delay = $dm.Groups[1].Value }
+      if ($r.delay -notmatch 'PT30S') {
+        Add-Issue 'task-trigger-delay' 'warn' ("登录自启延迟不是 30s（当前：" + "$($r.delay)" + "）；可用 selfcheck.ps1 -Repair -Yes 重注册")
+      }
+    } else {
+      $r.trigger = 'not-logon'
+      Add-Issue 'task-trigger-not-logon' $sevMissing "计划任务不是登录触发（当前触发器非 Logon，重启后不会自启）；可用 selfcheck.ps1 -Repair -Yes 重注册 AtLogOn"
+    }
+  } catch {
+    Add-Issue 'task-trigger-check-failed' 'warn' ("读取计划任务 XML 失败：" + $_.Exception.Message)
+  }
+  $r.ok = ($targetOk -and ($r.state -notmatch 'Disabled') -and ($r.trigger -eq 'Logon'))
   return $r
 }
 
@@ -480,10 +499,10 @@ function Invoke-Repairs([hashtable]$checks) {
     }
   } else { Add-Repair 'venv-rebuild' 'skipped' 'venv 正常，无需修复' }
 
-  # 4) 计划任务
+  # 4) 计划任务：统一重注册 AtLogOn（当前用户 / LIMITED / 延迟 30s）
   if (-not $checks.task.ok) {
     if (-not $write) {
-      Add-Repair 'schtask-register' $gateResult ('将重新注册计划任务 ' + $TaskName + '（' + $gateDetail + '）')
+      Add-Repair 'schtask-register' $gateResult ('将重注册登录自启任务 ' + $TaskName + '（AtLogOn/30s/LIMITED；' + $gateDetail + '）')
     } else {
       try {
         $exePath = Join-Path $PSScriptRoot '大肥鱼桌宠.exe'
@@ -494,15 +513,22 @@ function Invoke-Repairs([hashtable]$checks) {
         }
         if ($script:Packaged -and (Test-Path -LiteralPath $exePath)) {
           $action = New-ScheduledTaskAction -Execute $exePath
-          Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
-          Add-Repair 'schtask-register' 'done' ('已注册计划任务 ' + $TaskName + ' → ' + $exePath + '（packaged）')
+          $targetDesc = $exePath + '（packaged）'
         } elseif (Test-Path -LiteralPath $startScript) {
           $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startScript + '"')
-          Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
-          Add-Repair 'schtask-register' 'done' ('已重新注册计划任务 ' + $TaskName + ' → ' + $startScript)
+          $targetDesc = $startScript
         } else {
           throw '未找到 start-pet.ps1 或 packaged exe'
         }
+        # 旧任务先清（避免 ONCE/旧触发器残留）
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERNAME"
+        $trigger.Delay = 'PT30S'
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+        Add-Repair 'schtask-register' 'done' ('已重注册登录自启任务 ' + $TaskName + ' → ' + $targetDesc + '（AtLogOn/30s/LIMITED）')
       } catch {
         Add-Repair 'schtask-register' 'failed' ('注册失败：' + $_.Exception.Message)
       }
