@@ -27,9 +27,9 @@ test('P1-c morning：wave 替代 classic jump（replace=false/kill switch 仅 cl
 })
 
 test('P1-c 降级语义：replaceClassicActs=false = 仅 classic（0 次 whale act，不双发）', () => {
-  // Lead 2026-10-24 裁决：false 不做双发；whale 调用必须被 replace !== false 门控，else 才发 classic
+  // Lead/reviewer 终审：动作只由 turn/end 统一决策点发一次；report 回调不得再补发 classic stretch
   assert.match(src, /if \(wa\.enabled && wa\.replaceClassicActs !== false\) whaleAct\('report'\)/)
-  assert.match(src, /else send\('act:stretch'\)/)
+  assert.ok(!/else send\('act:stretch'\)/.test(src), 'report 回调不得再补发 act:stretch（否则同轮两行）')
   assert.match(src, /if \(wa\.enabled && wa\.replaceClassicActs !== false\) whaleAct\('wave'\)/)
   assert.match(src, /else send\('act:jump'\)/)
 })

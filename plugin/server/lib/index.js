@@ -2931,12 +2931,12 @@ export function apply(ctx, rawConfig) {
           if (
             speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
           ) {
-            // CF1（Lead 2026-10-24 裁决）：replaceClassicActs=true（默认）= whale 替换 classic；
-            // false = 降级"仅 classic"（不双发）；kill switch（enabled=false）同样只发 classic。
+            // CF1（Lead 裁决）：动作只由 turn/end 的统一决策点发一次 ——
+            // true=whale 时上方已跳过 classic stretch，这里发 act:report；
+            // false/kill switch 时上方已发过 classic act:stretch，回调不再补发（否则同轮两行）。
             setTimeout(() => {
               const wa = cfg.whaleActs || {}
               if (wa.enabled && wa.replaceClassicActs !== false) whaleAct('report')
-              else send('act:stretch')
             }, 600)
           }
         })

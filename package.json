@@ -6,7 +6,8 @@
   "scripts": {
     "verify:detached": "node scripts/harness/plugin-harness.mjs",
     "verify:whale-assets": "node scripts/test-whale-assets.mjs",
-    "test:whale-wiring": "node --test \"plugin/server/test/**/*.test.mjs\"",
+    "test:whale-wiring": "node --test plugin/server/test/whale-acts.test.mjs plugin/server/test/cf1-wiring-contract.test.mjs",
+    "test:whale-pipe": "node --test plugin/server/test/cf1-pipe.test.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "prettier --write \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "nodecheck": "node scripts/lint.mjs"

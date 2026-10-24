@@ -43,7 +43,14 @@ async function waitFor(fn, timeoutMs = 3000, stepMs = 50) {
 const pipePath = (name) =>
   '\\\\.\\pipe\\cf1-test-' + name + '-' + process.pid + '-' + Math.random().toString(16).slice(2, 8)
 
-async function runScenario({ name, whaleActs = {}, quietHours = ['23:30-08:00'], reunion = false, emit = true }) {
+async function runScenario({
+  name,
+  whaleActs = {},
+  quietHours = ['23:30-08:00'],
+  reunion = false,
+  emit = true,
+  modeRequest = null
+}) {
   const pipe = pipePath(name)
   const lines = []
   const sockets = new Set()
@@ -109,6 +116,13 @@ async function runScenario({ name, whaleActs = {}, quietHours = ['23:30-08:00'],
       JSON.stringify({ lastUserSeenAt: old, lastSeenAt: old, lastGreetDate: '', affinity: 10, mood: 50 })
     )
   }
+  if (modeRequest) {
+    // 外部模式请求文件（apply 后的 1s 轮询；测试里 interval 被加速到 50ms）
+    fs.writeFileSync(
+      cfg.mode.requestFile,
+      JSON.stringify({ name: 'mode-set', kind: modeRequest, durationMs: 60000, minutes: 1 })
+    )
+  }
   const ctx = createMockCtx(createMockServices())
   mod.apply(ctx, cfg)
   await sleep(150)
@@ -152,40 +166,51 @@ async function withScenario(opts, fn) {
   }
 }
 
-test('pipe：replace=true 首轮 report 真发 act:report（不被 same-state 吞），且不双发 act:stretch', async () => {
+const count = (lines, line) => lines.filter((l) => l === line).length
+
+test('pipe：replace=true 首轮 report 恰好 1 行 act:report、0 行 act:stretch', async () => {
   await withScenario({ name: 'report' }, async (s) => {
     const got = await s.waitFor((l) => l === 'act:report', 3000)
     assert.equal(got, true, 'pipe 中未出现 act:report；lines=' + JSON.stringify(s.lines.slice(0, 20)))
-    assert.equal(s.lines.includes('act:stretch'), false, 'replace=true 不应再发 classic act:stretch')
+    await sleep(400) // 覆盖 600ms 回调后的补发窗口，确认不会再来一行
+    assert.equal(count(s.lines, 'act:report'), 1, '首轮 act:report 应恰好 1 行')
+    assert.equal(count(s.lines, 'act:stretch'), 0, 'replace=true 不应发 classic act:stretch')
   })
 })
 
-test('pipe：replace=false 降级=仅 classic（act:stretch，0 次 act:report）', async () => {
+test('pipe：replace=false 降级=仅 classic，act:stretch 恰好 1 行、act:report 0 行', async () => {
   await withScenario({ name: 'false', whaleActs: { replaceClassicActs: false } }, async (s) => {
-    const got = await s.waitFor((l) => l === 'act:stretch', 3000)
-    assert.equal(got, true, 'pipe 中未出现 classic act:stretch；lines=' + JSON.stringify(s.lines.slice(0, 20)))
-    assert.equal(s.lines.includes('act:report'), false, 'replace=false 不应发 whale act:report')
+    await sleep(1600) // 覆盖 turn/end + 600ms 回调窗口
+    assert.equal(count(s.lines, 'act:stretch'), 1, '同轮只应经典 stretch 1 行；lines=' + JSON.stringify(s.lines))
+    assert.equal(count(s.lines, 'act:report'), 0, 'replace=false 不应发 whale act:report')
   })
 })
 
-test('pipe：kill switch 仅 classic（act:stretch，0 次 act:report）', async () => {
+test('pipe：kill switch 仅 classic，act:stretch 恰好 1 行、act:report 0 行', async () => {
   await withScenario({ name: 'kill', whaleActs: { enabled: false } }, async (s) => {
-    const got = await s.waitFor((l) => l === 'act:stretch', 3000)
-    assert.equal(got, true, 'pipe 中未出现 classic act:stretch；lines=' + JSON.stringify(s.lines.slice(0, 20)))
-    assert.equal(s.lines.includes('act:report'), false, 'kill switch 不应发 whale act:report')
+    await sleep(1600)
+    assert.equal(count(s.lines, 'act:stretch'), 1, '同轮只应经典 stretch 1 行；lines=' + JSON.stringify(s.lines))
+    assert.equal(count(s.lines, 'act:report'), 0, 'kill switch 不应发 whale act:report')
   })
 })
 
-test('pipe：quiet（免打扰/深夜）0 次 act:report', async () => {
+test('pipe：quiet（免打扰/深夜）0 行 act:report、0 行 act:stretch', async () => {
   await withScenario({ name: 'quiet', quietHours: ['00:00-23:59'] }, async (s) => {
-    await sleep(1200)
-    assert.equal(
-      s.lines.includes('act:report'),
-      false,
-      'quiet 不应发 whale act:report；lines=' + JSON.stringify(s.lines.slice(0, 20))
-    )
+    await sleep(1600)
+    assert.equal(count(s.lines, 'act:report'), 0, 'quiet 不应发 whale act:report；lines=' + JSON.stringify(s.lines))
+    assert.equal(count(s.lines, 'act:stretch'), 0, 'quiet 下该轮 classic stretch 也被 whaleReportNext 跳过；lines=' + JSON.stringify(s.lines))
   })
 })
+
+for (const kind of ['focus', 'silent', 'off']) {
+  test(`pipe：mode=${kind} 0 行 act:report、0 行 act:stretch`, async () => {
+    await withScenario({ name: 'mode-' + kind, modeRequest: kind }, async (s) => {
+      await sleep(1800) // apply 后 mode 轮询(poll 1000ms 被加速) + turn/end + 600ms 回调
+      assert.equal(count(s.lines, 'act:report'), 0, `mode=${kind} 不应发 act:report；lines=` + JSON.stringify(s.lines))
+      assert.equal(count(s.lines, 'act:stretch'), 0, `mode=${kind} 不应发 act:stretch；lines=` + JSON.stringify(s.lines))
+    })
+  })
+}
 
 test('pipe：reunion 真发 act:wave（replace=true 的 wave 正证据；约 7s）', async () => {
   await withScenario({ name: 'wave', reunion: true, emit: false }, async (s) => {
