@@ -7214,10 +7214,16 @@ class PetWindow(QWidget):
         print("失联休眠：进入离线打盹（静默 %.1fs）" % (now - getattr(self, "_last_line_at", now)))
 
     def _life_wake(self, now=None):
-        """退出离线打盹：起身 + 问候（120 秒冷却；深夜/免打扰不冒泡）。"""
+        """退出离线打盹：起身 + 问候（120 秒冷却；深夜/免打扰不冒泡）。
+
+        醒来一律刷新 `_last_line_at`（命令 / 点击 / 拖拽都算"有人互动"），
+        否则下一 tick 会按旧静默时长立刻又睡回去。
+        """
         now = time.time() if now is None else now
         if not getattr(self, "_life_offline", False):
+            self._last_line_at = now
             return
+        self._last_line_at = now
         self._life_offline = False
         self._life_offline_at = 0.0
         self.rest_until = self.t * self.tick_ms + random.randint(2000, 5000)
@@ -7240,7 +7246,7 @@ class PetWindow(QWidget):
             if self.dragging:
                 self._whale_clear_force()
                 if getattr(self, "_life_offline", False):
-                    self._life_wake()       # 被拎起来就醒（sleep 不会压住拖拽帧）
+                    self._life_wake()       # 被拎起来就醒（_life_wake 内刷新心跳，不会立刻睡回去）
                     self._whale_clear_force()
             force = self._whale_force
             if force:
