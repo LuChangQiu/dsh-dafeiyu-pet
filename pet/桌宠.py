@@ -11057,6 +11057,22 @@ def main():
                 _st = json.loads(line[6:])
                 w._bridge_state = _st
                 _name = str(_st.get("state") or "")
+                # 鲸鱼娘 2D 帧动画：DSH 状态 → 动作（thinking/tool/waiting/done/error 等）
+                _whale_map = {
+                    "thinking": "think",
+                    "tool": "walk",
+                    "waiting_approval": "waitPeek",
+                    "approval": "waitPeek",
+                    "done": "cheer",
+                    "error": "errorSequence",
+                    "cry": "cry",
+                }
+                _wh = getattr(w, "_whale", None)
+                if _name in ("idle", "background", ""):
+                    w._whale_force = None
+                elif _wh is not None and _name in _whale_map and _wh.has(_whale_map[_name]):
+                    if getattr(w, "_whale_force", None) != _whale_map[_name]:
+                        w._whale_force = _whale_map[_name]
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
                     w.say("我在等你的确认哦", seconds=8.0, queue=True)

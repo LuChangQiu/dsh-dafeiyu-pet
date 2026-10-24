@@ -76,6 +76,36 @@ class WhaleGirlSkin:
         if "idleBase" not in self._seq:
             raise RuntimeError("manifest 缺少 idleBase 动作")
 
+        # 跨目录组合序列（composites）：think/waitPeek/cheer/errorSequence/cry/caught/report/pat/tsundere 等
+        # 每步 {dir, frames[], durationsMs[]}，必须按 steps 顺序拼成一条播放序列，不能假设同目录连续文件。
+        for name, spec in (data.get("composites") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            steps = spec.get("steps") or []
+            seq = []
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                sub = str(step.get("dir") or "")
+                frames = step.get("frames") or []
+                durs = step.get("durationsMs") or []
+                for i, fn in enumerate(frames):
+                    path = os.path.join(self.dir, sub, str(fn))
+                    if not os.path.isfile(path):
+                        continue
+                    if i < len(durs):
+                        ms = float(durs[i])
+                    elif durs:
+                        ms = float(durs[-1])
+                    else:
+                        ms = 80.0
+                    seq.append((path, max(16.0, ms)))
+            if seq:
+                self.actions[name] = spec
+                self._seq[name] = seq
+                self._loop[name] = False
+                self._hold[name] = bool((steps[-1] or {}).get("holdLast")) if steps else False
+
     # ---------- 查询/播放 ----------
     def has(self, name):
         return name in self._seq

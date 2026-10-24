@@ -4,9 +4,10 @@
 3) DSH 插件 server/client 依赖 PySide6（LGPLv3，运行时依赖，不修改其源码）；分发二进制时须遵守 LGPL 相应义务。
 4) 所有用户配置/密钥不进入本仓库；DSH 凭据仅在本机使用。
 
-## 鲸鱼娘 2D 帧动画素材（pet/assets、pet/whale_skin.py）
+## 鲸鱼娘 2D 帧动画素材（assets/whale-girl、pet/whale_skin.py）
 - 作者：YunYueSama
 - 仓库：https://github.com/YunYueSama/codex-deepseek-pet
-- 许可：大肥鱼项目署名许可 1.0（允许使用/修改/分享/商用，须署名作者与仓库）
+- 许可：大肥鱼项目署名许可 1.0。许可条文允许使用/修改/分享及商用，**但上游未授予底层第三方参考作品/角色设计/标志的权利**，因此公开分发或商用前须自行确认/取得相应授权；本项目按个人/内部使用处理。
+- 署名要求：保留 `作者：YunYueSama`、仓库链接与许可说明；本形象为社区二创，**非 DeepSeek 官方形象**，不代表深度求索官方授权。
 - 修改说明：按 manifest 裁剪/降采样为 320px 帧序列、去除补间帧、生成 manifest v3 与状态映射；仅用于本项目桌宠形象。
-- 许可全文与第三方排除见 assets/whale-girl/ATTRIBUTION.md
+- 许可全文、第三方排除与来源见 `assets/whale-girl/ATTRIBUTION.md`。

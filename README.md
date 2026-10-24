@@ -52,7 +52,13 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 ## 上游更新
 不 fork、不建上游 git 历史：手动 diff 上游 `桌宠.py` 与 `pet/桌宠.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
 
+## 形象与素材署名
+- 默认形象：**大肥鱼 / DeepSeek 鲸鱼娘（社区二创）**——2D 帧动画素材来自 [YunYueSama/codex-deepseek-pet](https://github.com/YunYueSama/codex-deepseek-pet)（作者：YunYueSama），按「大肥鱼项目署名许可 1.0」署名使用；本项目对其做了裁剪/降采样/状态映射等修改。
+- 该许可条文允许使用/修改/分享及商用，**但上游未授予底层第三方参考作品与角色设计的权利**；公开分发/商用前请自行确认授权。本项目按个人/内部使用处理。
+- 本形象为社区二创，**非 DeepSeek 官方形象**，不代表深度求索官方授权。
+- 许可全文、第三方排除与来源：`assets/whale-girl/ATTRIBUTION.md` 与 `NOTICE`。
+
 ## License
-MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游素材声明见 `NOTICE`。
+MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`。
 
 
