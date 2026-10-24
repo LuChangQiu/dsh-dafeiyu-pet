@@ -35,12 +35,20 @@ if (process.env.HARNESS_HOST_STATUS) {
 }
 const handler = buildHandler({ ...DEFAULTS }, { info() {}, warn() {} }, hostBridge)
 const homeHtml = renderHomeHtml()
+// task-91 B1：聊天页壳（与生产同一份 renderChatHtml）
+const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
+const chatHtml = renderChatHtml()
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1')
   if (req.method === 'GET' && url.pathname === '/pet-bridge-ui/home') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
     res.end(homeHtml)
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/pet-bridge-ui/chat') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(chatHtml)
     return
   }
   if (req.method === 'POST' && url.pathname.startsWith('/pet-bridge-ui/')) {

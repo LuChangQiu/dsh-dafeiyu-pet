@@ -1435,6 +1435,36 @@ test('renderHomeHtml：自包含（无外链 http(s)），含主页关键节点'
   assert.doesNotMatch(html, /https?:\/\//)
 })
 
+// ───────────────────────── 3.14 task-91 B1：聊天页壳（纯结构，不伪造/不调端点/不写 consent） ─────────────────────────
+console.log('\n[3.14] 聊天页壳（B1）')
+
+test('renderChatHtml：自包含 + 空态/待29/mock 预览，不发端点/不伪造/不写盘', async () => {
+  const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
+  const html = renderChatHtml()
+  assert.match(html, /大肥鱼 · 聊天/)
+  assert.match(html, /29 角色圣经|社区二创/)
+  assert.match(html, /聊天待服务端开启/)
+  assert.match(html, /mock 预览/)
+  assert.match(html, /默认关闭 · 仅用户主动/)
+  // B1 边界：不发端点、不 fetch、不伪造聊天/记忆、不写 consent
+  assert.doesNotMatch(html, /https?:\/\//)
+  assert.doesNotMatch(html, /fetch\(|XMLHttpRequest|navigator\.sendBeacon/)
+  assert.doesNotMatch(html, /chat\.send|chat\.state|memory\.list|memory\.delete|memory\.clear|chat\.settings/)
+  // 同意卡禁用（不写 consent/enabled）
+  assert.match(html, /id="btnEnable"[^>]*disabled/)
+  assert.match(html, /id="input"[^>]*disabled/)
+  // 结构卡存在：状态/记忆/边界话术
+  assert.match(html, /静音 \/ 不打扰/)
+  assert.match(html, /不是真人/)
+})
+
+test('主页「互动」卡含聊天入口（B1）', async () => {
+  const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
+  const html = renderHomeHtml()
+  assert.match(html, /id="btnChat"/)
+  assert.match(html, /聊天（预览）/)
+})
+
 // ───────────────────────── 3.11 task-58：团队/目标/计划（v2 优先 + host fallback + 降级） ─────────────────────────
 console.log('\n[3.11] 团队/目标/计划数据')
 

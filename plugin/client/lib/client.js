@@ -1668,6 +1668,61 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          // ── 聊天与记忆（task-91 B1 占位；等 CHAT-CONTRACT，不发请求/不写 consent） ──
+          h(
+            Card,
+            {
+              title: '聊天与记忆',
+              right: h('span', { style: S.hint }, '待服务端（CHAT-CONTRACT）')
+            },
+            h(
+              'p',
+              { style: S.hint },
+              '聊天默认关闭，开启需显式同意。说明：存储仅本地；生成回复时你的输入与必要的记忆摘要会发送给当前配置的 LLM，不发送 DSH 原文/工具参数/文件/路径/key；高风险敏感信息不会写入记忆。当前为 B1 占位，不发送/不保存任何内容。'
+            ),
+            h(
+              'div',
+              { style: S.row },
+              h(
+                'div',
+                null,
+                h('span', { style: S.label }, '聊天开关（默认关）'),
+                h(Toggle, {
+                  value: false,
+                  onChange: () => {},
+                  disabled: true,
+                  onLabel: '开',
+                  offLabel: '关'
+                })
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, S.btnDisabled),
+                  disabled: true,
+                  title: '待契约（B2/B3）'
+                },
+                '查看记忆'
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, S.btnDisabled),
+                  disabled: true,
+                  title: '待契约（B3）'
+                },
+                '清空聊天记录'
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '记忆只存本地、可查可删；契约未到前不显示任何记忆内容；形象位在 29 落盘前仅「待29」占位，不自由发挥。'
+            )
+          ),
+
           // ── 每日预算 ──
           h(
             Card,
@@ -2023,7 +2078,7 @@ window.__ModuleLoader__.load({
             h(
               'p',
               { style: S.hint },
-              '3D 原型验证中：等 render.mode 字段接入后可切换 2D / 3D；切换失败会自动回 2D，不影响桌宠与联动。当前固定 2D。'
+              '3D 原型验证中：形象基准为 29 角色圣经（二头身蓝紫长发鲸鱼娘；社区二创风格的原创 3D 形象，不称官方鲸鱼娘）；默认 1080p 可见身高 184px（size=0.54）。等 render.mode 接入后可切换 2D/3D，失败自动回 2D，不影响桌宠与联动。当前固定 2D。'
             )
           ),
 

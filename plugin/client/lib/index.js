@@ -26,10 +26,11 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mountWebRoute } from './web-route.js'
 import { renderHomeHtml } from './home.js'
+import { renderChatHtml } from './chat-page.js'
 
 const runFile = promisify(execFile)
 const STARTED_AT = Date.now()
-const PLUGIN_VERSION = '0.3.0'
+const PLUGIN_VERSION = '0.4.0'
 
 export const name = 'dsh-pet-bridge-ui'
 
@@ -2599,6 +2600,20 @@ export function apply(ctx, rawConfig) {
       })
       res.end(html)
     }
+    /**
+     * task-91 B1：聊天页壳（自包含 HTML，纯结构/空态/pending；不发端点、不写 consent）。
+     * @param {any} req
+     * @param {any} res
+     */
+    const serveChat = (req, res) => {
+      const html = renderChatHtml()
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff'
+      })
+      res.end(html)
+    }
     const dispose = mountWebRoute({
       webServer: server,
       connection,
@@ -2606,7 +2621,8 @@ export function apply(ctx, rawConfig) {
       handler,
       log,
       getRoutes: {
-        [cfg.channel + '/home']: serveHome
+        [cfg.channel + '/home']: serveHome,
+        [cfg.channel + '/chat']: serveChat
       }
     })
     if (dispose === null) {
