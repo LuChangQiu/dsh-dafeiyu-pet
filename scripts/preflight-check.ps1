@@ -93,6 +93,8 @@ Invoke-Step "unit: state-layer" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: perf-script unit（schema v2/vocabulary/整条拒绝/baseline）"; return }
   & node plugin/server/test/state-layer.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: state-layer 接线（state→appraisal→affect→motivation→script）"; return }
+  & node plugin/server/test/performance-fixtures.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: performance fixtures 契约绑定（P01–P08 / 32 条 vendored）"; return }
 }
 
 # 7) git 状态（信息项，不判失败）

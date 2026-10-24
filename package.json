@@ -6,7 +6,7 @@
   "scripts": {
     "verify:detached": "node scripts/harness/plugin-harness.mjs",
     "verify:whale-assets": "node scripts/test-whale-assets.mjs",
-    "test:state-layer": "node plugin/server/test/state-machine.test.mjs && node plugin/server/test/appraisal.test.mjs && node plugin/server/test/affect.test.mjs && node plugin/server/test/motivation.test.mjs && node plugin/server/test/perf-script.test.mjs && node plugin/server/test/state-layer.test.mjs",
+    "test:state-layer": "node plugin/server/test/state-machine.test.mjs && node plugin/server/test/appraisal.test.mjs && node plugin/server/test/affect.test.mjs && node plugin/server/test/motivation.test.mjs && node plugin/server/test/perf-script.test.mjs && node plugin/server/test/state-layer.test.mjs && node plugin/server/test/performance-fixtures.test.mjs",
     "test:whale-wiring": "node --test plugin/server/test/whale-acts.test.mjs plugin/server/test/cf1-wiring-contract.test.mjs",
     "test:whale-pipe": "node --test plugin/server/test/cf1-pipe.test.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
