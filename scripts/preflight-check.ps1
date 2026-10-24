@@ -79,6 +79,16 @@ Invoke-Step "unit: whale-wiring" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts/CF1 wiring fixtures（unit，<5s）"; return }
 }
 
+# 6c) state-layer：状态语义层（fixtures 54 条 + appraisal/affect 单测；<5s，缺 fixtures 必须 FAIL）
+Invoke-Step "unit: state-layer" {
+  & node plugin/server/test/state-machine.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: state-machine fixtures（54 条；检查 plugin/server/test/fixtures/state-fixtures.v1.3.jsonl）"; return }
+  & node plugin/server/test/appraisal.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: appraisal unit（delta/novelty）"; return }
+  & node plugin/server/test/affect.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: affect unit（decay/attention/stage）"; return }
+}
+
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="

@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..', '..', '..')
 const stateMapPath = join(root, 'config', 'state-map.json')
 const fixturesPath =
-  process.env.STATE_FIXTURES || 'C:/Users/xiqi/.dsh/im/deliverables/pet-integration/docs/state-fixtures.draft.jsonl'
+  process.env.STATE_FIXTURES || join(root, 'plugin', 'server', 'test', 'fixtures', 'state-fixtures.v1.3.jsonl')
 const map = JSON.parse(readFileSync(stateMapPath, 'utf8'))
 const vocab = {
   clips: new Set(map.clips || []),
@@ -15,15 +15,26 @@ const vocab = {
   expressions: new Set(map.expressions || []),
   fx: new Set(map.fx || [])
 }
+const EXPECTED_FIXTURES = 54
+if (!existsSync(fixturesPath)) {
+  console.error(`fixtures missing: ${fixturesPath}`)
+  process.exit(1)
+}
+const lines = readFileSync(fixturesPath, 'utf8').split(/\r?\n/).filter(Boolean)
+if (lines.length !== EXPECTED_FIXTURES) {
+  console.error(`fixtures count mismatch: got ${lines.length}, want ${EXPECTED_FIXTURES}`)
+  process.exit(1)
+}
 let pass = 0,
   fail = 0
 const failures = []
-const lines = existsSync(fixturesPath) ? readFileSync(fixturesPath, 'utf8').split(/\r?\n/).filter(Boolean) : []
 for (const line of lines) {
   let fx
   try {
     fx = JSON.parse(line)
-  } catch {
+  } catch (err) {
+    fail++
+    failures.push({ id: '?', error: 'invalid json: ' + err.message })
     continue
   }
   const pre = (fx.given && fx.given.preconditions) || {}
