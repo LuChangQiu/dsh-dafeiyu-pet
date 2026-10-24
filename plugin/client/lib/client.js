@@ -2318,7 +2318,7 @@ window.__ModuleLoader__.load({
                 label: '状态文件',
                 on: true,
                 value: files && files.stateSource === 'v2' ? 'v2 真源' : 'legacy 兜底',
-                detail: (files && (files.stateSource === 'v2' ? files.stateV2File : files.stateFile)) || ''
+                detail: files && files.stateSource === 'v2' ? 'bridge-state-v2.json' : 'state.json'
               }),
               h(Stat, {
                 label: '多会话',
@@ -2634,7 +2634,18 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          h('p', { style: S.mono }, 'log: ' + (files.logFile || '') + ' · ui-config: ' + (files.uiConfigFile || ''))
+          h(
+            'p',
+            { style: S.mono },
+            'log: ' +
+              String(files.logFile || '')
+                .split(/[\\/]/)
+                .pop() +
+              ' · ui-config: ' +
+              String(files.uiConfigFile || '')
+                .split(/[\\/]/)
+                .pop()
+          )
         )
       }
 

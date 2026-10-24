@@ -530,3 +530,18 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - 证据：`screenshots/ui-24-home-mode-active.png`（主页快捷组启用 + 当前静一静剩余 25m）、`ui-25-settings-mode-active.png`（面板当前静一静 + 倒计时 + 四按钮启用 + 时长/自动恢复/快捷键）。
 - smoke：新增 3 项（mode 归一/默认值、mode.request 门控+排队、config.set mode 校验）→ **65/65**。
 - 待 bridge v47 落 `bridge-state-v2.json.mode` + `capabilities.mode` 后生产即时生效（当前 v46 mode=null → 面板显示禁用骨架）。
+### E.9 v48 数据层真值 + DROP 项落地（2026-10-24）
+- **团队/目标/计划真实数据**：v2 `team/goal/plan/userQuestions/teamUpdatedAt/degraded` 已接；真实 v48 渲染：团队卡「数据源 v2 · 成员 7 人 · 在跑 7 · 任务 38/69 完成（55%）· 进行中 4 · 待办 27 · 阻塞 1 · 可开工 26」、目标「active · 第 0 轮」（截图 `ui-26-home-team-real-v48.png` / 面板 `ui-27-settings-compat-v48.png`）。
+- **v2 null + degraded 语义**：`team=null + degraded:['session:none']` → `source=v2,status=empty,reason=session:none`（显示「当前对话暂无团队/任务」，**不显示 0 任务/0%**）；`team:unsupported/not-registered` → unsupported（未启用）；`team:invalid/degraded` → degraded（异常降级）。
+- **v47/v48 费用**：`today.costYuan` 已含 cache 分价；主页费用说明改为「已含 cache 分价（cache 读 xk · cache 费用 ¥y · 较旧算法节省 ¥z）」；面板三本账下方提示同步（真实数据节省 ¥482.94）；`costYuanFlat` 保留作旧公式对照。
+- **宿主内存卡**：兼容性卡新增「宿主内存 rssMB/heapMB/timers + 低占用中（阈值）」+ 「下班降载 / 恢复联动」一键入口（走 mode-off/mode-resume）。
+- **用户 DROP 项**：全局快捷键（UI 输入/校验移除，ui-config.mode 仅 silentMinutes/focusMinutes/autoResume；`hotkey` 字段保留兼容但不发送）、音效/音量（开关移除；保存显式写 `pet.soundOn=false`；面板显示「音效已移除（用户决定）」）；能力地图「不可用/不显示」补註「全局快捷键、音效/音量（用户决定，已移除）」。
+- **工作区隐私**：面板不再展示任何绝对路径（状态文件只显示 basename；底部 log/ui-config 只显示文件名）；sessions 分组只用 workspaceName(+hash)；真实 DOM 检查 `pathsInPanel=[]`。
+- **petSettings.mode='still'**：v47 起不再作状态真源 → 面板移除「原地」选项（只保留 散步/跟随），避免再写入。
+- smoke **65/65**、repo lint 全绿（node --check 28/28 + Prettier）、心跳 0.3.0（host pid 43048）。
+
+### E.10 审查包（门禁 v1）
+- 变更文件（client 仅此 6 个）：`plugin/client/lib/{index,client,home}.js`、`test/{smoke,serve-home-harness}.mjs`、`PLUGIN-UI.md`。
+- 检查：`node --check` 全过、`npm run lint` 全绿、smoke 65/65、client prettier 全过。
+- 隐私：面板/主页 DOM 0 绝对路径；团队/目标只渲染计数与状态（无 subject/description/objective）；费用只渲染数字。
+- 回滚：UI-only 变更，`git revert <client commit>` 即恢复旧面板；patch 仅追加 `# ui-sync <ts>` 注释，语义不变（备份见 `evidence/cordis.patch.backup-<ts>.yml`）。
