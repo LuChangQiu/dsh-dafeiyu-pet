@@ -26,9 +26,9 @@ const make = (over = {}) =>
   createStateLayer({
     stateMap,
     now: () => 0,
+    ...over,
     mode: () => over.mode || 'active',
-    config: { motivation: true, scripts: true, ...(over.config || {}) },
-    ...over
+    config: { enabled: true, motivation: true, scripts: true, ...(over.config || {}) }
   })
 const ctx = (over = {}) => ({ mode: 'active', nowMs: 1000, minutesOfDay: 14 * 60, attentionDtSec: 2, ...over })
 
@@ -177,6 +177,53 @@ run('script rejection falls back to baseline and is still valid', () => {
   assert.ok(snap.script)
   assert.equal(validateScript(snap.script, vocab).ok, true)
   assert.equal(snap.script.rejected, undefined)
+})
+
+run('default config disabled → baseline only (no state/affect/intent/script updates)', () => {
+  const layer = createStateLayer({ stateMap, now: () => 0, mode: () => 'active' })
+  assert.equal(layer.enabled, false)
+  const snap = layer.handle({ t: 'turn/end', data: { reason: { kind: 'completed' } } }, ctx())
+  assert.equal(snap.state, 'idle')
+  assert.equal(snap.intent, null)
+  assert.equal(snap.script, null)
+  assert.equal(snap.counters.dispatchCount, 0)
+  assert.equal(snap.emotion.attention, 0.3)
+  assert.equal(layer.tick({ elapsedSec: 1800 }).emotion.valence, 0.1)
+})
+
+run('explicit enabled:true produces state/affect/intent/script', () => {
+  const layer = make({ emotion: { attention: 0.7 } })
+  assert.equal(layer.enabled, true)
+  const snap = layer.handle({ t: 'turn/end', data: { reason: { kind: 'completed' } } }, ctx())
+  assert.equal(snap.state, 'done')
+  assert.ok(snap.intent)
+  assert.ok(snap.script)
+})
+
+run('kill switch: setEnabled(false) freezes output + clears intent/script, re-enable works', () => {
+  const layer = make({ emotion: { attention: 0.7 } })
+  const first = layer.handle({ t: 'turn/end', data: { reason: { kind: 'completed' } } }, ctx())
+  assert.equal(first.state, 'done')
+  assert.ok(first.script)
+  const off = layer.setEnabled(false)
+  assert.equal(off.script, null)
+  assert.equal(off.intent, null)
+  assert.equal(layer.handle({ t: 'approval/asked', data: { id: 'a9', toolName: 'bash' } }, ctx()).state, 'done')
+  assert.equal(layer.tick({ elapsedSec: 1800 }).emotion.valence, off.emotion.valence)
+  const on = layer.setEnabled(true)
+  assert.equal(on.script, null)
+  const resumed = layer.handle({ t: 'approval/asked', data: { id: 'a9', toolName: 'bash' } }, ctx())
+  assert.equal(resumed.state, 'approval')
+  assert.equal(resumed.intent.id, 'wait_approval')
+})
+
+run('kill switch disables interrupt handling', () => {
+  const layer = make({ emotion: { attention: 0.7 } })
+  layer.handle({ t: 'turn/end', data: { reason: { kind: 'completed' } } }, ctx())
+  layer.setEnabled(false)
+  const r = layer.interrupt({ userAction: true })
+  assert.equal(r.interrupt, false)
+  assert.equal(r.reason, 'disabled')
 })
 
 console.log(`state-layer tests: ${pass}/${pass + fail} pass`)

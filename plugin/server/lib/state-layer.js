@@ -16,7 +16,7 @@ import { selectIntent, shouldInterrupt, updateRejection, intentById } from './mo
 import { assembleScript, buildVocabulary, canEmit, markEmitted } from './perf-script.js'
 
 export const DEFAULT_STATE_LAYER_CONFIG = Object.freeze({
-  enabled: true,
+  enabled: false,
   affect: true,
   motivation: false, // P0 默认只出 state/affect；motivation/script 需显式开启
   scripts: false,
@@ -44,6 +44,7 @@ export function createStateLayer(opts = {}) {
     currentIntentId = null
   } = opts
   const cfg = { ...DEFAULT_STATE_LAYER_CONFIG, ...config }
+  let enabled = cfg.enabled === true
   const vocabulary = buildVocabulary(stateMap)
   const machine = createStateMachine({
     stateMap,
@@ -97,6 +98,7 @@ export function createStateLayer(opts = {}) {
   }
 
   function handle(event, ctx = {}) {
+    if (!enabled) return snapshot()
     if (!event || !event.t) return snapshot()
     const st = machine.handle(event, ctx)
     lastAppraisal = appraise(event, {
@@ -192,11 +194,23 @@ export function createStateLayer(opts = {}) {
     attentionTarget = null,
     attentionDtSec = 0
   } = {}) {
+    if (!enabled) return snapshot()
     affect = tickAffect(affect, { elapsedSec, busySec, idleSec, sleepSec, attentionTarget, attentionDtSec })
     return snapshot()
   }
 
+  function setEnabled(value) {
+    enabled = value === true
+    if (!enabled) {
+      currentIntent = null
+      lastIntent = null
+      lastScript = null
+    }
+    return snapshot()
+  }
+
   function interrupt({ eventKey = '', state = '', userAction = false } = {}) {
+    if (!enabled) return { interrupt: false, reason: 'disabled' }
     const r = shouldInterrupt({ currentIntent, eventKey, state, userAction })
     if (r.interrupt) currentIntent = null
     return r
@@ -207,6 +221,10 @@ export function createStateLayer(opts = {}) {
     tick,
     snapshot,
     interrupt,
+    setEnabled,
+    get enabled() {
+      return enabled
+    },
     vocabulary,
     _debug: {
       machine,
