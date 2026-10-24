@@ -1997,6 +1997,17 @@ test('client.js 语法合法且注册 __ModuleLoader__.load 工厂', () => {
   assert.doesNotThrow(() => new Function(src))
 })
 
+test('task-110：client.js 面板源码无盘符绝对路径（回滚指引改相对 scripts\\rollback.ps1）', () => {
+  const src = fs.readFileSync(path.join(libDir, 'client.js'), 'utf8')
+  // DOM 口径「0 绝对路径」：源码中不得出现 Windows 盘符路径（如 E:\\project\\...）
+  assert.doesNotMatch(src, /[A-Za-z]:\\\\/, 'client.js 不得含盘符绝对路径')
+  assert.doesNotMatch(src, /E:\\project/i, '不得硬编码安装机绝对路径')
+  // 回滚指引保留可读信息（相对路径 + 零写入预览），不因去路径而丢失操作说明
+  assert.match(src, /scripts\\\\rollback\.ps1/, '保留 rollback.ps1 相对路径')
+  assert.match(src, /-DryRun/, '保留 -DryRun 零写入预览')
+  assert.match(src, /# 在插件安装目录/, '保留执行位置说明')
+})
+
 test('package.json 声明 dsh.client 且 exports["./client"] 存在', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8'))
   assert.equal(pkg.dsh.client.platform, 'web')

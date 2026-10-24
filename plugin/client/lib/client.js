@@ -2374,7 +2374,10 @@ window.__ModuleLoader__.load({
                   h(
                     'pre',
                     { style: S.pre },
-                    'powershell -NoProfile -ExecutionPolicy Bypass -File "E:\\project\\AI提效\\tool\\pet-integration-src\\pet-work\\plugin-ui\\dsh-pet-bridge-ui\\scripts\\rollback.ps1"\n\n# 预览（零写入）\n... -File "...\\rollback.ps1" -DryRun'
+                    '# 在插件安装目录（dsh-pet-bridge-ui）内执行；先 -DryRun 预览（零写入）\n' +
+                      'powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\rollback.ps1\n\n' +
+                      '# 预览（零写入）\n' +
+                      'powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\rollback.ps1 -DryRun'
                   ),
                   h('p', { style: S.mono }, '说明文档：dsh-pet-bridge-ui\\README.md（安装/接线/回滚/接口契约）')
                 )

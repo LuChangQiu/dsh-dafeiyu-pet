@@ -545,6 +545,13 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - 检查：`node --check` 全过、`npm run lint` 全绿、smoke 65/65、client prettier 全过。
 - 隐私：面板/主页 DOM 0 绝对路径；团队/目标只渲染计数与状态（无 subject/description/objective）；费用只渲染数字。
 - 回滚：UI-only 变更，`git revert <client commit>` 即恢复旧面板；patch 仅追加 `# ui-sync <ts>` 注释，语义不变（备份见 `evidence/cordis.patch.backup-<ts>.yml`）。
+
+### E.11 task-110 隐私修订：回滚指引去绝对路径（2026-10-24）
+- **问题**：面板「应急控制 → 回滚设置面板」展开块曾硬编码安装机绝对路径（`E:\project\...\scripts\rollback.ps1`，基线 `bb9d435` 遗留例外），与「DOM 0 绝对路径」口径冲突。
+- **修复**：改为相对路径 `.\scripts\rollback.ps1`（在插件安装目录内执行），保留「先 `-DryRun` 预览（零写入）」说明；不再出现盘符/用户名/工作区绝对路径，操作信息不丢失。
+- **断言**：smoke `[4] client bundle 契约` 新增「client.js 面板源码无盘符绝对路径」：`[A-Za-z]:\\` 与 `E:\project` 均不得命中；`scripts\rollback.ps1` / `-DryRun` /「在插件安装目录」仍在。
+- **验证**：smoke 78/78、`node --check`、Prettier、preflight 13/13（worktree 需 `PET_WORK_DIR` 指向共享 pet-work）；harness 截图另附（mock 面板，展开「回滚指引」前后）。
+- **分支**：`feat/ui-privacy` 独立 worktree（自 `bb9d435`），窗口后合并；不改 main、不部署。
 ---
 
 # 附录 F — task-62 静态骨架：占位契约 / 待服务端字段 / 标记规则 / 挂载窗口回归
