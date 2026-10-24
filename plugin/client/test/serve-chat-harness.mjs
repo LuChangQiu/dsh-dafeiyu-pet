@@ -1,12 +1,14 @@
 /**
- * test-only 同源聊天 mock（B2 联调/单测用；不写盘、不调真 LLM、不装 profile）。
+ * test-only 同源聊天 mock（B2/B3 联调/单测用；不写盘、不调真 LLM、不装 profile）。
  *
  * 用法（手动联调）：
  *   node test/serve-chat-harness.mjs --port 3942 [--enabled] [--send-error BUDGET_EXCEEDED|LLM_FAILED]
  *   然后打开 http://127.0.0.1:3942/pet-bridge-ui/chat
  *
- * 契约：docs/CHAT-CONTRACT.md v1.1（RPC `POST /pet-bridge-ui/chat/rpc`）。
+ * 契约：docs/CHAT-CONTRACT.md v1.2（RPC `POST /pet-bridge-ui/chat/rpc`）。
  * 边界：状态全部在内存（退出即清）；`writes` 恒为 0（任何写入都不落盘）。
+ * B3：chat.settings.get|set（首次 enabled=true 必须 consent {version:'v1',at:ISO}）、
+ *     memory.list 过滤 sensitivity=high（契约：high 不返回 UI）。
  */
 import http from 'node:http'
 import path from 'node:path'
@@ -14,12 +16,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const libDir = path.join(here, '..', 'lib')
+const CONSENT_VERSION = 'v1'
+const SETTINGS_KEYS = ['enabled', 'quietMode', 'frequencyPerDay', 'memoryEnabled', 'consent']
+const isIsoDate = (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v))
 
 /**
  * @param {object} [opts]
  * @param {boolean} [opts.enabled] 初始 enabled（默认 false）
  * @param {Array} [opts.history] 初始历史（role user|her）
- * @param {Array} [opts.memories] 初始记忆
+ * @param {Array} [opts.memories] 初始记忆（可含 sensitivity:'high'，list 时过滤）
+ * @param {boolean} [opts.quietMode] 初始静音
  * @param {string|null} [opts.sendError] chat.send 注入错误码
  * @param {number} [opts.port] 监听端口（0 = 随机）
  */
@@ -29,16 +35,32 @@ export async function createMockChatServer(opts = {}) {
   let seq = 0
   const state = {
     enabled: opts.enabled === true,
-    consent: opts.enabled === true ? { version: 'v1', at: '2026-01-01T00:00:00.000Z' } : null,
-    quietMode: false,
+    consent: opts.enabled === true ? { version: CONSENT_VERSION, at: '2026-01-01T00:00:00.000Z' } : null,
+    quietMode: opts.quietMode === true,
     frequencyPerDay: 4,
     memoryEnabled: true,
     historyRetentionDays: 90,
+    updatedAt: '2026-01-01T00:00:00.000Z',
     history: Array.isArray(opts.history) ? opts.history.slice() : [],
     memories: Array.isArray(opts.memories) ? opts.memories.slice() : [],
     sendError: opts.sendError || null,
     writes: 0,
     calls: []
+  }
+  function visibleMemories() {
+    // 契约：sensitivity=high 不落 memory 原文、不返回 UI、不可查/导出
+    return state.memories.filter((m) => m.sensitivity !== 'high')
+  }
+  function snapshotSettings() {
+    return {
+      enabled: state.enabled,
+      consent: state.consent,
+      quietMode: state.quietMode,
+      frequencyPerDay: state.frequencyPerDay,
+      memoryEnabled: state.memoryEnabled,
+      historyRetentionDays: state.historyRetentionDays,
+      updatedAt: state.updatedAt
+    }
   }
   function json(res, status, body) {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -85,7 +107,7 @@ export async function createMockChatServer(opts = {}) {
             memoryEnabled: state.memoryEnabled,
             stage: 'R1',
             stageLabel: '熟悉',
-            memoryCount: state.memories.length,
+            memoryCount: visibleMemories().length,
             todayChats: 0,
             busy: false,
             lastAt: state.history.length ? state.history[state.history.length - 1].at : null
@@ -132,7 +154,9 @@ export async function createMockChatServer(opts = {}) {
       case 'memory.list': {
         const limit = Math.max(1, Math.min(50, Number(payload.limit) || 50))
         const offset = Math.max(0, Number(payload.offset) || 0)
-        const items = state.memories.slice(offset, offset + limit).map(normalizeMemory)
+        const items = visibleMemories()
+          .slice(offset, offset + limit)
+          .map(normalizeMemory)
         return json(res, 200, { rpcId, ok: true, result: { items } })
       }
       case 'memory.delete': {
@@ -153,32 +177,32 @@ export async function createMockChatServer(opts = {}) {
         return json(res, 200, { rpcId, ok: true, result: { ok: true, cleared } })
       }
       case 'chat.settings.get':
-        return json(res, 200, {
-          rpcId,
-          ok: true,
-          result: {
-            enabled: state.enabled,
-            consent: state.consent,
-            quietMode: state.quietMode,
-            frequencyPerDay: state.frequencyPerDay,
-            memoryEnabled: state.memoryEnabled,
-            historyRetentionDays: state.historyRetentionDays
-          }
-        })
+        return json(res, 200, { rpcId, ok: true, result: snapshotSettings() })
       case 'chat.settings.set': {
-        if (payload.enabled === true && !(payload.consent && payload.consent.version)) {
-          return rpcError(res, rpcId, 'INVALID_INPUT', 'consent required')
+        const unknown = Object.keys(payload).filter((k) => !SETTINGS_KEYS.includes(k))
+        if (unknown.length) return rpcError(res, rpcId, 'INVALID_INPUT', 'unknown field: ' + unknown.join(','))
+        if (payload.enabled === true && !state.consent) {
+          const c = payload.consent
+          if (!c || c.version !== CONSENT_VERSION || !isIsoDate(c.at)) {
+            return rpcError(res, rpcId, 'INVALID_INPUT', 'consent {version:"v1",at:ISO} required')
+          }
+        }
+        let freq = state.frequencyPerDay
+        if (payload.frequencyPerDay != null) {
+          freq = Number(payload.frequencyPerDay)
+          if (!Number.isFinite(freq) || freq < 1 || freq > 24)
+            return rpcError(res, rpcId, 'INVALID_INPUT', 'frequencyPerDay')
         }
         if (payload.enabled === true) {
+          if (!state.consent) state.consent = { version: CONSENT_VERSION, at: payload.consent.at }
           state.enabled = true
-          state.consent = { version: payload.consent.version, at: payload.consent.at || new Date().toISOString() }
         }
         if (payload.enabled === false) state.enabled = false
         if (typeof payload.quietMode === 'boolean') state.quietMode = payload.quietMode
-        if (payload.frequencyPerDay != null)
-          state.frequencyPerDay = Number(payload.frequencyPerDay) || state.frequencyPerDay
+        if (payload.frequencyPerDay != null) state.frequencyPerDay = freq
         if (typeof payload.memoryEnabled === 'boolean') state.memoryEnabled = payload.memoryEnabled
-        return json(res, 200, { rpcId, ok: true, result: { ok: true } })
+        state.updatedAt = new Date().toISOString()
+        return json(res, 200, { rpcId, ok: true, result: { ok: true, settings: snapshotSettings() } })
       }
       default:
         return rpcError(res, rpcId, 'INVALID_INPUT', 'unknown method')

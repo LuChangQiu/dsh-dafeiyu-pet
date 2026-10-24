@@ -1458,7 +1458,7 @@ async function chatRpc(url, method, payload) {
   return res.json()
 }
 
-test('renderChatHtml（B2）：同源 /chat/rpc、state/history/send/memory、textContent、无外链', async () => {
+await testAsync('renderChatHtml（B2）：同源 /chat/rpc、state/history/send/memory、textContent、无外链', async () => {
   const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
   const html = renderChatHtml()
   assert.match(html, /大肥鱼 · 聊天/)
@@ -1474,13 +1474,14 @@ test('renderChatHtml（B2）：同源 /chat/rpc、state/history/send/memory、te
   assert.match(html, /textContent/)
   assert.doesNotMatch(html, /innerHTML/)
   assert.doesNotMatch(html, /https?:\/\//)
-  // B3 未接线：同意卡仍禁用，不写 consent/enabled
+  // 同意卡：勾选前按钮仍禁用；未勾选不会写 consent
   assert.match(html, /id="btnEnable"[^>]*disabled/)
+  assert.doesNotMatch(html, /id="agree"[^>]*disabled/)
   // 隐私：页面源码不出现盘符绝对路径
   assert.doesNotMatch(html, /[A-Za-z]:\\\\/)
 })
 
-test('chat mock：默认关 → CHAT_DISABLED（不返回数据、不写盘）', async () => {
+await testAsync('chat mock：默认关 → CHAT_DISABLED（不返回数据、不写盘）', async () => {
   await withChatMock({}, async (h, url) => {
     const r = await chatRpc(url, 'chat.state.get', {})
     assert.equal(r.ok, false)
@@ -1489,7 +1490,7 @@ test('chat mock：默认关 → CHAT_DISABLED（不返回数据、不写盘）',
   })
 })
 
-test('chat mock：enabled → state/history/send 正常', async () => {
+await testAsync('chat mock：enabled → state/history/send 正常', async () => {
   await withChatMock({ enabled: true }, async (h, url) => {
     const st = await chatRpc(url, 'chat.state.get', {})
     assert.equal(st.ok, true)
@@ -1509,7 +1510,7 @@ test('chat mock：enabled → state/history/send 正常', async () => {
   })
 })
 
-test('chat mock：memory list/delete/forget/clear', async () => {
+await testAsync('chat mock：memory list/delete/forget/clear', async () => {
   const memories = [
     { id: 'm1', text: '喜欢喝乌龙茶', kind: 'preference', importance: 6, source: 'user_chat' },
     { id: 'm2', text: '周五要交周报', kind: 'plan', importance: 8, source: 'user_chat' },
@@ -1530,7 +1531,7 @@ test('chat mock：memory list/delete/forget/clear', async () => {
   })
 })
 
-test('chat mock：consent 首次必填、形状 {version,at}（B3 契约）', async () => {
+await testAsync('chat mock：consent 首次必填、形状 {version,at}（B3 契约）', async () => {
   await withChatMock({}, async (h, url) => {
     const bad = await chatRpc(url, 'chat.settings.set', { enabled: true })
     assert.equal(bad.ok, false)
@@ -1548,7 +1549,132 @@ test('chat mock：consent 首次必填、形状 {version,at}（B3 契约）', as
   })
 })
 
-test('主页「互动」卡含聊天入口（B1）', async () => {
+// ───────────────────────── 3.15 task-91 B3：同意/静音/记忆接线（mock 数据） ─────────────────────────
+console.log('\n[3.15] 聊天页 B3：同意/设置/记忆接线（mock 数据）')
+
+await testAsync(
+  'renderChatHtml（B3）：consent {version,at}、settings.get|set、静音/频率/记忆开关、单 fetch、无外链',
+  async () => {
+    const { renderChatHtml } = await import(pathToFileURL(path.join(libDir, 'chat-page.js')).href)
+    const html = renderChatHtml()
+    // 同意卡：可勾选；勾选前 btnEnable 仍禁用；首次开启写入 consent {version,at}
+    assert.match(html, /id="agree">/)
+    assert.doesNotMatch(html, /id="agree"[^>]*disabled/)
+    assert.match(html, /id="btnEnable"[^>]*disabled/)
+    assert.match(html, /consent: \{ version: "v1", at: new Date\(\)\.toISOString\(\) \}/)
+    // 设置卡：静音 / 每日频率 / 记忆开关 / 保存
+    assert.match(html, /chat\.settings\.get/)
+    assert.match(html, /chat\.settings\.set/)
+    assert.match(html, /id="quietMode"/)
+    assert.match(html, /id="freq"/)
+    assert.match(html, /id="memEnabled"/)
+    assert.match(html, /id="btnSaveSettings"/)
+    assert.match(html, /id="quietState"/)
+    // 隐私说明 / 清空确认
+    assert.match(html, /高风险敏感信息/)
+    assert.match(html, /不可恢复/)
+    assert.match(html, /再点确认清空/)
+    // 渲染安全：textContent、无 innerHTML/外链/盘符路径；fetch 只有一个（同源 RPC）
+    assert.match(html, /textContent/)
+    assert.doesNotMatch(html, /innerHTML|https?:\/\//)
+    assert.doesNotMatch(html, /[A-Za-z]:\\\\/)
+    assert.equal((html.match(/fetch\(/g) || []).length, 1)
+    assert.match(html, /fetch\(RPC_URL/)
+  }
+)
+
+await testAsync('chat mock B3：settings.get 默认值 + set 静音/频率/记忆开关往返（返回 settings）', async () => {
+  await withChatMock({}, async (h, url) => {
+    const s0 = await chatRpc(url, 'chat.settings.get', {})
+    assert.equal(s0.ok, true)
+    assert.equal(s0.result.enabled, false)
+    assert.equal(s0.result.consent, null)
+    assert.equal(s0.result.quietMode, false)
+    assert.equal(s0.result.frequencyPerDay, 4)
+    assert.equal(s0.result.memoryEnabled, true)
+    const set = await chatRpc(url, 'chat.settings.set', {
+      quietMode: true,
+      frequencyPerDay: 8,
+      memoryEnabled: false
+    })
+    assert.equal(set.ok, true)
+    assert.equal(set.result.settings.quietMode, true)
+    assert.equal(set.result.settings.frequencyPerDay, 8)
+    assert.equal(set.result.settings.memoryEnabled, false)
+    const s1 = await chatRpc(url, 'chat.settings.get', {})
+    assert.equal(s1.result.quietMode, true)
+    assert.equal(s1.result.frequencyPerDay, 8)
+    assert.equal(s1.result.memoryEnabled, false)
+    assert.equal(h.state.writes, 0)
+  })
+})
+
+await testAsync('chat mock B3：首次开启 consent 校验（缺省/版本/at 非法 → INVALID_INPUT；返回 consent）', async () => {
+  await withChatMock({}, async (h, url) => {
+    const at = '2026-01-02T00:00:00.000Z'
+    const missing = await chatRpc(url, 'chat.settings.set', { enabled: true })
+    assert.equal(missing.ok, false)
+    assert.equal(missing.error.code, 'INVALID_INPUT')
+    const badVer = await chatRpc(url, 'chat.settings.set', { enabled: true, consent: { version: 'v2', at } })
+    assert.equal(badVer.error.code, 'INVALID_INPUT')
+    const badAt = await chatRpc(url, 'chat.settings.set', { enabled: true, consent: { version: 'v1', at: 'nope' } })
+    assert.equal(badAt.error.code, 'INVALID_INPUT')
+    const ok = await chatRpc(url, 'chat.settings.set', { enabled: true, consent: { version: 'v1', at } })
+    assert.equal(ok.ok, true)
+    assert.equal(ok.result.settings.enabled, true)
+    assert.equal(ok.result.settings.consent.version, 'v1')
+    assert.equal(ok.result.settings.consent.at, at)
+    const st = await chatRpc(url, 'chat.state.get', {})
+    assert.equal(st.result.enabled, true)
+    assert.equal(st.result.quietMode, false)
+    assert.equal(h.state.writes, 0)
+  })
+})
+
+await testAsync('chat mock B3：memory.list 过滤 sensitivity=high（不返回原文、计数不含）', async () => {
+  const memories = [
+    { id: 'm1', text: '喜欢喝乌龙茶', kind: 'preference', importance: 6 },
+    { id: 'h1', text: 'key=sk-test-secret', kind: 'secret', importance: 10, sensitivity: 'high' }
+  ]
+  await withChatMock({ enabled: true, memories }, async (h, url) => {
+    const list = await chatRpc(url, 'memory.list', { limit: 50 })
+    assert.equal(list.ok, true)
+    assert.equal(list.result.items.length, 1)
+    assert.equal(list.result.items[0].id, 'm1')
+    assert.doesNotMatch(JSON.stringify(list), /sk-test-secret/)
+    const st = await chatRpc(url, 'chat.state.get', {})
+    assert.equal(st.result.memoryCount, 1)
+    assert.equal(h.state.writes, 0)
+  })
+})
+
+await testAsync('chat mock B3：settings 白名单/频率范围校验；关闭后其余方法 403、可再开启', async () => {
+  await withChatMock({ enabled: true }, async (h, url) => {
+    const unknown = await chatRpc(url, 'chat.settings.set', { foo: 1 })
+    assert.equal(unknown.ok, false)
+    assert.equal(unknown.error.code, 'INVALID_INPUT')
+    const badFreq = await chatRpc(url, 'chat.settings.set', { frequencyPerDay: 0 })
+    assert.equal(badFreq.error.code, 'INVALID_INPUT')
+    const freq = await chatRpc(url, 'chat.settings.set', { frequencyPerDay: 2 })
+    assert.equal(freq.ok, true)
+    assert.equal(freq.result.settings.frequencyPerDay, 2)
+    // 关闭：settings 可读写，其余 403 CHAT_DISABLED；已同意过则再开启无需 consent
+    const off = await chatRpc(url, 'chat.settings.set', { enabled: false })
+    assert.equal(off.ok, true)
+    assert.equal(off.result.settings.enabled, false)
+    const blocked = await chatRpc(url, 'chat.state.get', {})
+    assert.equal(blocked.error.code, 'CHAT_DISABLED')
+    const sg = await chatRpc(url, 'chat.settings.get', {})
+    assert.equal(sg.ok, true)
+    assert.equal(sg.result.enabled, false)
+    const on = await chatRpc(url, 'chat.settings.set', { enabled: true })
+    assert.equal(on.ok, true)
+    assert.equal(on.result.settings.enabled, true)
+    assert.equal(h.state.writes, 0)
+  })
+})
+
+await testAsync('主页「互动」卡含聊天入口（B1）', async () => {
   const { renderHomeHtml } = await import(pathToFileURL(path.join(libDir, 'home.js')).href)
   const html = renderHomeHtml()
   assert.match(html, /id="btnChat"/)
