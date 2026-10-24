@@ -13,9 +13,13 @@ if($DryRun){
 }
 
 # 1) 前置门禁（含 reviewer APPROVED 校验）——用 Start-Process 隔离 stdout/stderr，避免写成 PowerShell 错误流
-$mcOut=Join-Path $env:TEMP 'mount-check.out'
-$mcErr=Join-Path $env:TEMP 'mount-check.err'
-Remove-Item $mcOut,$mcErr -ErrorAction SilentlyContinue
+# 注意：不依赖 $env:TEMP（后台/受限环境下可能为空），统一用 repo 下 build\tmp
+$tmpRoot=Join-Path $repo 'build\tmp'
+New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
+$mcOut=Join-Path $tmpRoot 'mount-check.out'
+$mcErr=Join-Path $tmpRoot 'mount-check.err'
+Remove-Item -LiteralPath $mcOut -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $mcErr -ErrorAction SilentlyContinue
 $mc=Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'mount-check.ps1'),'-TargetCommit',$TargetCommit) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $mcOut -RedirectStandardError $mcErr
 if($mc.ExitCode -ne 0){
   $detail=((Get-Content $mcOut -Raw -ErrorAction SilentlyContinue) + (Get-Content $mcErr -Raw -ErrorAction SilentlyContinue))
