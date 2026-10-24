@@ -79,7 +79,8 @@ for (const line of lines) {
       id: fx.id,
       got: { state: snap.state, subkind: snap.subkind },
       want: { state: exp.state, subkind: exp.subkind },
-      flags: { okState, okSub, okClip, okComp, okExpr, okFx, okCounters }
+      flags: { okState, okSub, okClip, okComp, okExpr, okFx, okCounters, okPres },
+      snapPresentation: snap.presentation
     })
   }
 }

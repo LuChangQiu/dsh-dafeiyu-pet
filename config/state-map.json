@@ -261,7 +261,38 @@
       "move": ["none", "walk", "back", "to-center", "to-edge", "off"],
       "presentationNull": "允许显式 null（panelOnly/不参与基线比较）；缺省 ≠ null",
       "unknownKey": "FAIL（fixture presentation invalid: unknown key）"
+    },
+    "defaults": {
+      "_global": { "clip": "idleBase", "expression": "idleSmile", "bubbleKind": null, "bubbleLevel": null },
+      "_doc": "L4 兜底：state 无 presentation/subkind 时使用（FIXTURE-CLARIFICATION-v3）"
     }
+  },
+  "presentationResolution": {
+    "chainVersion": "v1",
+    "chain": [
+      "L1 events[type].presentation（可选 overlay，字段级合并）",
+      "L2 states[state].subkinds[subkind]（整体替换；条目本身即 presentation，含 presentation 键优先）",
+      "L3 states[state].presentation（整体基线）",
+      "L4 presentationRules.defaults（state→_global）",
+      "L5 null"
+    ],
+    "rules": {
+      "subkindReplacement": "L2 命中即整体替换 L3，不做字段合并",
+      "eventFieldMerge": "L1 对 base 字段级合并：出现 key 覆盖、null 抑制、缺省继承",
+      "aliasNormalization": "加载期全局归一化（level→bubbleLevel、surface、bubble-none）；链内不再处理",
+      "oneShot": "不在链内：resolve 只出 baseline，renderer 之后叠加 oneShot，结束回 baseline",
+      "background": "perform:false 只抑制渲染；解析链照常；fixtures presentation:null=不校验",
+      "fixtureCompare": "expect.presentation 子集断言；null=不校验；resolve 后必须过 clip/composite 互斥与 bubble 成对校验",
+      "invalid": "log presentation resolution invalid + 回退 idleBase/idleSmile；fixture 侧 FAIL"
+    },
+    "subkindMetaKeys": ["slow", "afterMs", "bubbleChance", "fxChance", "perform", "petBehavior", "preferredComposite", "preferredPlayable", "covers", "note"],
+    "fixtureSources": {
+      "L2_subkind": ["F01", "F02", "F03", "F05", "F06", "F07", "F12", "F14", "F35", "F37", "F38", "F39", "F41", "F42", "F46", "F48", "F49", "F53", "F54"],
+      "L3_state": ["F04", "F09", "F13", "F15", "F16", "F20", "F22", "F25", "F26", "F29", "F40", "F43", "F44", "F45", "F52"],
+      "noAssertion": ["F08", "F10", "F11", "F17", "F18", "F19", "F21", "F23", "F24", "F27", "F28", "F30", "F31", "F32", "F33", "F34", "F36", "F47", "F50", "F51"],
+      "L1_overlay": []
+    },
+    "doc": "docs/FIXTURE-CLARIFICATION-v3.md"
   },
   "fixtureCounters": {
     "ownership": {

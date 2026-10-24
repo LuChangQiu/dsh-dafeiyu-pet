@@ -71,12 +71,71 @@ export function createStateMachine(opts = {}) {
   const minDwellOf = (name) => (stateDef(name) && Number(stateDef(name).minDwellMs)) || 0
   if (initialState && stateDef(initialState)) current = String(initialState)
 
+  const normalizePresentation = (p) => {
+    if (!p || typeof p !== 'object') return null
+    const out = { ...p }
+    if ('level' in out) {
+      out.bubbleLevel = out.level
+      delete out.level
+    }
+    if ('bubble' in out && out.bubble === 'none') {
+      out.bubbleKind = null
+      out.bubbleLevel = null
+    }
+    if ('surface' in out) delete out.surface
+    delete out.bubble
+    return out
+  }
+  const mergeFields = (base, overlay) => {
+    if (!overlay) return base
+    const out = { ...(base || {}) }
+    for (const [k, v] of Object.entries(overlay)) {
+      if (v === null) out[k] = null
+      else out[k] = v
+    }
+    return out
+  }
   const resolvePresentation = (target, sub) => {
     const def = stateDef(target)
-    if (!def) return {}
-    const subDef = (def.subkinds && (def.subkinds[sub] || def.subkinds.default)) || null
-    if (subDef) return { ...subDef }
-    return def.presentation ? { ...def.presentation } : {}
+    if (!def)
+      return (
+        normalizePresentation(
+          (stateMap.presentationRules &&
+            stateMap.presentationRules.defaults &&
+            stateMap.presentationRules.defaults._global) ||
+            null
+        ) || {}
+      )
+    const pr = stateMap.presentationRules || {}
+    const defaults = pr.defaults || {}
+    const L4 = defaults[target] || defaults._global || null
+    const L3 = def.presentation || null
+    let base = L4 ? { ...L4 } : null
+    if (L3) base = { ...L3 }
+    const subEntry = def.subkinds && sub ? def.subkinds[sub] : null
+    if (subEntry) {
+      const subPres = subEntry.presentation || subEntry
+      const metaKeys = new Set(
+        (stateMap.presentationResolution && stateMap.presentationResolution.subkindMetaKeys) || [
+          'bubbleChance',
+          'afterMs',
+          'slow'
+        ]
+      )
+      const clean = {}
+      const extra = {}
+      for (const [k, v] of Object.entries(subPres)) {
+        if (metaKeys.has(k)) extra[k] = v
+        else clean[k] = v
+      }
+      base = { ...(base || {}), ...clean, ...extra }
+    }
+    const out = normalizePresentation(base) || {}
+    if (out.bubbleKind && !out.bubbleLevel) {
+      const lv = { inner: 'S3', normal: 'S1', remind: 'S0' }
+      if (lv[out.bubbleKind]) out.bubbleLevel = lv[out.bubbleKind]
+    }
+    return out
   }
 
   function tick(ts) {
