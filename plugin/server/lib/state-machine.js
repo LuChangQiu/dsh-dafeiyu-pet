@@ -116,6 +116,23 @@ export function createStateMachine(opts = {}) {
     if (route.modes && !route.modes.includes(m)) return snapshot()
     // tool subkind：优先 subkindFrom(toolType) 映射
     let sub = route.subkind || dynSub || null
+    if (!sub && route.subkindRule) {
+      const d = event.data || {}
+      const qs = Array.isArray(d.questions) ? d.questions : []
+      const withIntent = qs.find((q) => q && q.intent && q.intent.kind)
+      let kind = (d.intent && d.intent.kind) || d.questionKind || (withIntent && withIntent.intent.kind)
+      let isMulti = qs.some((q) => q && q.multiSelect === true)
+      let baseKind = kind ? String(kind) : isMulti ? 'multi' : qs.length === 0 ? 'choice' : 'choice'
+      const mapped =
+        (route.subkindRule.map && (route.subkindRule.map[baseKind] || route.subkindRule.map[baseKind.toLowerCase()])) ||
+        route.subkindRule.unknown ||
+        'choice'
+      const known =
+        route.subkindRule.map && (route.subkindRule.map[baseKind] || route.subkindRule.map[baseKind.toLowerCase()])
+      if (!known && route.subkindRule.unknownCounter)
+        counters[route.subkindRule.unknownCounter] = (counters[route.subkindRule.unknownCounter] || 0) + 1
+      sub = mapped
+    }
     if (!sub && route.subkindFrom === 'toolType') {
       const name = String((event.data && (event.data.name || event.data.tool)) || '')
       sub = classifyTool(name, stateMap.toolSubkindMap || {})

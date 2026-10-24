@@ -49,7 +49,7 @@ for (const line of lines) {
   const okClip = !pres.clip || vocab.clips.has(pres.clip)
   const okComp = !pres.composite || vocab.composites.has(pres.composite)
   const okExpr = !pres.expression || vocab.expressions.has(pres.expression)
-  const okFx = !pres.fx || vocab.fx.has(pres.fx)
+  const okFx = !pres.fx || (Array.isArray(pres.fx) ? pres.fx.every((x) => vocab.fx.has(x)) : vocab.fx.has(pres.fx))
   const PERF_COUNTERS = ['costLedgerUpdated']
   const own = Object.keys(exp.counters || {}).filter((k) => PERF_COUNTERS.includes(k))
   if (own.length) {
@@ -66,7 +66,13 @@ for (const line of lines) {
       }
       return snap.counters[k] === v
     })
-  if (okState && okSub && okClip && okComp && okExpr && okFx && okCounters) pass++
+  const okPres =
+    !exp.presentation ||
+    Object.entries(exp.presentation).every(([k, v]) => {
+      const kk = k === 'level' ? 'bubbleLevel' : k
+      return JSON.stringify((snap.presentation || {})[kk]) === JSON.stringify(v)
+    })
+  if (okState && okSub && okClip && okComp && okExpr && okFx && okCounters && okPres) pass++
   else {
     fail++
     failures.push({
