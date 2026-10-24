@@ -95,6 +95,10 @@ Invoke-Step "unit: state-layer" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: state-layer 接线（state→appraisal→affect→motivation→script）"; return }
   & node plugin/server/test/performance-fixtures.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: performance fixtures 契约绑定（P01–P08 / 32 条 vendored）"; return }
+  & node plugin/server/test/state-layer-wiring.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: state-layer-wiring 门控（默认关/订阅最小化/kill switch）"; return }
+  & node plugin/server/test/index-state-layer.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: index.js wiring 集成（disabled 零副作用/disabled→1 订阅、enabled→2 订阅）"; return }
 }
 
 # 7) git 状态（信息项，不判失败）

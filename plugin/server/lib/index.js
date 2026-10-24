@@ -55,6 +55,10 @@ import {
 import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
 import { buildTeamV2, emptyTeamV2 } from './team-view.js'
 import { composeReunion } from './text-fmt.js'
+import { fileURLToPath } from 'node:url'
+import { createStateLayerWiring } from './state-layer-wiring.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -183,6 +187,8 @@ const DEFAULTS = {
   // v48：team/goal/plan/userQuestions 只读 v2 字段（投影快照，≤1/min 聚合；缺失→null+degraded）
   teamV2: { enabled: true, refreshMs: 60000 },
   statusChannel: { enabled: true, heartbeatMs: 5000, petPush: true },
+  // task-104 wiring 骨架：默认关（disabled = 零订阅/零副作用）；enabled 时事件→state-layer→v2 stateLayer 字段
+  stateLayer: { enabled: false, affect: true, motivation: false, scripts: false },
   bubble: {
     normalMs: 5000,
     innerMs: 3000,
@@ -1584,6 +1590,8 @@ export function apply(ctx, rawConfig) {
   // task-69：state 写盘节流（默认 10s，低占用 20s）；写前重算派生字段保证快照自洽
   let lastStateWriteAt = 0
   let stateWriteSkipped = 0
+  // task-104：state-layer wiring 输出（默认 null；仅 cfg.stateLayer.enabled 时更新）
+  let stateLayerView = null
   const writeState = (force = false) => {
     const target = cfg.stateFileV2 || ''
     if (!target) return
@@ -1661,6 +1669,7 @@ export function apply(ctx, rawConfig) {
         plan: teamV2.plan,
         userQuestions: teamV2.userQuestions,
         degraded: teamV2.degraded,
+        stateLayer: stateLayerView,
         teamUpdatedAt: teamV2.updatedAt,
         companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
@@ -3026,6 +3035,55 @@ export function apply(ctx, rawConfig) {
 
   ctx.on('session/event', onEvent)
 
+  // ---------- task-104 wiring 骨架（默认关；disabled 不加载 state-map / 不订阅 / 不 emit） ----------
+  let stateLayerWiringRef = null
+  if (cfg.stateLayer?.enabled === true) {
+    stateLayerWiringRef = createStateLayerWiring({
+      ctx,
+      config: cfg,
+      log,
+      now: () => Date.now(),
+      mode: () => String(modeState.kind || 'normal'),
+      sessionRoleOf: (session) => {
+        try {
+          const rec = sessionRegistry.get(String(session && session.id))
+          return rec && rec.role !== 'user' ? rec.role : null
+        } catch {
+          return null
+        }
+      },
+      loadStateMap: () => {
+        const candidates = [
+          path.join(__dirname, '..', '..', '..', 'config', 'state-map.json'),
+          path.join(__dirname, '..', '..', '..', '..', 'config', 'state-map.json'),
+          path.join(__dirname, 'state-map.json')
+        ]
+        for (const candidate of candidates) {
+          try {
+            if (fs.existsSync(candidate)) return JSON.parse(fs.readFileSync(candidate, 'utf8'))
+          } catch {}
+        }
+        return null
+      },
+      emitState: (snapshot) => {
+        stateLayerView = snapshot
+        try {
+          writeState()
+        } catch {}
+      },
+      emitPerf: (script) => {
+        try {
+          log('info', 'perf script', { id: script.id, source: script.source, layers: (script.layers || []).length })
+        } catch {}
+      }
+    })
+    log('info', 'state layer wiring', {
+      enabled: stateLayerWiringRef.enabled,
+      subscribed: stateLayerWiringRef.subscribed,
+      reason: stateLayerWiringRef.reason
+    })
+  }
+
   // ---------- rituals (morning / sleep) ----------
   const ritualDone = { date: '', morning: false, sleep: false }
   const timer = setInterval(() => {
@@ -3262,6 +3320,10 @@ export function apply(ctx, rawConfig) {
   if (cfg.testHookFile) startTestHook(cfg.testHookFile)
 
   const dispose = () => {
+    // task-104：先停 wiring（取消订阅/kill switch），再停本实例定时器/队列
+    try {
+      stateLayerWiringRef?.dispose()
+    } catch {}
     // v47-hotfix/task-69：reload 时完整停掉本实例定时器/队列并 flush 待写盘数据
     pipeDisposed = true
     pipeQ.length = 0
