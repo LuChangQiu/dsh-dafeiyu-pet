@@ -64,8 +64,8 @@
 > **一致性比较口径（v1.2）**：vocabulary v1.2 起提供平铺字段 `ACT_ALL`(28)/`EXPRESSION_ALL`(14)/`FX_ALL`(7)/`BUBBLE_ALL`；校验器以 `*_ALL` 为比较口径（嵌套仅供展示）。兼容视图 `whitelist.acts = ACT_ALL(28)`、`whitelist.fx = EXPRESSION_ALL(14)`；`--check` 按此对比。
 
 > 由 `scripts/gen-act-fx-whitelist.mjs` 从 manifest 17 clips + 11 composites + 29 §7 的 14 表情生成；`--check` 防漂移。以下为生成器说明，实际清单以 JSON 为准。
-- `FX_WHITELIST`（29 §7 的 14 表情名，见生成 JSON）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
-- `ACT_WHITELIST`：**以 `docs/generated/act-fx-whitelist.json` 为唯一真源**（当前 `source=manifest`，**28 acts / 14 fx**，排除 composites.note 元数据）。本契约不再内联枚举。
+- `FX`/`EXPRESSION`：**以 vocabulary 唯一真源为口径**（`FX_ALL`=7 个基础 FX、`EXPRESSION_ALL`=14 个表情）；本契约不再内联名单，代码不使用 `whitelist.fx` 兼容视图。
+- `ACT_ALL`=28（manifest actions 17+composites 11）、`EXPRESSION_ALL`=14、`FX_ALL`=7；校验一律按 `*_ALL` 平铺字段，兼容视图仅展示。
 - `chat.send.reply.act/fx` 仅接受上述集合；非法值丢弃并记 `chat act/fx rejected`，不报错。
 - `moodWord` 仅 `开心|平静|有点低落`（由 companion.words.mood 派生）。
 
