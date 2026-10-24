@@ -26,14 +26,15 @@
 - 鲸鱼娘资产随包、构建自检；行为层（反应延迟/打断恢复/走神）与状态诚实化（卡住/失败/等待）分支待窗口后合并；
 - 窗口后合并顺序见 `verify/MONDAY-MERGE-PLAN.md`（以 Lead 最终版为准）。
 
-### 自测：登录自启（不碰真实任务/不重启/不拉起生产 pet）
+### 自测：登录自启（无需真实 pet-work；不碰真实任务/不重启/不拉起任何桌宠进程）
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-logon-autostart.ps1
-# pet-work 非默认路径时：先 $env:PET_WORK_DIR='...'，或传 -PetWorkDir
 ```
-- 使用临时任务 `DafeiyuPetStartTest` + 临时无害动作脚本（仅写 marker 后 exit 0），断言 LogonTrigger/PT30S/LIMITED、`/Run` marker+LastTaskResult=0、
-  selfcheck 正/反样本与 `-Repair` 重注册；结束后删除临时任务/脚本/标记文件。
+- 测试使用临时任务 `DafeiyuPetStartTest` + 临时**无害动作脚本**（只写 marker 后 exit 0）+ 临时 **PetWorkDir**（`tools\start-pet.ps1` stub 只写 marker，绝不启动桌宠）；
+  断言 LogonTrigger/PT30S/LIMITED、`/Run` marker+LastTaskResult=0、selfcheck 正/反样本、`-Repair` 重注册，并断言 **无新增 pet 进程**；
+  结束后删除临时任务/动作脚本/marker/临时 PetWorkDir。
 - 注册/修复前会导出旧任务 XML 到 `%TEMP%\DafeiyuPetStart-*-backup-*.xml`；注册失败自动从备份恢复并记录日志。
+  备份 XML 默认保留在 `%TEMP%` 便于审计，可手动清理（P3）。
 
 ### 已知限制
 - 计划任务为**当前用户**登录触发；换用户登录/远程桌面会话不会重复拉起（单实例管道保证只有一个桌宠）。
