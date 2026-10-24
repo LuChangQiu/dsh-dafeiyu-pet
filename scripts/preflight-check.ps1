@@ -102,6 +102,30 @@ if ($bhvPython) {
   Write-Host ""
   Write-Host "=== unit: behavior === SKIP (python/venv 不可用，不判失败)"
 }
+# 6d) P0-1 状态诚实化：卡住/失败/等待（纯逻辑假时钟单测；共享 venv；目标 <5s）
+$honestyPython = $null
+$venvPy2 = Join-Path $PetWorkDir '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $venvPy2) {
+  $honestyPython = $venvPy2
+} else {
+  $pyCmd2 = Get-Command python -ErrorAction SilentlyContinue
+  if ($pyCmd2) { $honestyPython = $pyCmd2.Source }
+}
+if ($honestyPython) {
+  Invoke-Step "unit: honesty" {
+    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+    & $honestyPython scripts/test-honesty-layer.py
+    if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: honesty-layer fixtures（python scripts/test-honesty-layer.py）"; return }
+    $sw2.Stop()
+    if ($sw2.Elapsed.TotalSeconds -ge 5.0) {
+      Write-Host ("WARN: unit: honesty 用时 {0:N2}s（目标 <5s）" -f $sw2.Elapsed.TotalSeconds)
+    }
+  }
+} else {
+  Write-Host ""
+  Write-Host "=== unit: honesty === SKIP (python/venv 不可用，不判失败)"
+}
+
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="

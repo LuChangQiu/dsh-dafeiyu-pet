@@ -239,6 +239,10 @@ try:
 except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
     _whale_skin = None
 try:
+    import honesty_layer as _honesty_layer
+except Exception:      # P0-1 状态诚实化缺失 → 保持原表现（不阻塞启动）
+    _honesty_layer = None
+try:
     import behavior_layer as _behavior_layer
 except Exception:      # P0-2 行为层缺失 → 退化为原始行为（不阻塞桌宠启动）
     _behavior_layer = None
@@ -4055,6 +4059,16 @@ class PetWindow(QWidget):
             "balance_always": False,
             "snap_on": True,
             "flip_on_left": True,
+            # P0-1 状态诚实化（只影响表现）：卡住 25s / 失败短承认 / 二次失败委屈
+            "honesty": {
+                "enabled": True,
+                "stuckAfterSec": 25,
+                "stuckBlinkEverySec": 2.6,
+                "stuckBlinkSec": 0.26,
+                "secondFailureCryDelaySec": 1.2,
+                "errorLines": ["这次没成……", "又没成……"],
+                "waitingInputLine": "我在等你～",
+            },
             # P0-2 行为层：反应延迟（普通 150–300ms / S0 80–150ms）、打断恢复 200ms、走神（idle 60s/0.2/冷却 300s）
             "behavior": {
                 "reactionDelayMs": 220,
@@ -4231,6 +4245,19 @@ class PetWindow(QWidget):
         except Exception as _whale_err:
             print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
             self._whale = None
+        # P0-1 状态诚实化：卡住 / 失败 / 等待（只影响表现，不改动作优先级）
+        try:
+            self._honesty = _honesty_layer.StateHonesty(self.cfg) if _honesty_layer else None
+        except Exception:
+            self._honesty = None
+        self._honesty_debug = bool(os.environ.get("PET_HONESTY_DEBUG"))
+        self._honesty_log_path = str(os.environ.get("PET_HONESTY_LOG") or "")
+        if not self._honesty_log_path:   # 取证 hook（默认关、不入库）
+            try:
+                if os.path.exists(os.path.join(APP_DIR, "honesty-debug.on")):
+                    self._honesty_log_path = os.path.join(APP_DIR, "honesty-debug.log")
+            except Exception:
+                pass
         # P0-2 行为层：反应延迟 / 打断恢复 / 走神（config.json -> behavior.*）
         try:
             self._bhv = _behavior_layer.BehaviorLayer(self.cfg) if _behavior_layer else None
@@ -7382,6 +7409,72 @@ class PetWindow(QWidget):
         except Exception:
             pass
 
+    # ---------- P0-1 状态诚实化：卡住 / 失败 / 等待 ----------
+    def _honesty_log(self, msg):
+        line = "[honesty] " + str(msg)
+        verbose = getattr(self, "_honesty_debug", False)
+        log_path = getattr(self, "_honesty_log_path", "")
+        if not verbose and not log_path:
+            return
+        try:
+            if log_path:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write("%.3f %s\n" % (time.time(), line))
+            if verbose:
+                print(line, flush=True)
+        except Exception:
+            pass
+
+    def _honesty_note_state(self, name):
+        """新 state 事件：重置卡住计时；之前若处于卡住且 force 是 honesty 占用的 think，清掉。"""
+        h = getattr(self, "_honesty", None)
+        if h is None:
+            return None
+        try:
+            info = h.note_state(name, time.time())
+            if info.get("was_stuck") and getattr(self, "_whale_force", None) == "think":
+                self._whale_clear_force()
+            self._honesty_log("state=%s streak=%d was_stuck=%s" % (
+                name, info.get("error_streak", 0), info.get("was_stuck")))
+            return info
+        except Exception:
+            return None
+
+    def _honesty_tick(self, now):
+        """busy 超时 → 卡住发愣+慢眨；二次失败延迟委屈。与 behavior 层独立，不互相清对方的 pending。"""
+        h = getattr(self, "_honesty", None)
+        if h is None or not h.config.enabled:
+            return
+        try:
+            if h.stuck_due(now):
+                if self.dragging or getattr(self, "_enh_phys", None) is not None or getattr(self, "_life_offline", False):
+                    return
+                self.target = None
+                self._whale_clear_force()
+                _wh = getattr(self, "_whale", None)
+                if _wh is not None and _wh.has("think"):
+                    self._whale_force_play("think")
+                    self._honesty_log("stuck enter state=%s after=%.1fs" % (h.state, now - h.last_event_at))
+            if h.stuck_active:
+                if not getattr(self, "_whale_force", None):
+                    self.target = None
+                    _wh = getattr(self, "_whale", None)
+                    if _wh is not None and _wh.has("think") and _wh.cur != "think":
+                        self._whale_force_play("think")
+                if h.stuck_blink_due(now):
+                    fx = getattr(self, "_bridge_fx", None)
+                    if isinstance(fx, dict):
+                        fx["blink_until"] = self._secs() + h.config.blink_s
+                    self._honesty_log("stuck slow-blink %.2fs" % h.config.blink_s)
+            if h.take_cry_due(now):
+                if not self.dragging and not getattr(self, "_whale_force", None):
+                    _wh = getattr(self, "_whale", None)
+                    if _wh is not None and _wh.has("cry"):
+                        self._whale_force_play("cry")
+                        self._honesty_log("second-failure cry")
+        except Exception:
+            pass
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
@@ -7389,6 +7482,7 @@ class PetWindow(QWidget):
             return
         try:
             now = time.time()
+            self._honesty_tick(now)
             self._bhv_tick(now)
             # 用户操作优先：拖拽/抛掷一开始就清掉外部强制动作（act: 播一半也打断）
             if self.dragging:
@@ -11527,6 +11621,10 @@ def main():
                 _st = json.loads(line[6:])
                 w._bridge_state = _st
                 _name = str(_st.get("state") or "")
+                try:
+                    w._honesty_note_state(_name)     # 先 honesty 观察（重置卡住/streak/取消 pending cry）
+                except Exception:
+                    pass
                 # 鲸鱼娘 2D 帧动画：DSH 状态 → 动作（thinking/tool/waiting/done/error 等）
                 _whale_map = {
                     "thinking": "think",
@@ -11579,9 +11677,28 @@ def main():
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
                     w.say("我在等你的确认哦", seconds=8.0, queue=True)
+                elif _name == "waiting_input":
+                    # 等待输入：保留 waitPeek/S0 规则，补一句短"等你"
+                    try:
+                        _line = w._honesty.waiting_line() if getattr(w, "_honesty", None) else ""
+                        if _line:
+                            w._bridge_bubble_kind = "remind"
+                            w.say(_line, seconds=6.0, queue=True)
+                    except Exception:
+                        pass
                 elif _name == "error":
                     try:
                         w._bridge_fx_play("sweat")
+                    except Exception:
+                        pass
+                    # 失败诚实化：短承认；连续第二次才委屈（延迟 cry）
+                    try:
+                        if getattr(w, "_honesty", None) and w._honesty.config.enabled:
+                            w._bridge_bubble_kind = "remind"
+                            w.say(w._honesty.error_line(), seconds=4.0, queue=True)
+                            if w._honesty.error_should_cry():
+                                w._honesty.schedule_cry(time.time())
+                                w._honesty_log("schedule cry (streak=%d)" % w._honesty.error_streak)
                     except Exception:
                         pass
             except Exception:
