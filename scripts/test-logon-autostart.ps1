@@ -25,8 +25,14 @@ function Assert-True([string]$name, [bool]$cond, [string]$detail = '') {
 }
 
 function Remove-TestTask {
-  try { Unregister-ScheduledTask -TaskName $tmpTask -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
-  try { & schtasks.exe /Delete /TN $tmpTask /F 2>$null | Out-Null } catch {}
+  # 多次尝试：任务可能刚被 selfcheck Repair 子进程重新注册，或短暂处于 Running 状态
+  for ($k = 0; $k -lt 3; $k++) {
+    try { Unregister-ScheduledTask -TaskName $tmpTask -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try { & schtasks.exe /Delete /TN $tmpTask /F 2>$null | Out-Null } catch {}
+    if (-not (Get-ScheduledTask -TaskName $tmpTask -ErrorAction SilentlyContinue)) { return }
+    Start-Sleep -Milliseconds 400
+  }
+  Write-Output ("WARN: 临时任务清理未完成：" + $tmpTask)
 }
 
 function Get-PetProcessCount {
@@ -69,7 +75,13 @@ try {
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $tmpTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
-  $xml = (& schtasks.exe /Query /TN $tmpTask /XML 2>&1) | Out-String
+  $xml = ''
+  # 注册后 Task Scheduler 可能有短暂缓存：轮询直到 XML 指向本次临时动作（最多 2s）
+  for ($w = 0; $w -lt 10; $w++) {
+    $xml = (& schtasks.exe /Query /TN $tmpTask /XML 2>&1) | Out-String
+    if ($xml -match [regex]::Escape((Split-Path -Leaf $tmpAction))) { break }
+    Start-Sleep -Milliseconds 200
+  }
   Assert-True 'XML 含 <LogonTrigger>' ($xml -match '<LogonTrigger>')
   Assert-True 'XML Delay=PT30S' ($xml -match '<Delay>PT30S</Delay>')
   Assert-True 'XML UserId=当前用户' ($xml -match [regex]::Escape($env:USERNAME))
@@ -77,14 +89,19 @@ try {
   Assert-True 'XML 指向临时无害动作脚本' ($xml -match [regex]::Escape((Split-Path -Leaf $tmpAction)))
 
   # ---------- 2) 手动 /Run：marker 被写 + LastTaskResult=0（不打开生产 pet） ----------
-  & schtasks.exe /Run /TN $tmpTask 2>&1 | Out-Null
+  Remove-Item -Force $tmpMarker -ErrorAction SilentlyContinue
   $lastResult = $null
   $markerOk = $false
-  for ($i = 0; $i -lt 20; $i++) {
-    Start-Sleep -Milliseconds 500
-    try { $lastResult = (Get-ScheduledTaskInfo -TaskName $tmpTask -ErrorAction Stop).LastTaskResult } catch { $lastResult = $null }
-    $markerOk = Test-Path -LiteralPath $tmpMarker
+  for ($attempt = 0; $attempt -lt 2; $attempt++) {
+    & schtasks.exe /Run /TN $tmpTask 2>&1 | Out-Null
+    for ($i = 0; $i -lt 20; $i++) {
+      Start-Sleep -Milliseconds 500
+      try { $lastResult = (Get-ScheduledTaskInfo -TaskName $tmpTask -ErrorAction Stop).LastTaskResult } catch { $lastResult = $null }
+      $markerOk = Test-Path -LiteralPath $tmpMarker
+      if ($markerOk -and $lastResult -eq 0) { break }
+    }
     if ($markerOk -and $lastResult -eq 0) { break }
+    Start-Sleep -Milliseconds 500
   }
   Assert-True '/Run 写入临时 marker（未拉起生产 pet）' $markerOk
   Assert-True '/Run 成功（LastTaskResult=0）' ($lastResult -eq 0) ("last=" + "$lastResult")
