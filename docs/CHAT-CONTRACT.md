@@ -58,7 +58,7 @@
 ## act/fx 白名单（v1.2：代码生成，唯一真源 docs/generated/act-fx-whitelist.json；已切仓库内真源 assets/whale-girl/manifest.json）
 > 由 `scripts/gen-act-fx-whitelist.mjs` 从 manifest 17 clips + 11 composites + 29 §7 的 14 表情生成；`--check` 防漂移。以下为生成器说明，实际清单以 JSON 为准。
 - `FX_WHITELIST`（29 §7 的 14 表情名，见生成 JSON）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
-- `ACT_WHITELIST`（manifest actions+composites ∪ 28 状态动作名，见生成 JSON）：`peek, jump, spin, shake, stretch, nod, walk, freeze, walk:center, walk:nearby, sit, cry, fall`
+- `ACT_WHITELIST`：**以 `docs/generated/act-fx-whitelist.json` 为唯一真源**（当前 `source=manifest`，**28 acts / 14 fx**，排除 composites.note 元数据）。本契约不再内联枚举。
 - `chat.send.reply.act/fx` 仅接受上述集合；非法值丢弃并记 `chat act/fx rejected`，不报错。
 - `moodWord` 仅 `开心|平静|有点低落`（由 companion.words.mood 派生）。
 
@@ -66,3 +66,5 @@
 - RPC 路径 `/pet-bridge-ui/chat/rpc` 与页面 `/pet-bridge-ui/chat` 不冲突（GET/POST 分离可验证）。
 - act/fx 非白名单值丢弃（响应不含非法名）。
 - `consent` 形状为 `{version:'v1',at:ISO}` 或 null（不是布尔）。
+
+- 契约测试保留：`node scripts/gen-act-fx-whitelist.mjs --check`（whitelist 与 manifest 漂移即失败）。
