@@ -7265,6 +7265,11 @@ class PetWindow(QWidget):
                     self._life_wake()       # 被拎起来就醒（_life_wake 内刷新心跳，不会立刻睡回去）
                     self._whale_clear_force()
             force = self._whale_force
+            # CF5：fall 帧只在物理飞行期间保持；物理已被外部清空（phys:stop/异常）且不处于拖拽时
+            # 自动接 land 再回 idle，避免卡在 fall 帧（act:fall 手动触发同样会 1 tick 内落回 land）。
+            if force == "fall" and not self.dragging and getattr(self, "_enh_phys", None) is None:
+                self._whale_force_play("land")
+                force = self._whale_force
             if force:
                 if w.has(force):
                     if w.cur != force:
@@ -11388,11 +11393,24 @@ def main():
                     "disconnected": "lonelySit",
                 }
                 _wh = getattr(w, "_whale", None)
+                _mapped = _whale_map.get(_name) if _name else None
                 if _name in ("idle", "background", ""):
                     w._whale_clear_force()
-                elif _wh is not None and _name in _whale_map and _wh.has(_whale_map[_name]):
-                    if getattr(w, "_whale_force", None) != _whale_map[_name]:
-                        w._whale_force_play(_whale_map[_name])
+                elif _wh is not None and _mapped and _wh.has(_mapped):
+                    try:
+                        _gagged = bool(w._whale_gag_ok())
+                    except Exception:
+                        _gagged = True
+                    if _gagged or _name in ("approval", "waiting_approval", "waiting_input"):
+                        # 正常时段按映射演；深夜/免打扰/静音时 approval/waiting_input 是 S0 关键提示，仍保留
+                        if getattr(w, "_whale_force", None) != _mapped:
+                            w._whale_force_play(_mapped)
+                    else:
+                        # CF2：深夜/免打扰/静音降级 —— 只留 idleBase/呼吸，不演 think/walk/waitPeek/
+                        # cheer/errorSequence/cry；气泡仍走下方 approval/error 分支（不额外冒泡）
+                        w._whale_clear_force()
+                        if _wh.cur != "idleBase":
+                            _wh.play("idleBase")
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
                     w.say("我在等你的确认哦", seconds=8.0, queue=True)
