@@ -4092,9 +4092,10 @@ class PetWindow(QWidget):
                 "exitAfterMs": 600000,      # exitWithDsh=true 时，静默满 10 分钟才退出
             },
             # A 路线 2.5D「3D 感」增强（task-74；默认开，render.enhance=false 完全回滚原渲染）
+            # 用户反馈「站着的时候人物倾斜」：倾角硬限幅 ≤3°，静止不倾斜（旧 config 的 20 也在代码里夹紧）
             "render": {
                 "enhance": True,
-                "tilt_max_deg": 20.0,
+                "tilt_max_deg": 3.0,
                 "shadow": True,
                 "parallax": True,
                 "physics": True,
@@ -4202,10 +4203,15 @@ class PetWindow(QWidget):
         self._whale_pat_cd = 0.0          # 点击摸头 / 嘴硬演出冷却（内部时钟秒）
         self._whale_cry_cd = 0.0          # 摔哭冷却（29 §2.3：30 分钟）
         self._bridge_mute_until = 0.0     # 桥侧 mute 到什么时候（闷声时不演梗）
+        self._whale_walk_rate = 1.6       # 走路帧慢放倍率（用户反馈摆臂太快；素材 notes 建议 ×1.6）
         try:
             _wcfg = self.cfg.get("whale")
             if not isinstance(_wcfg, dict):
                 _wcfg = {"on": True}
+            try:
+                self._whale_walk_rate = max(0.5, min(3.0, float(_wcfg.get("walkRate", 1.6) or 1.6)))
+            except (TypeError, ValueError):
+                self._whale_walk_rate = 1.6
             if _wcfg.get("on", True) and _whale_skin is not None:
                 self._whale = _whale_skin.load(__file__)
                 if self._whale is not None:
@@ -4269,7 +4275,8 @@ class PetWindow(QWidget):
             _r = {}
         self.render = {
             "enhance": bool(_r.get("enhance", True)),
-            "tilt_max_deg": max(0.0, min(25.0, float(_r.get("tilt_max_deg", 12.0) or 12.0))),
+            # 倾角上限硬夹到 3°：老 config.json 里存着 20° 也不许再放大（用户反馈站立倾斜）
+            "tilt_max_deg": max(0.0, min(3.0, float(_r.get("tilt_max_deg", 3.0) or 3.0))),
             "shadow": bool(_r.get("shadow", True)),
             "parallax": bool(_r.get("parallax", True)),
             "physics": bool(_r.get("physics", True)),
@@ -6289,24 +6296,25 @@ class PetWindow(QWidget):
                    "shadow_dx": 0.0, "shadow_rx": 0.0, "shadow_ry": 0.0}
         if not self._enh_on():
             return neutral
-        max_deg = min(20.0, float(self.render.get("tilt_max_deg", 20.0) or 20.0))
+        # 用户反馈「站着的时候人物倾斜」：倾角上限硬限 3°；静止 rot=0，只在走路/拖拽/飞行时轻微前倾。
+        max_deg = min(3.0, float(self.render.get("tilt_max_deg", 3.0) or 3.0))
         idle = (not self.dragging) and self._enh_phys is None
+        moving = idle and self.target is not None
         rot = 0.0
         dx = dy = 0.0
         sx = sy = 1.0
-        if idle:  # idle 微倾斜 ±4/2/3°（23 §4.2）
-            rot += math.sin(now * 1.7) * 4.0
-            dx += math.sin(now * 1.1) * 3.0
-            dy += math.sin(now * 2.5) * 2.0
+        if moving:   # 行走轻微前倾（幅度随速度、方向跟朝向，≤ max_deg）；站立不倾斜
+            lean = max_deg * min(1.0, abs(self.cur_speed) / max(1.0, SPEED))
+            rot += lean if self.facing < 0 else -lean
         phys = self._enh_phys
-        if phys is not None:  # 飞行：vx/40 + 角阻尼 4/s；垂直速度 → pitch
+        if phys is not None:  # 飞行：vx/40 + 角阻尼 4/s；垂直速度 → pitch（同样夹在 max_deg 内）
             vx, vy = phys.get("vx", 0.0), phys.get("vy", 0.0)
             rot += max(-max_deg, min(max_deg, vx / 40.0)) * math.exp(-4.0 * float(phys.get("t", 0.0)))
             dy -= max(-10.0, min(10.0, abs(vy) / 240.0))
             sx += max(-0.05, min(0.05, abs(vy) / 9000.0))
             sy -= max(-0.05, min(0.05, abs(vy) / 9000.0))
-        if self.render.get("gaze"):  # 视线 ±22°/±14°（23 §4.2）
-            rot += self._enh_gaze * 22.0
+        if self.render.get("gaze"):  # 视线转头：鲸鱼娘帧图头身一体，22° 会像站立倾斜 → 限 ≤3°
+            rot += max(-max_deg, min(max_deg, self._enh_gaze * 3.0))
             dy += self._enh_gaze_y * 14.0 * 0.3
         side = (self._enh_edge or {}).get("side") if self.render.get("edges") else None
         if side:
@@ -6641,8 +6649,15 @@ class PetWindow(QWidget):
                 p.translate(cx, bottom)
                 p.scale(st["sx"], st["sy"])
                 p.translate(-cx, -bottom)
-            # 行走朝向 与 左吸附整体翻转 叠加（异或）
-            if (facing < 0) != bool(self.flip_x):
+            # 鲸鱼娘 walk 素材是**朝右**的侧视图（f00~f31 脸/脚尖朝右、尾巴在左）：
+            # 向左移动（facing>0）时才水平翻转；向右移动不翻。
+            # 贴边 flip_x 是给经典三视图的"左吸附整体翻转"，不作用于鲸鱼娘；
+            # 经典精灵保持原 XOR 逻辑。（此前鲸鱼娘沿用了 classic 的"朝左素材"假设 → 左右都倒着走）
+            if whale is not None and name != "挂件" and self._whale_active():
+                _flip = facing > 0
+            else:
+                _flip = (facing < 0) != bool(self.flip_x)
+            if _flip:
                 p.translate(cx, 0)
                 p.scale(-1, 1)
                 p.translate(-cx, 0)
@@ -7284,10 +7299,17 @@ class PetWindow(QWidget):
                             w.play(n, restart=True)
                     self._whale_micro_at = self.t + int(
                         random.uniform(8.0, 25.0) * 1000.0 / max(1, self.tick_ms))
-            # tool = 慢速 walk（×1.6，STATE-MAP §3）
+            # 走路摆臂太快（用户反馈）：按素材 notes 建议慢放 ×1.6（45→72ms/帧、1.44s→2.30s/循环）；
+            # tool 状态是"慢速 walk"，在正常步频上再慢 15%。倍率可配 whale.walkRate。
+            # 注意方向：每帧推进的"动画时间"要除以倍率（rate>1 = 播得更慢），不是乘。
             step_ms = self.tick_ms
-            if w.cur == "walk" and str(getattr(self, "_bridge_state", {}).get("state") or "") == "tool":
-                step_ms *= 1.6
+            _rate = 1.0
+            if w.cur == "walk":
+                _rate = float(getattr(self, "_whale_walk_rate", 1.6) or 1.6)
+                if str(getattr(self, "_bridge_state", {}).get("state") or "") == "tool":
+                    _rate *= 1.15
+                _rate = max(0.5, min(3.0, _rate))
+                step_ms = self.tick_ms / _rate
             w.tick(step_ms)
         except Exception as _whale_exc:      # 帧动画异常不影响主循环，限频记录（约每 20 秒最多 1 条）
             if self.t - getattr(self, '_whale_err_t', -10**9) > 200:

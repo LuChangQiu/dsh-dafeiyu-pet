@@ -148,6 +148,19 @@ class WhaleGirlSkin:
             return None
         return seq[min(self.idx, len(seq) - 1)][0]
 
+    def action_stats(self, name):
+        """动作帧统计 (帧数, 平均帧时长 ms, 循环总时长 ms)；未知动作返回 (0, 0.0, 0.0)。
+
+        给"帧时长日志"用（用户反馈走路摆臂过快，需要记录素材时长与生效慢放倍率）。
+        """
+        seq = self._seq.get(name)
+        if not seq:
+            return (0, 0.0, 0.0)
+        total = 0.0
+        for _path, ms in seq:
+            total += float(ms)
+        return (len(seq), total / len(seq), total)
+
     def pixmap(self, display_h):
         """取当前帧，按“显示内容身高 display_h”缩放；画布等比缩放为 320*display_h/263。"""
         path = self.frame_path()
