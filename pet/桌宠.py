@@ -238,6 +238,10 @@ try:
     import whale_skin as _whale_skin
 except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
     _whale_skin = None
+try:
+    import behavior_layer as _behavior_layer
+except Exception:      # P0-2 行为层缺失 → 退化为原始行为（不阻塞桌宠启动）
+    _behavior_layer = None
 
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
@@ -4051,6 +4055,13 @@ class PetWindow(QWidget):
             "balance_always": False,
             "snap_on": True,
             "flip_on_left": True,
+            # P0-2 行为层：反应延迟（普通 150–300ms / S0 80–150ms）、打断恢复 200ms、走神（idle 60s/0.2/冷却 300s）
+            "behavior": {
+                "reactionDelayMs": 220,
+                "s0ReactionDelayMs": 115,
+                "interruptRecoverMs": 200,
+                "idleSkit": {"enabled": True, "idleSec": 60, "chance": 0.2, "cooldownSec": 300},
+            },
             "locked": False,          # 锁定位置：开了就拖不动（防误触），点击 / 菜单照旧
             "turn_cost_on": True,
             "skin": SKIN_PET,
@@ -4212,6 +4223,7 @@ class PetWindow(QWidget):
                 self._whale_walk_rate = max(0.5, min(3.0, float(_wcfg.get("walkRate", 1.35) or 1.35)))
             except (TypeError, ValueError):
                 self._whale_walk_rate = 1.35
+
             if _wcfg.get("on", True) and _whale_skin is not None:
                 self._whale = _whale_skin.load(__file__)
                 if self._whale is not None:
@@ -4219,6 +4231,15 @@ class PetWindow(QWidget):
         except Exception as _whale_err:
             print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
             self._whale = None
+        # P0-2 行为层：反应延迟 / 打断恢复 / 走神（config.json -> behavior.*）
+        try:
+            self._bhv = _behavior_layer.BehaviorLayer(self.cfg) if _behavior_layer else None
+        except Exception:
+            self._bhv = None
+        self._bhv_last_active = time.time()
+        self._bhv_last_state_action = None
+        self._bhv_skit_until = 0.0
+        self._bhv_debug = bool(os.environ.get("PET_BEHAVIOR_DEBUG"))
 
         # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
         _lc = self.cfg.get("lifecycle")
@@ -7261,6 +7282,96 @@ class PetWindow(QWidget):
             QTimer.singleShot(1000, _greet_after_wake)
         print("失联休眠：醒来")
 
+    # ---------- P0-2 行为层：反应延迟 / 打断恢复 / 走神 ----------
+    def _bhv_log(self, msg):
+        if getattr(self, "_bhv_debug", False):
+            try:
+                print("[bhv] " + msg, flush=True)
+            except Exception:
+                pass
+
+    def _bhv_note_activity(self):
+        self._bhv_last_active = time.time()
+
+    def _bhv_cancel_pending(self):
+        if getattr(self, "_bhv", None):
+            try:
+                self._bhv.reaction.cancel()
+            except Exception:
+                pass
+
+    def _bhv_interrupt(self, reason="", clear_pending=True):
+        """点击/拖拽/状态切换：取消待生效动作，并排一次 200ms 后的姿势锚点恢复。"""
+        if not getattr(self, "_bhv", None):
+            return
+        try:
+            now = time.time()
+            if clear_pending:
+                self._bhv.reaction.cancel()
+            cur = getattr(self, "_whale_force", None)
+            self._bhv.interrupt.interrupt(now, cur)
+            self._bhv_log("interrupt reason=%s force=%r recover=%dms" % (
+                reason, cur, self._bhv.config.interrupt_recover_ms))
+        except Exception:
+            pass
+
+    def _bhv_schedule_state_action(self, name, kind):
+        """state 驱动动作延迟排期（150–300ms；S0 80–150ms；多源取 max，不阻塞主线程）。"""
+        if not getattr(self, "_bhv", None):
+            return
+        try:
+            item = self._bhv.reaction.schedule(name, kind, time.time())
+            self._bhv_log("schedule key=%s planDelay=%dms sources=%d" % (
+                name, item["delayMs"], item["sources"]))
+        except Exception:
+            pass
+
+    def _bhv_tick(self, now):
+        """每 tick 查时间戳（不 sleep）：应用延迟动作 / 打断恢复 / 走神起止。"""
+        bhv = getattr(self, "_bhv", None)
+        if bhv is None:
+            return
+        try:
+            _wh = getattr(self, "_whale", None)
+            # 1) 反应延迟到点 → 应用 state 动作
+            due = bhv.reaction.take_due(now)
+            if due is not None:
+                if _wh is not None and _wh.has(due["name"]):
+                    self._whale_force_play(due["name"])
+                    actual = int((now - due.get("scheduledAt", due["due"] - due["delayMs"] / 1000.0)) * 1000)
+                    self._bhv_log("apply key=%s actualDelay=%dms" % (due["name"], actual))
+            # 2) 打断恢复：200ms 内回姿势锚点（期间若已被新动作接管则不误清）
+            cur = getattr(self, "_whale_force", None)
+            if bhv.interrupt.take_due(now, cur):
+                self._whale_clear_force()
+                if _wh is not None and _wh.cur != "idleBase":
+                    _wh.play("idleBase")
+                self._bhv_log("recover -> idleBase")
+            # 3) 走神结束
+            if getattr(self, "_bhv_skit_until", 0) and now >= self._bhv_skit_until:
+                self._bhv_skit_until = 0.0
+                self._whale_clear_force()
+                if _wh is not None and _wh.cur != "idleBase":
+                    _wh.play("idleBase")
+                self._bhv_log("idle_skit end")
+            # 4) 走神触发：idle 足够久 + 非深夜/静音/全屏 + 无 busy
+            if getattr(self, "_bhv_skit_until", 0) or due is not None:
+                return
+            st = str(getattr(self, "_bridge_state", {}).get("state") or "")
+            idle_s = now - float(getattr(self, "_bhv_last_active", now))
+            busy = bool(self.dragging or getattr(self, "_enh_phys", None) is not None
+                        or getattr(self, "_whale_force", None) or getattr(self, "target", None) is not None)
+            eligible = (idle_s >= bhv.config.skit_idle_s and not busy
+                        and st in ("", "idle", "background")
+                        and self._whale_gag_ok()
+                        and not getattr(self, "_life_offline", False))
+            if _wh is not None and _wh.has("think") and bhv.idle.should_fire(now, eligible):
+                self._whale_force_play("think")
+                self._bhv_skit_until = now + bhv.config.skit_hold_s
+                self._bhv_log("idle_skit fire idle=%.1fs hold=%.1fs" % (idle_s, bhv.config.skit_hold_s))
+        except Exception:
+            pass
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
@@ -7268,6 +7379,7 @@ class PetWindow(QWidget):
             return
         try:
             now = time.time()
+            self._bhv_tick(now)
             # 用户操作优先：拖拽/抛掷一开始就清掉外部强制动作（act: 播一半也打断）
             if self.dragging:
                 self._whale_clear_force()
@@ -8290,6 +8402,11 @@ class PetWindow(QWidget):
                 self.update()
                 return
             self._press_on_lyric_btn = None
+            try:
+                self._bhv_note_activity()
+                self._bhv_interrupt("click")
+            except Exception:
+                pass
             self.press_t = 1.0          # 按压 Q 弹
             self.play_click()           # 点一次响一声完整音效（不再区分松手）
             self.last_press_pos = e.globalPosition().toPoint()
@@ -8317,6 +8434,11 @@ class PetWindow(QWidget):
                     self._drag_blocked = True
                     return
                 self.dragging = True
+                try:
+                    self._bhv_note_activity()
+                    self._bhv_interrupt("drag")
+                except Exception:
+                    pass
                 self.drag_offset = e.globalPosition().toPoint() - QPoint(self.x(), self.y())
             if self.dragging and self.drag_offset is not None:
                 pos = e.globalPosition().toPoint() - self.drag_offset
@@ -11247,6 +11369,10 @@ def main():
             if muted:
                 return "muted"
             act = line[4:].strip().lower()
+            try:
+                w._bhv_note_activity()
+            except Exception:
+                pass
             if act in ("jump", "hop"):
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.6)
             elif act == "sway":
@@ -11405,20 +11531,37 @@ def main():
                 }
                 _wh = getattr(w, "_whale", None)
                 _mapped = _whale_map.get(_name) if _name else None
+                _is_s0 = _name in ("approval", "waiting_approval", "waiting_input")
                 if _name in ("idle", "background", ""):
+                    try:
+                        w._bhv_note_activity()
+                        w._bhv_cancel_pending()
+                    except Exception:
+                        pass
                     w._whale_clear_force()
                 elif _wh is not None and _mapped and _wh.has(_mapped):
                     try:
+                        w._bhv_note_activity()
                         _gagged = bool(w._whale_gag_ok())
                     except Exception:
                         _gagged = True
-                    if _gagged or _name in ("approval", "waiting_approval", "waiting_input"):
-                        # 正常时段按映射演；深夜/免打扰/静音时 approval/waiting_input 是 S0 关键提示，仍保留
-                        if getattr(w, "_whale_force", None) != _mapped:
-                            w._whale_force_play(_mapped)
+                    if _gagged or _is_s0:
+                        # P0-2：state 动作统一延迟（S0 80–150ms，其它 150–300ms；多源取 max）。
+                        # 同一状态重复推送不重排，避免动作被反复打断。
+                        if getattr(w, "_bhv_last_state_action", None) != _mapped:
+                            w._bhv_last_state_action = _mapped
+                            try:
+                                w._bhv_interrupt("state", clear_pending=True)
+                                w._bhv_schedule_state_action(_mapped, _name)
+                            except Exception:
+                                pass
                     else:
-                        # CF2：深夜/免打扰/静音降级 —— 只留 idleBase/呼吸，不演 think/walk/waitPeek/
-                        # cheer/errorSequence/cry；气泡仍走下方 approval/error 分支（不额外冒泡）
+                        # CF2：深夜/免打扰/静音降级 —— 只留 idleBase/呼吸，不排延迟动作
+                        try:
+                            w._bhv_cancel_pending()
+                        except Exception:
+                            pass
+                        w._bhv_last_state_action = None
                         w._whale_clear_force()
                         if _wh.cur != "idleBase":
                             _wh.play("idleBase")
