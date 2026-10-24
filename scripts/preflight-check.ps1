@@ -79,6 +79,29 @@ Invoke-Step "unit: whale-wiring" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts/CF1 wiring fixtures（unit，<5s）"; return }
 }
 
+# 6c) P0-2 行为层：反应延迟 / 打断恢复 / 走神（纯逻辑假时钟单测；共享 venv；目标 <5s）
+$bhvPython = $null
+$venvPy = Join-Path $PetWorkDir '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $venvPy) {
+  $bhvPython = $venvPy
+} else {
+  $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+  if ($pyCmd) { $bhvPython = $pyCmd.Source }
+}
+if ($bhvPython) {
+  Invoke-Step "unit: behavior" {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    & $bhvPython scripts/test-behavior-layer.py
+    if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: behavior-layer fixtures（python scripts/test-behavior-layer.py）"; return }
+    $sw.Stop()
+    if ($sw.Elapsed.TotalSeconds -ge 5.0) {
+      Write-Host ("WARN: unit: behavior 用时 {0:N2}s（目标 <5s）" -f $sw.Elapsed.TotalSeconds)
+    }
+  }
+} else {
+  Write-Host ""
+  Write-Host "=== unit: behavior === SKIP (python/venv 不可用，不判失败)"
+}
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="
