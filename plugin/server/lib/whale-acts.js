@@ -26,8 +26,8 @@ export const WHITELIST_PATHS = {
 /** CF1 配置默认值（可被用户配置覆盖；kill switch = enabled:false）。 */
 export const DEFAULT_WHALE_ACTS = {
   enabled: true,
-  // OQ1=A：whale 支持下用 act:wave 替代 morning ritual 的 classic act:jump；
-  //         用 act:report 替代 turn/end report 的 classic act:stretch（false=双发，仅备用）。
+  // Lead 2026-10-24 裁决：true（默认）= whale act 替换 classic（report→report、morning→wave）；
+  // false = 降级"仅 classic"（不发 whale act，也不双发）；kill switch enabled=false 同样仅 classic。
   replaceClassicActs: true,
   report: { enabled: true, chance: 1.0, cooldownMs: 300000 }, // 复用 report 自身 5 轮/5min 节流
   wave: { enabled: true, chance: 1.0, cooldownMs: 7200000 }, // 2h（事件本身稀有）

@@ -778,11 +778,16 @@ export function apply(ctx, rawConfig) {
   let lastSkitAt = 0
   let hourActKey = ''
   let hourlyActions = 0
-  const act = (name) => {
-    // v47：focus 只允许最小幅度动作；silent/off 不动
+  /**
+   * 动作发送（唯一通道）。返回是否真的发给 pet，便于 whaleAct 等调用方决定是否记账。
+   * opts.ignoreSameState：事件驱动的一次性演出（CF1 report/wave/sneak）允许绕过同态守卫，
+   *   避免被同轮其它动作（如 turn/end 的 stretch、tool 的 peek）把 lastActionState 占住而吞掉。
+   * v47：focus 只允许最小幅度动作；silent/off 不动。
+   */
+  const act = (name, opts = {}) => {
     if (!modeAllowsAct(modeState.kind, name)) {
       logModeSuppress('act', name)
-      return
+      return false
     }
     const hk = new Date().toDateString() + new Date().getHours()
     if (hk !== hourActKey) {
@@ -790,13 +795,16 @@ export function apply(ctx, rawConfig) {
       hourlyActions = 0
     }
     const g = cfg.guards || {}
-    if (g.noActionOnSameState && statusState.lastActionState === statusState.state) return
-    if (hourlyActions >= (g.maxActionsPerHour || 60)) return
+    if (g.noActionOnSameState && !opts.ignoreSameState && statusState.lastActionState === statusState.state) {
+      return false
+    }
+    if (hourlyActions >= (g.maxActionsPerHour || 60)) return false
     hourlyActions += 1
     statusState.lastActionState = statusState.state
-    if (!cfg.enabled || !cfg.actions?.enabled) return
+    if (!cfg.enabled || !cfg.actions?.enabled) return false
     send('act:' + name)
     log('debug', 'act', { name })
+    return true
   }
   const walkNear = () => {
     if (!modeAllowsAction(modeState.kind)) return
@@ -1490,14 +1498,19 @@ export function apply(ctx, rawConfig) {
                   tokens: g.tokens
                 })
               ) {
-                setTimeout(() => whaleAct('wave'), 600) // CF1：久别重逢挥手（wave 冷却 2h）
+                // CF1：久别重逢挥手；replace=false（仅 classic）时没有 classic 对应动作 → 不发 whale act
+                if (cfg.whaleActs?.enabled && cfg.whaleActs?.replaceClassicActs !== false) {
+                  setTimeout(() => whaleAct('wave'), 600)
+                }
               }
             })
             .catch(() => {
               if (
                 speak('morning', composeReunion(text, activityLabel), { force: true, source: 'pool', style: 'greet' })
               ) {
-                setTimeout(() => whaleAct('wave'), 600)
+                if (cfg.whaleActs?.enabled && cfg.whaleActs?.replaceClassicActs !== false) {
+                  setTimeout(() => whaleAct('wave'), 600)
+                }
               }
             })
         } catch {}
@@ -2460,7 +2473,9 @@ export function apply(ctx, rawConfig) {
       whitelist: whaleWhitelist,
       state: statusState.state,
       lastActionState: statusState.lastActionState,
-      noActionOnSameState: cfg.guards?.noActionOnSameState !== false,
+      // CF1 是事件驱动的一次性演出：决策层也跳过 same-state（act() 层 ignoreSameState 为双保险），
+      // 避免被同轮其它动作（turn/end stretch、tool peek…）占住 lastActionState 而吞掉首轮 report/wave。
+      noActionOnSameState: false,
       actionsThisHour: hourlyActions,
       maxActionsPerHour: cfg.guards?.maxActionsPerHour,
       rng: Math.random
@@ -2469,9 +2484,14 @@ export function apply(ctx, rawConfig) {
       log('debug', 'whale act suppressed', { key, reason: res.reason })
       return false
     }
+    // P2（reviewer）：先发送成功再记 cooldown/日上限 —— act() 被 guard 拒绝时不白耗预算。
+    // CF1 是事件驱动的一次性演出：显式 ignoreSameState，避免被同轮其它动作占住 state 而吞掉。
+    if (!act(key, { ignoreSameState: true })) {
+      log('debug', 'whale act suppressed', { key, reason: 'act-guard' })
+      return false
+    }
     whaleActState.last[key] = nowMs
     whaleActState.today[key] = (whaleActState.today[key] || 0) + 1
-    act(key)
     log('info', 'whale act', { key, reason: res.reason })
     return true
   }
@@ -2911,12 +2931,12 @@ export function apply(ctx, rawConfig) {
           if (
             speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
           ) {
-            // CF1（OQ1=A）：replaceClassicActs=true 时用 act:report 替代 act:stretch；false 才双发；
-            // kill switch（whaleActs.enabled=false）→ 完全回退 classic 行为（只 stretch）。
+            // CF1（Lead 2026-10-24 裁决）：replaceClassicActs=true（默认）= whale 替换 classic；
+            // false = 降级"仅 classic"（不双发）；kill switch（enabled=false）同样只发 classic。
             setTimeout(() => {
               const wa = cfg.whaleActs || {}
-              if (!wa.enabled || wa.replaceClassicActs === false) send('act:stretch')
-              if (wa.enabled) whaleAct('report')
+              if (wa.enabled && wa.replaceClassicActs !== false) whaleAct('report')
+              else send('act:stretch')
             }, 600)
           }
         })
@@ -3024,12 +3044,12 @@ export function apply(ctx, rawConfig) {
           ritualDone.morning = true
           if (!quietNow()) {
             speak('morning', pick('kaigong'), { urgent: false, style: 'greet' })
-            // CF1（OQ1=A）：replaceClassicActs=true 时用 act:wave 替代 classic act:jump；false 才双发；
-            // kill switch（whaleActs.enabled=false）→ 完全回退 classic 行为（只 jump）。
+            // CF1（Lead 2026-10-24 裁决）：replaceClassicActs=true（默认）= act:wave 替代 classic act:jump；
+            // false = 降级"仅 classic"（不双发）；kill switch（enabled=false）同样只发 classic。
             setTimeout(() => {
               const wa = cfg.whaleActs || {}
-              if (!wa.enabled || wa.replaceClassicActs === false) send('act:jump')
-              if (wa.enabled) whaleAct('wave')
+              if (wa.enabled && wa.replaceClassicActs !== false) whaleAct('wave')
+              else send('act:jump')
             }, 500)
           }
         }

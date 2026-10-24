@@ -36,9 +36,10 @@ test('wave：morning/reunion 替换模式（replaceClassicActs=true）可触发'
   assert.deepEqual(shouldFire(base({ key: 'wave', cfg })), { fire: true, reason: 'ok' })
 })
 
-test('wave：replaceClassicActs=false（双发备用）decision 仍是可触发', () => {
+test('wave：replaceClassicActs=false 的接线降级由契约测试覆盖（决策层不感知该开关）', () => {
   const cfg = structuredClone(DEFAULT_WHALE_ACTS)
   cfg.replaceClassicActs = false
+  // 决策层只回答"该 key 本身能不能发"；false/kill switch 的"仅 classic"降级在 index 接线层
   assert.deepEqual(shouldFire(base({ key: 'wave', cfg })), { fire: true, reason: 'ok' })
 })
 
@@ -104,6 +105,17 @@ test('同 state 连续触发 → same-state（与 act() noActionOnSameState 对�
     fire: false,
     reason: 'same-state'
   })
+})
+
+test('CF1 事件驱动：noActionOnSameState=false 时同 state 仍可发（whaleAct 用法）', () => {
+  assert.deepEqual(
+    shouldFire(base({ key: 'report', state: 'done', lastActionState: 'done', noActionOnSameState: false })),
+    { fire: true, reason: 'ok' }
+  )
+  assert.deepEqual(
+    shouldFire(base({ key: 'wave', state: 'done', lastActionState: 'done', noActionOnSameState: false })),
+    { fire: true, reason: 'ok' }
+  )
 })
 
 test('每小时动作上限 → guard-cap', () => {

@@ -75,8 +75,8 @@ Invoke-Step "unit: whale-wiring" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: test-plugin-imports（插件模块导出/导入不一致）"; return }
   & node scripts/gen-act-fx-whitelist.mjs --check
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: act-fx whitelist drift（跑 node scripts/gen-act-fx-whitelist.mjs）"; return }
-  & node --test plugin/server/test/whale-acts.test.mjs
-  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts fixtures（node --test plugin/server/test/whale-acts.test.mjs）"; return }
+  & node --test "plugin/server/test/**/*.test.mjs"
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts/CF1 wiring fixtures（node --test plugin/server/test/**/*.test.mjs）"; return }
 }
 
 # 7) git 状态（信息项，不判失败）
