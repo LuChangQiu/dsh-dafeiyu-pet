@@ -35,6 +35,7 @@ const require = createRequire(import.meta.url)
 import fs from 'node:fs'
 import path from 'node:path'
 import { toolTypeOf } from './tool-types.js'
+import { DEFAULT_WHALE_ACTS, normalizeWhaleActConfig, loadWhitelist, shouldFire } from './whale-acts.js'
 import { usageParts, costOf, flatCostOf, splitCost, priceTable, legacyParts, DEFAULT_PRICING } from './pricing.js'
 import {
   normalizeKind,
@@ -145,6 +146,10 @@ const DEFAULTS = {
     soundOn: false
   },
   guards: { maxActionsPerHour: 60, noActionOnSameState: true, startleDelayMinMs: 900, startleDelayMaxMs: 1500 },
+  // CF1：鲸鱼娘 act 生产者（report/wave/sneak）。白名单唯一真源 docs/generated/act-fx-whitelist.json，
+  // 随包副本 plugin/server/lib/generated/。enabled=false = kill switch；replaceClassicActs=true 时
+  // 用 act:report 替代 report 的 act:stretch、act:wave 替代 morning 的 act:jump（OQ1=A）。
+  whaleActs: { ...DEFAULT_WHALE_ACTS },
   spike: { enabled: true, ratio: 1.8, absFloor: 3000, window: 20, minSamples: 8, cooldownMs: 600000, dailyCap: 2 },
   rice: { enabled: true, bowlTokens: 100000 },
   hesitate: { enabled: true, minMs: 900, maxMs: 1500 },
@@ -275,6 +280,7 @@ export const name = 'dsh-pet-bridge-v49'
 
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
+  cfg.whaleActs = normalizeWhaleActConfig(cfg.whaleActs)
   const log = (level, msg, extra) => {
     if (cfg.logLevel !== 'debug' && level === 'debug') return
     const raw = `[${new Date().toISOString()}] [${level}] ${msg}${extra === undefined ? '' : ' ' + safe(extra)}`
@@ -1474,18 +1480,26 @@ export function apply(ctx, rawConfig) {
           send('walk:nearby')
           // v49.1：文案清洗 —— 主句去尾标点 + 活动标签中文化（旧版会拼出 `…没走。，上次在thinking`）
           void generate('reunion', { tools: 0 })
-            .then((g) =>
-              speak('morning', composeReunion(g.text, activityLabel), {
-                force: true,
-                source: g.source,
-                style: 'greet',
-                latencyMs: g.latencyMs,
-                tokens: g.tokens
-              })
-            )
-            .catch(() =>
-              speak('morning', composeReunion(text, activityLabel), { force: true, source: 'pool', style: 'greet' })
-            )
+            .then((g) => {
+              if (
+                speak('morning', composeReunion(g.text, activityLabel), {
+                  force: true,
+                  source: g.source,
+                  style: 'greet',
+                  latencyMs: g.latencyMs,
+                  tokens: g.tokens
+                })
+              ) {
+                setTimeout(() => whaleAct('wave'), 600) // CF1：久别重逢挥手（wave 冷却 2h）
+              }
+            })
+            .catch(() => {
+              if (
+                speak('morning', composeReunion(text, activityLabel), { force: true, source: 'pool', style: 'greet' })
+              ) {
+                setTimeout(() => whaleAct('wave'), 600)
+              }
+            })
         } catch {}
       }, 2500)
       pushEvent('reunion', 'S1', gap >= 7 * 86400000 ? '久别 7 天+' : '久别 2 天+', true)
@@ -2408,6 +2422,60 @@ export function apply(ctx, rawConfig) {
     return hourStamps.length
   }
   const quietNow = () => inRanges(new Date(), cfg.quietHours)
+
+  // ---------- CF1：鲸鱼娘 act 生产者（report / wave / sneak） ----------
+  // 白名单启动时只读一次（优先 repo 真源、缺失回退随包副本；都缺 → 禁用 whaleActs，不崩插件）。
+  const whaleWhitelistInfo = loadWhitelist()
+  const whaleWhitelist = whaleWhitelistInfo ? whaleWhitelistInfo.acts : null
+  if (!whaleWhitelist) {
+    cfg.whaleActs.enabled = false
+    log('warn', 'whale acts disabled: whitelist missing')
+  } else {
+    log('info', 'whale acts whitelist loaded', { source: whaleWhitelistInfo.source, acts: whaleWhitelist.size })
+  }
+  const whaleActState = { last: {}, day: '', today: {} }
+  let lastSneakEvalAt = 0
+  /**
+   * 决策 → 发送。只负责"该不该发"；实际发送复用现有 act()（保留 noActionOnSameState /
+   * maxActionsPerHour 等守卫），日志只记 key/reason（不含文本/数字/路径）。
+   */
+  const whaleAct = (key) => {
+    const nowMs = Date.now()
+    const dayKey = new Date().toDateString()
+    if (whaleActState.day !== dayKey) {
+      whaleActState.day = dayKey
+      whaleActState.today = {}
+    }
+    const res = shouldFire({
+      key,
+      now: nowMs,
+      cfg: cfg.whaleActs,
+      enabled: !!(cfg.enabled && cfg.actions?.enabled),
+      modeKind: modeState.kind,
+      quiet: quietNow(),
+      petOnline,
+      lastAt: whaleActState.last[key] || 0,
+      firedToday: whaleActState.today[key] || 0,
+      idleMs: nowMs - lastEventAt,
+      whitelist: whaleWhitelist,
+      state: statusState.state,
+      lastActionState: statusState.lastActionState,
+      noActionOnSameState: cfg.guards?.noActionOnSameState !== false,
+      actionsThisHour: hourlyActions,
+      maxActionsPerHour: cfg.guards?.maxActionsPerHour,
+      rng: Math.random
+    })
+    if (!res.fire) {
+      log('debug', 'whale act suppressed', { key, reason: res.reason })
+      return false
+    }
+    whaleActState.last[key] = nowMs
+    whaleActState.today[key] = (whaleActState.today[key] || 0) + 1
+    act(key)
+    log('info', 'whale act', { key, reason: res.reason })
+    return true
+  }
+
   const canSpeak = (kind, urgent = false, opts = {}) => {
     if (!cfg.enabled) return false
     if (quietNow() && !urgent) return false
@@ -2786,9 +2854,21 @@ export function apply(ctx, rawConfig) {
         pushEvent('error', 'S1', reasonKind, true)
       }
       today.longestTurnMs = Math.max(today.longestTurnMs, dur)
+      // CF1（OQ1=A）：若本轮随后会走 whale report（replaceClassicActs=true），就不再先 act:stretch，
+      // 否则 noActionOnSameState 会把这轮的 act:report 当成同一 state 的重复动作吞掉（同一轮只演一次）。
+      const whaleReportNext =
+        ok &&
+        cfg.whaleActs?.enabled &&
+        cfg.whaleActs?.replaceClassicActs !== false &&
+        cfg.report.enabled &&
+        reportState.turnsSince + 1 >= (cfg.report.everyNTurns || 5) &&
+        Date.now() - reportState.lastAt >= (cfg.report.minIntervalMs || 0) &&
+        s.tools >= (cfg.report.minTools || 0) &&
+        dur >= (cfg.report.minDurationMs || 0)
       if (cfg.actions?.enabled) {
-        if (ok) act('stretch')
-        else {
+        if (ok) {
+          if (!whaleReportNext) act('stretch')
+        } else {
           act('shake')
           setTimeout(() => send('freeze:6000'), 500)
           setTimeout(() => send('cmd:fx:sweat'), 900)
@@ -2830,8 +2910,15 @@ export function apply(ctx, rawConfig) {
         void generate('report', s, { outcome: '成功', durBucket, numbers }).then((g) => {
           if (
             speak('report', g.text, { source: g.source, latencyMs: g.latencyMs, tokens: g.tokens, ignoreMinGap: true })
-          )
-            setTimeout(() => send('act:stretch'), 600)
+          ) {
+            // CF1（OQ1=A）：replaceClassicActs=true 时用 act:report 替代 act:stretch；false 才双发；
+            // kill switch（whaleActs.enabled=false）→ 完全回退 classic 行为（只 stretch）。
+            setTimeout(() => {
+              const wa = cfg.whaleActs || {}
+              if (!wa.enabled || wa.replaceClassicActs === false) send('act:stretch')
+              if (wa.enabled) whaleAct('report')
+            }, 600)
+          }
         })
       }
       // 去 key：DSH 侧统计今日用量并推送余额/用量给桌宠（不依赖桌宠 key，不伪造余额）
@@ -2937,7 +3024,13 @@ export function apply(ctx, rawConfig) {
           ritualDone.morning = true
           if (!quietNow()) {
             speak('morning', pick('kaigong'), { urgent: false, style: 'greet' })
-            setTimeout(() => send('act:jump'), 500)
+            // CF1（OQ1=A）：replaceClassicActs=true 时用 act:wave 替代 classic act:jump；false 才双发；
+            // kill switch（whaleActs.enabled=false）→ 完全回退 classic 行为（只 jump）。
+            setTimeout(() => {
+              const wa = cfg.whaleActs || {}
+              if (!wa.enabled || wa.replaceClassicActs === false) send('act:jump')
+              if (wa.enabled) whaleAct('wave')
+            }, 500)
           }
         }
       }
@@ -3028,6 +3121,16 @@ export function apply(ctx, rawConfig) {
           send('inner:' + t)
           scheduleNextSkit()
         })
+      }
+      // CF1：白天长时间无事件 → 低频偷吃小动作（15min 无事件、0.15、60min 冷却、≤2/日、无气泡；
+      // 深夜/免打扰/静音/专注由 whaleAct 门禁拒绝）。每 checkEveryMs 评估一次，避免每 20s 掷骰子。
+      if (
+        cfg.whaleActs?.enabled &&
+        !refreshLowFootprint() &&
+        Date.now() - lastSneakEvalAt >= (cfg.whaleActs.sneak?.checkEveryMs || 300000)
+      ) {
+        lastSneakEvalAt = Date.now()
+        whaleAct('sneak')
       }
     } catch {}
   }, 20000)
