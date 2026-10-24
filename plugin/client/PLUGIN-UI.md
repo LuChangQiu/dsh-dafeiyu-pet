@@ -517,3 +517,16 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - 展开状态跨 5s 轮询保持（`feeOpenState`）；设置页「每日费用上限」卡新增 **「主页默认显示费用估算」开关**（默认关闭，存本机 localStorage `pet-bridge-ui.showCost`，主页立即生效）。
 - 预算环口径修正：`todayStats.ratio` 改为 `petLlmCostYuan / budgetYuan`（只算她说话），不再用总 token 估算除以预算（此前会显示 100% 误报）。
 - 证据：`screenshots/ui-22-home-cost-collapsed.png`（默认折叠，白饭 754 碗突出）、`ui-23-home-cost-expanded.png`（三本账 + 偏高说明 + 跨轮询保持展开）。
+### E.7 工作区隐私字段（lead 隐私修正，已兼容 v47+/v48）
+- `sessions[]` 分组字段兼容：优先 `workspaceName`（basename）+ `workspaceHash`；旧 `workspace`/`cwd`/`workdir` **只取 basename 兜底**；`normalizeSessions` 输出**绝不包含绝对路径**（`group.workspace` 仅为显示名，另带 `workspaceName/workspaceHash`）。
+- 同名不同工作区：分组键 = `workspaceName + hash`，显示为 `name·#hash前4位`（v48 起 hash 由 bridge 提供；旧字段无 hash 时按名分组）。
+- 当前真实 v46 数据：分组 `im（5）`、`XQWL-000185-北京数智模型（1）`，无路径泄漏。
+- smoke 新增 2 项：同名不同工作区 `·#hash` 后缀 + 旧绝对路径→basename；合计 **61/61**。
+### E.8 task-67 控制模式接线（v47 契约，已完成）
+- **数据**：`state.get` 新增 `mode{available,active,kind,label,remainMs,resumeAt,since,capabilities{silent,focus,off,resume}}` + `modeSettings{silentMinutes,focusMinutes,offUntil,autoResume,hotkey}`（ui-config.mode，默认 30/50/null/true/''）；`capabilities.mode` 门控。
+- **面板「专注与静默」**：当前模式 + 倒计时（读 v2 mode.remainMs/resumeAt）；四按钮按能力启用：静一静 `mode-silent{minutes}` / 专注 `mode-focus{minutes}` / 下班 `mode-off{until?}` / 恢复 `mode-resume`（disabled 时标注原因）；默认时长/自动恢复 Toggle 可编辑并随「保存设置」写 ui-config.mode；快捷键输入做格式+冲突校验（占位，不绑定）；语义说明（silent 除 S0 全静默、focus 减动作+仅 S0/审批、off 停联动、优先级 mode>quiet>activity、到期 autoResume）。
+- **主页顶栏快捷组**：`静一静/专注/下班到明早/恢复` 按能力启用，点击排队 ui-action；`modeHint` 显示「当前：静一静 · 剩余 25m · 至 HH:MM」；mode 字段缺失时整体降级禁用（显示「待服务端接入」）。
+- **后端**：`mode.request{name:'silent'|'focus'|'off'|'resume', minutes?, until?}` → 校验 capabilities.mode → 排队 ui-action（mode-*，带 minutes/until）；config.set 支持 mode 白名单校验（silent 1~240/focus 1~480/offUntil ISO/null/autoResume boolean/hotkey ≤40）。
+- 证据：`screenshots/ui-24-home-mode-active.png`（主页快捷组启用 + 当前静一静剩余 25m）、`ui-25-settings-mode-active.png`（面板当前静一静 + 倒计时 + 四按钮启用 + 时长/自动恢复/快捷键）。
+- smoke：新增 3 项（mode 归一/默认值、mode.request 门控+排队、config.set mode 校验）→ **65/65**。
+- 待 bridge v47 落 `bridge-state-v2.json.mode` + `capabilities.mode` 后生产即时生效（当前 v46 mode=null → 面板显示禁用骨架）。

@@ -65,7 +65,20 @@ const server = http.createServer(async (req, res) => {
             /* ignore bad env */
           }
         }
-      } else if (['pet.action', 'interaction', 'events.ack'].includes(endpoint)) {
+        // 可选：注入合成控制模式（截图 task-67）；HARNESS_MODE 为 JSON：{mode,modeSettings,modeCaps}
+        if (result?.ok && process.env.HARNESS_MODE) {
+          try {
+            const injected = JSON.parse(process.env.HARNESS_MODE)
+            const data = { ...result.data }
+            if (injected.mode) data.mode = injected.mode
+            if (injected.modeSettings) data.modeSettings = injected.modeSettings
+            if (injected.modeCaps) data.capabilities = { ...(data.capabilities || {}), mode: injected.modeCaps }
+            result = { ok: true, data }
+          } catch {
+            /* ignore bad env */
+          }
+        }
+      } else if (['pet.action', 'interaction', 'events.ack', 'mode.request'].includes(endpoint)) {
         // mock：不写生产 ui-action / 不驱动真实桌宠（截图/联调用）
         result = { ok: true, data: { queued: true, mock: true, note: 'harness mock: 未触达生产' } }
       } else {

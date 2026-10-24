@@ -71,6 +71,52 @@ const DEFAULT_PET_ACTION_READINESS = {
 /** task-51（ux 19 / v37）：活跃度护栏默认值（ui-config.guards）。 */
 const GUARD_DEFAULTS = { maxActionsPerHour: 60, noActionOnSameState: true }
 
+/** task-67（v47 mode 契约）：控制模式文案 + ui-config.mode 默认值。 */
+const MODE_LABELS = { active: '正常', silent: '静一静', focus: '专注', off: '下班' }
+const MODE_DEFAULT_SETTINGS = { silentMinutes: 30, focusMinutes: 50, offUntil: null, autoResume: true, hotkey: '' }
+
+/**
+ * task-67：归一 v2 `mode` 字段（v47+）。
+ * 缺失时 available=false（面板保持骨架禁用态）；有字段但缺 capabilities.mode 时默认全部可用。
+ * @param {object|null} stateFile v2 快照
+ * @param {number} [nowMs]
+ * @returns {{available:boolean,active:boolean,kind:string,label:string,remainMs:number,resumeAt:string|null,since:string|null,
+ *   capabilities:{silent:boolean,focus:boolean,off:boolean,resume:boolean}}}
+ */
+export function normalizeModeView(stateFile, nowMs = Date.now()) {
+  const raw = isObject(stateFile?.mode) ? stateFile.mode : null
+  const capsRaw = isObject(stateFile?.capabilities?.mode) ? stateFile.capabilities.mode : null
+  const kindRaw = String(raw?.kind ?? raw?.mode ?? '')
+    .trim()
+    .toLowerCase()
+  const aliases = { normal: 'active', on: 'active', quiet: 'silent', still: 'focus', rest: 'off', sleep: 'off' }
+  const kind = ['active', 'silent', 'focus', 'off'].includes(kindRaw) ? kindRaw : aliases[kindRaw] || 'active'
+  const label = typeof raw?.label === 'string' && raw.label.trim() ? raw.label.trim() : MODE_LABELS[kind] || '正常'
+  const resumeMs = raw?.resumeAt ? new Date(raw.resumeAt).getTime() : NaN
+  const remainMs = Number.isFinite(resumeMs) ? Math.max(0, resumeMs - nowMs) : Number(raw?.remainMs) || 0
+  const active = kind !== 'active' && (raw?.active === true || Boolean(raw?.kind) || Number.isFinite(resumeMs))
+  const capabilities = capsRaw
+    ? {
+        silent: capsRaw.silent === true,
+        focus: capsRaw.focus === true,
+        off: capsRaw.off === true,
+        resume: capsRaw.resume === true
+      }
+    : raw
+      ? { silent: true, focus: true, off: true, resume: true }
+      : { silent: false, focus: false, off: false, resume: false }
+  return {
+    available: Boolean(raw),
+    active,
+    kind,
+    label,
+    remainMs: active ? remainMs : 0,
+    resumeAt: typeof raw?.resumeAt === 'string' ? raw.resumeAt : null,
+    since: typeof raw?.since === 'string' ? raw.since : null,
+    capabilities
+  }
+}
+
 const DEFAULTS = {
   channel: '/pet-bridge-ui',
   pipe: '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance',
@@ -389,13 +435,28 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
     const t = value ? new Date(value).getTime() : NaN
     return Number.isFinite(t) ? t : null
   }
+  /**
+   * 隐私修正（task-57/v47+）：只取路径 basename 作为工作区显示名，**绝不返回绝对路径**。
+   * @param {unknown} value 路径或名称
+   * @returns {string|null}
+   */
+  const baseName = (value) => {
+    if (typeof value !== 'string' || !value.trim()) return null
+    const parts = value
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]+/)
+      .filter(Boolean)
+    return parts.length > 0 ? parts[parts.length - 1] : null
+  }
 
   if (raw.length === 0) {
     // 兼容：无多会话协议时退回单会话（用 status 通道信息填充）
     const state = runtime?.state ?? 'idle'
     const single = {
       sessionId: currentSessionId || runtime?.source || null,
-      workspace: firstString(stateFile?.workspace) || '当前工作区',
+      workspace: baseName(stateFile?.workspace) || '当前工作区',
+      workspaceName: baseName(stateFile?.workspace) || '当前工作区',
+      workspaceHash: null,
       title: firstString(stateFile?.title) || '(当前会话)',
       state,
       tool: runtime?.tool ?? null,
@@ -432,7 +493,14 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
     .map((item) => {
       if (!isObject(item)) return null
       const sid = firstString(item.sessionId, item.id, item.key)
-      const workspace = firstString(item.workspace, item.cwd, item.workdir) || '(未知工作区)'
+      // 隐私修正：优先 workspaceName（basename）；旧 workspace/cwd 仅取 basename 兜底；不保留绝对路径
+      const workspaceName =
+        firstString(item.workspaceName) ||
+        baseName(item.workspace) ||
+        baseName(item.cwd) ||
+        baseName(item.workdir) ||
+        '(未知工作区)'
+      const workspaceHash = firstString(item.workspaceHash, item.workspace_hash)
       const rawState = String(item.state ?? '')
         .trim()
         .toLowerCase()
@@ -445,7 +513,9 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
       const lastUserMessageMs = timeMs(lastUserMessageAt)
       return {
         sessionId: sid,
-        workspace,
+        workspace: workspaceName,
+        workspaceName,
+        workspaceHash,
         title: firstString(item.title, item.name) || (sid ? sid.slice(0, 18) : '(未命名会话)'),
         state: RUNTIME_STATE_META[state] ? state : 'idle',
         tool: firstString(item.tool, item.toolName),
@@ -463,20 +533,35 @@ export function normalizeSessions(stateFile, runtime, opts = {}) {
     })
     .filter(Boolean)
 
-  // 同一工作区聚合；组内：当前会话优先 → 最近活动倒序
+  // 同一工作区聚合（workspaceName + hash 为键，同名不同工作区用 hash 区分）；
+  // 组内：当前会话优先 → 最近活动倒序。绝不对外暴露绝对路径。
   const groupMap = new Map()
   for (const session of sessions) {
-    const key = session.workspace
+    const key = session.workspaceName + '\u0000' + (session.workspaceHash || '')
     if (!groupMap.has(key)) groupMap.set(key, [])
     groupMap.get(key).push(session)
   }
-  const groups = [...groupMap.entries()].map(([workspace, list]) => {
+  const nameCount = new Map()
+  for (const list of groupMap.values()) {
+    const name = list[0].workspaceName
+    nameCount.set(name, (nameCount.get(name) || 0) + 1)
+  }
+  const groups = [...groupMap.values()].map((list) => {
     const sorted = list.slice().sort((a, b) => {
       if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
       return (b.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER) < (a.lastSeenAgeMs ?? Number.MAX_SAFE_INTEGER) ? -1 : 1
     })
+    const workspaceName = sorted[0].workspaceName
+    const workspaceHash = sorted[0].workspaceHash || null
+    // 同名不同工作区：显示 name·#hash 后缀区分
+    const workspace =
+      (nameCount.get(workspaceName) || 0) > 1 && workspaceHash
+        ? workspaceName + '·#' + String(workspaceHash).slice(0, 4)
+        : workspaceName
     return {
       workspace,
+      workspaceName,
+      workspaceHash,
       isCurrentGroup: sorted.some((s) => s.isCurrent),
       sessions: sorted
     }
@@ -1086,7 +1171,23 @@ export function normalizeTeamFeatures(stateFile, hostSnapshot) {
     userQuestions: { active: 0, sentCount: 0 }
   }
 
-  // ① v2 优先（tech-scout task-57 形状：team:{enabled,status,members,tasks} goal/plan/userQuestions）
+  // ① v2 优先（tech-scout task-57/58 形状：team:{enabled,status,members,tasks} goal/plan/userQuestions）
+  // v48：未启用/暂不可用时 team 为 null + degraded[]（如 team:unsupported / session:none）→ 空态，**不显示 0 任务/0%**
+  const hasV2TeamField = Boolean(stateFile) && Object.prototype.hasOwnProperty.call(stateFile, 'team')
+  if (hasV2TeamField && !isObject(stateFile?.team)) {
+    const degraded = Array.isArray(stateFile?.degraded) ? stateFile.degraded.map(String) : []
+    const reason = degraded.join(',') || null
+    const notEnabled = degraded.some((item) => /^team:(unsupported|not-registered)/.test(item))
+    const invalid = degraded.some((item) => /^team:(invalid|degraded)/.test(item))
+    const status = notEnabled ? 'unsupported' : invalid ? 'degraded' : 'empty'
+    return {
+      ...base,
+      source: 'v2',
+      status,
+      reason,
+      enabled: false
+    }
+  }
   if (isObject(stateFile?.team)) {
     const t = stateFile.team
     const members = isObject(t.members) ? t.members : {}
@@ -1552,6 +1653,7 @@ function buildHandler(cfg, log, hostBridge = null) {
           budgetPerDayYuan: Number.isFinite(ui?.llm?.budgetPerDayYuan) ? ui.llm.budgetPerDayYuan : null,
           pet: isObject(ui.pet) ? ui.pet : null,
           guards: isObject(ui.guards) ? ui.guards : null,
+          mode: isObject(ui.mode) ? ui.mode : null,
           updatedAt: ui.updatedAt ?? null
         }
       : null
@@ -1634,6 +1736,14 @@ function buildHandler(cfg, log, hostBridge = null) {
       costUserYuan: Number.isFinite(todayV2?.costUserYuan) ? todayV2.costUserYuan : null,
       costAgentYuan: Number.isFinite(todayV2?.costAgentYuan) ? todayV2.costAgentYuan : null,
       agentCalls: Number.isFinite(todayV2?.agentCalls) ? todayV2.agentCalls : null,
+      // v47 cache 分价：分项 token / 真实估算 / 旧公式对照 / cache 节省
+      tokensInput: Number.isFinite(todayV2?.tokensInput) ? todayV2.tokensInput : null,
+      tokensOutput: Number.isFinite(todayV2?.tokensOutput) ? todayV2.tokensOutput : null,
+      tokensCacheRead: Number.isFinite(todayV2?.tokensCacheRead) ? todayV2.tokensCacheRead : null,
+      tokensCacheWrite: Number.isFinite(todayV2?.tokensCacheWrite) ? todayV2.tokensCacheWrite : null,
+      costYuanFlat: Number.isFinite(todayV2?.costYuanFlat) ? todayV2.costYuanFlat : null,
+      costCacheYuan: Number.isFinite(todayV2?.costCacheYuan) ? todayV2.costCacheYuan : null,
+      cacheSavedYuan: Number.isFinite(todayV2?.cacheSavedYuan) ? todayV2.cacheSavedYuan : null,
       ratio: 0,
       source: todayV2 ? 'v2' : 'legacy'
     }
@@ -1642,6 +1752,32 @@ function buildHandler(cfg, log, hostBridge = null) {
     const events = readEvents(cfg.eventsFile)
     if (Number.isFinite(stateFile?.eventsUnread)) events.unread = stateFile.eventsUnread
     const companion = readCompanion(stateFile, cfg.companionFile)
+    // v47：价格表 + 宿主内存（只读展示；宿主内存用于「低占用中」徽标与降载入口）
+    const priceTable = isObject(stateFile?.priceTable)
+      ? {
+          inputPerM: Number.isFinite(stateFile.priceTable.inputPerM) ? stateFile.priceTable.inputPerM : null,
+          outputPerM: Number.isFinite(stateFile.priceTable.outputPerM) ? stateFile.priceTable.outputPerM : null,
+          cacheReadPerM: Number.isFinite(stateFile.priceTable.cacheReadPerM)
+            ? stateFile.priceTable.cacheReadPerM
+            : null,
+          cacheWritePerM: Number.isFinite(stateFile.priceTable.cacheWritePerM)
+            ? stateFile.priceTable.cacheWritePerM
+            : null,
+          per1kTokens: Number.isFinite(stateFile.priceTable.per1kTokens) ? stateFile.priceTable.per1kTokens : null,
+          currency: typeof stateFile.priceTable.currency === 'string' ? stateFile.priceTable.currency : null
+        }
+      : null
+    const hostMemory = isObject(stateFile?.hostMemory)
+      ? {
+          rssMB: Number.isFinite(stateFile.hostMemory.rssMB) ? stateFile.hostMemory.rssMB : null,
+          heapMB: Number.isFinite(stateFile.hostMemory.heapMB) ? stateFile.hostMemory.heapMB : null,
+          timers: Number.isFinite(stateFile.hostMemory.timers) ? stateFile.hostMemory.timers : null,
+          lowFootprint: stateFile.hostMemory.lowFootprint === true,
+          thresholdRssMB: Number.isFinite(stateFile.hostMemory.thresholdRssMB)
+            ? stateFile.hostMemory.thresholdRssMB
+            : null
+        }
+      : null
     const interactions = isObject(stateFile?.capabilities?.interactions)
       ? {
           head: stateFile.capabilities.interactions.head === true,
@@ -1653,6 +1789,12 @@ function buildHandler(cfg, log, hostBridge = null) {
     const guards = {
       ...GUARD_DEFAULTS,
       ...(isObject(ui?.guards) ? ui.guards : {})
+    }
+    // task-67：控制模式（v2 mode 字段 + ui-config.mode 设置）
+    const mode = normalizeModeView(stateFile)
+    const modeSettings = {
+      ...MODE_DEFAULT_SETTINGS,
+      ...(isObject(ui?.mode) ? ui.mode : {})
     }
     // task-58：团队/目标/计划/等你选（v2 字段优先 → host 只读投影 fallback → 未启用；三级降级）
     let hostTeamSnapshot = null
@@ -1726,7 +1868,8 @@ function buildHandler(cfg, log, hostBridge = null) {
           doubleClick: petActionReadiness.doubleClick !== false,
           autoStart: petActionReadiness.autoStart !== false,
           quit: petActionReadiness.quit !== false,
-          interactions
+          interactions,
+          mode: mode.capabilities
         },
         petOptions: {
           skins,
@@ -1752,9 +1895,13 @@ function buildHandler(cfg, log, hostBridge = null) {
           now: hhmm()
         },
         todayStats,
+        priceTable,
+        hostMemory,
         events,
         companion,
         guards,
+        mode,
+        modeSettings,
         teamFeatures,
         recentSay,
         lastSayAt,
@@ -1886,6 +2033,53 @@ function buildHandler(cfg, log, hostBridge = null) {
       next.guards = nextGuards
     }
 
+    if (payload?.mode !== undefined) {
+      if (!isObject(payload.mode)) {
+        return { ok: false, error: { code: 'invalid-argument', message: 'mode 必须是对象' } }
+      }
+      const currentMode = isObject(next.mode) ? next.mode : { ...MODE_DEFAULT_SETTINGS }
+      const nextMode = { ...currentMode }
+      if (payload.mode.silentMinutes !== undefined) {
+        const n = Number(payload.mode.silentMinutes)
+        if (!Number.isFinite(n) || n < 1 || n > 240) {
+          return { ok: false, error: { code: 'invalid-argument', message: '静一静默认时长应在 1~240 分钟' } }
+        }
+        nextMode.silentMinutes = Math.round(n)
+      }
+      if (payload.mode.focusMinutes !== undefined) {
+        const n = Number(payload.mode.focusMinutes)
+        if (!Number.isFinite(n) || n < 1 || n > 480) {
+          return { ok: false, error: { code: 'invalid-argument', message: '专注默认时长应在 1~480 分钟' } }
+        }
+        nextMode.focusMinutes = Math.round(n)
+      }
+      if (payload.mode.offUntil !== undefined) {
+        if (payload.mode.offUntil === null || payload.mode.offUntil === '') {
+          nextMode.offUntil = null
+        } else {
+          const t = new Date(String(payload.mode.offUntil)).getTime()
+          if (!Number.isFinite(t)) {
+            return { ok: false, error: { code: 'invalid-argument', message: 'offUntil 必须是 ISO 时间或 null' } }
+          }
+          nextMode.offUntil = new Date(t).toISOString()
+        }
+      }
+      if (payload.mode.autoResume !== undefined) {
+        if (typeof payload.mode.autoResume !== 'boolean') {
+          return { ok: false, error: { code: 'invalid-argument', message: 'autoResume 必须是布尔值' } }
+        }
+        nextMode.autoResume = payload.mode.autoResume
+      }
+      if (payload.mode.hotkey !== undefined) {
+        const hk = String(payload.mode.hotkey ?? '').trim()
+        if (hk.length > 40) {
+          return { ok: false, error: { code: 'invalid-argument', message: '快捷键过长（≤40 字符）' } }
+        }
+        nextMode.hotkey = hk
+      }
+      next.mode = nextMode
+    }
+
     if (payload?.pet !== undefined) {
       const currentPet = isObject(next.pet) ? next.pet : {}
       const norm = normalizePetSettings(payload.pet, currentPet)
@@ -2009,7 +2203,7 @@ function buildHandler(cfg, log, hostBridge = null) {
   }
 
   /** 应急动作请求：写 ui-action.json，由联动插件 watcher 消费（结果写 state.json.lastAction）。 */
-  function requestAction(payload) {
+  function requestAction(payload, extra = {}) {
     const SUPPORTED = [
       'restart-pet',
       'start-pet',
@@ -2022,7 +2216,12 @@ function buildHandler(cfg, log, hostBridge = null) {
       'interact-head',
       'interact-feed',
       'interact-come',
-      'events-ack'
+      'events-ack',
+      // task-67：控制模式（v47 mode 契约）
+      'mode-silent',
+      'mode-focus',
+      'mode-off',
+      'mode-resume'
     ]
     const name = String(payload?.name ?? '')
     if (!SUPPORTED.includes(name)) {
@@ -2048,7 +2247,8 @@ function buildHandler(cfg, log, hostBridge = null) {
       id: 'act-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
       name,
       requestedAt: new Date().toISOString(),
-      requestedBy: 'dsh-pet-bridge-ui'
+      requestedBy: 'dsh-pet-bridge-ui',
+      ...(isObject(extra) ? extra : {})
     }
     try {
       writeJsonAtomic(cfg.actionFile, request)
@@ -2102,6 +2302,61 @@ function buildHandler(cfg, log, hostBridge = null) {
   /** Phase-1：事件未读确认（`ui-action: events-ack` → unread 全置 false）。 */
   function ackEvents() {
     return requestAction({ name: 'events-ack' })
+  }
+
+  /**
+   * task-67：控制模式请求（v47 契约）→ 排队 `ui-action`：
+   * `{name:'mode-silent',minutes}` / `{name:'mode-focus',minutes}` / `{name:'mode-off',until}` / `{name:'mode-resume'}`。
+   * @param {object} payload `{name:'silent'|'focus'|'off'|'resume', minutes?, until?}`
+   * @returns {{ok:true,data:object}|{ok:false,error:object}}
+   */
+  function modeRequest(payload) {
+    const kind = String(payload?.name ?? payload?.kind ?? '')
+      .trim()
+      .toLowerCase()
+    const map = { silent: 'mode-silent', focus: 'mode-focus', off: 'mode-off', resume: 'mode-resume' }
+    const action = map[kind]
+    if (!action) {
+      return {
+        ok: false,
+        error: { code: 'invalid-argument', message: `未知模式：${kind}（支持 silent / focus / off / resume）` }
+      }
+    }
+    const stateFile = loadStateFile()
+    const mode = normalizeModeView(stateFile)
+    if (mode.capabilities[kind] !== true) {
+      return {
+        ok: false,
+        error: { code: 'not-supported', message: `控制模式「${kind}」尚未就绪（等联动插件 v47+ mode 能力）` }
+      }
+    }
+    const extra = {}
+    if (kind === 'silent' || kind === 'focus') {
+      const max = kind === 'silent' ? 240 : 480
+      const minutes = Math.round(Number(payload?.minutes))
+      if (Number.isFinite(minutes) && minutes >= 1 && minutes <= max) extra.minutes = minutes
+    }
+    if (kind === 'off' && payload?.until !== undefined && payload.until !== null && payload.until !== '') {
+      const rawUntil = String(payload.until).trim()
+      // v47：accept ISO 或 'HH:MM'（后者取下一个该整点；缺省由 bridge 到明早 8:00）
+      let untilMs = NaN
+      if (/^\d{1,2}:\d{2}$/.test(rawUntil)) {
+        const [hour, minute] = rawUntil.split(':').map((n) => Number(n))
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          const at = new Date()
+          at.setHours(hour, minute, 0, 0)
+          if (at.getTime() <= Date.now()) at.setDate(at.getDate() + 1)
+          untilMs = at.getTime()
+        }
+      } else {
+        untilMs = new Date(rawUntil).getTime()
+      }
+      if (!Number.isFinite(untilMs)) {
+        return { ok: false, error: { code: 'invalid-argument', message: 'until 必须是 ISO 时间或 HH:MM' } }
+      }
+      extra.until = new Date(untilMs).toISOString()
+    }
+    return requestAction({ name: action }, extra)
   }
   async function petAction(payload) {
     const name = String(payload?.name ?? '').trim()
@@ -2237,6 +2492,8 @@ function buildHandler(cfg, log, hostBridge = null) {
         return petAction(payload)
       case 'interaction':
         return interaction(payload)
+      case 'mode.request':
+        return modeRequest(payload)
       case 'events.ack':
         return ackEvents()
       case 'pet.nativeui': {
@@ -2410,6 +2667,8 @@ export const __test = {
   normalizeRuntimeStatus,
   normalizeSessions,
   normalizeTeamFeatures,
+  normalizeModeView,
+  MODE_DEFAULT_SETTINGS,
   createHostBridge,
   RUNTIME_STATE_META,
   petSettingsToCmds,

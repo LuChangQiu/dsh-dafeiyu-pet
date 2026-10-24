@@ -23,8 +23,7 @@ window.__ModuleLoader__.load({
     }
     const MODE_META = [
       { value: 'wander', label: '散步' },
-      { value: 'follow', label: '跟随' },
-      { value: 'still', label: '原地' }
+      { value: 'follow', label: '跟随' }
     ]
     const LINE_FREQ_META = [
       { value: '安静', label: '安静' },
@@ -611,16 +610,17 @@ window.__ModuleLoader__.load({
             layer: 'top',
             bubbleStyle: 'auto',
             skin: '大肥鱼',
-            volume: 0.9,
             quietMinutes: '30',
             bubbleSec: '5',
             city: '',
             musicLink: true,
-            soundOn: true,
             doubleClick: 'balance',
             autoStart: false,
             guardsMax: '60',
-            guardsNoRepeat: true
+            guardsNoRepeat: true,
+            modeSilent: '30',
+            modeFocus: '50',
+            modeAutoResume: true
           }
         }
 
@@ -650,12 +650,10 @@ window.__ModuleLoader__.load({
             layer: LAYER_META.some((m) => m.value === pet.layer) ? pet.layer : 'top',
             bubbleStyle: BUBBLE_STYLE_META.some((m) => m.value === pet.bubbleStyle) ? pet.bubbleStyle : 'auto',
             skin: typeof pet.skin === 'string' && pet.skin ? pet.skin : '大肥鱼',
-            volume: typeof pet.volume === 'number' ? pet.volume : 0.9,
             quietMinutes: String(typeof pet.quietMinutes === 'number' ? pet.quietMinutes : 30),
             bubbleSec: String(typeof pet.bubbleMs === 'number' ? Math.round(pet.bubbleMs / 1000) : 5),
             city: typeof pet.city === 'string' ? pet.city : '',
             musicLink: typeof pet.musicLink === 'boolean' ? pet.musicLink : true,
-            soundOn: typeof pet.soundOn === 'boolean' ? pet.soundOn : true,
             doubleClick: DOUBLE_CLICK_META.some(
               (m) => m.value === ((data.petOptions && data.petOptions.doubleClick) || pet.doubleClick)
             )
@@ -671,6 +669,12 @@ window.__ModuleLoader__.load({
             guardsNoRepeat:
               data.guards && typeof data.guards.noActionOnSameState === 'boolean'
                 ? data.guards.noActionOnSameState
+                : true,
+            modeSilent: String((data.modeSettings && data.modeSettings.silentMinutes) || 30),
+            modeFocus: String((data.modeSettings && data.modeSettings.focusMinutes) || 50),
+            modeAutoResume:
+              data.modeSettings && typeof data.modeSettings.autoResume === 'boolean'
+                ? data.modeSettings.autoResume
                 : true
           })
         }
@@ -722,6 +726,11 @@ window.__ModuleLoader__.load({
                 maxActionsPerHour: Number(form.guardsMax),
                 noActionOnSameState: form.guardsNoRepeat
               },
+              mode: {
+                silentMinutes: Number(form.modeSilent),
+                focusMinutes: Number(form.modeFocus),
+                autoResume: form.modeAutoResume
+              },
               pet: {
                 size: Number(form.size),
                 opacity: Number(form.opacity),
@@ -734,12 +743,11 @@ window.__ModuleLoader__.load({
                 layer: form.layer,
                 bubbleStyle: form.bubbleStyle,
                 skin: form.skin,
-                volume: Number(form.volume),
                 quietMinutes: Number(form.quietMinutes),
                 bubbleMs: Math.max(1000, Math.min(30000, Math.round(Number(form.bubbleSec) * 1000))),
                 city: form.city,
                 musicLink: form.musicLink,
-                soundOn: form.soundOn,
+                soundOn: false,
                 doubleClick: form.doubleClick,
                 autoStart: form.autoStart
               }
@@ -827,6 +835,32 @@ window.__ModuleLoader__.load({
           }
         }
 
+        /**
+         * task-67：切换控制模式（静一静/专注/下班/恢复）。
+         * @param {'silent'|'focus'|'off'|'resume'} kind 模式
+         * @param {object} [extra] `{minutes}` 或 `{until}`（ISO）
+         * @returns {Promise<void>}
+         */
+        const runMode = async (kind, extra) => {
+          setBusy('mode:' + kind)
+          setMsg(null)
+          try {
+            await call('mode.request', Object.assign({ name: kind }, extra || {}))
+            const label =
+              kind === 'silent' ? '静一静' : kind === 'focus' ? '专注' : kind === 'off' ? '下班' : '恢复正常'
+            setMsg({ kind: 'ok', text: '已请求「' + label + '」，联动插件 ≤20s 生效；倒计时见状态区' })
+            const data = await call('state.get')
+            if (aliveRef.current) {
+              setState(data)
+              syncForm(data)
+            }
+          } catch (error) {
+            setMsg({ kind: 'err', text: '模式切换失败：' + error.message })
+          } finally {
+            setBusy('')
+          }
+        }
+
         const runPetAction = async (name, extra) => {
           setBusy('pet:' + name)
           setMsg(null)
@@ -900,7 +934,7 @@ window.__ModuleLoader__.load({
           const ok =
             typeof window !== 'undefined' && typeof window.confirm === 'function'
               ? window.confirm(
-                  '恢复面板默认配置？\n将重置：总开关=开、活跃度=正常、免打扰=23:30-08:00、预算=¥1.0、\n大小=特小0.36×、透明度=100%、模式=散步、语录频率=正常、气泡=5s、\n置顶/贴边=开、层级=置顶、气泡风格=自动、皮肤=大肥鱼、音效=开、音量=90%、\n音乐联动=开、城市=汕头、静音=30min、双击=看余额、自启=关、穿透/锁定=关。'
+                  '恢复面板默认配置？\n将重置：总开关=开、活跃度=正常、免打扰=23:30-08:00、预算=¥1.0、\n大小=特小0.36×、透明度=100%、模式=散步、语录频率=正常、气泡=5s、\n置顶/贴边=开、层级=置顶、气泡风格=自动、皮肤=大肥鱼、\n音乐联动=开、城市=汕头、静音=30min、双击=看余额、自启=关、穿透/锁定=关。\n（音效/音量、全局快捷键已按用户决定移除）'
                 )
               : true
           if (!ok) return
@@ -961,7 +995,10 @@ window.__ModuleLoader__.load({
           companion,
           todayStats,
           events,
-          teamFeatures
+          teamFeatures,
+          mode,
+          modeSettings,
+          hostMemory
         } = state
         const rt = runtime || {
           supported: false,
@@ -971,6 +1008,35 @@ window.__ModuleLoader__.load({
           disconnected: true,
           staleAfterMs: 30000
         }
+        // task-67：控制模式（v47 mode 字段；缺失时能力全 false → 骨架禁用）
+        const md = mode
+          ? { ...mode }
+          : {
+              available: false,
+              active: false,
+              kind: 'active',
+              label: '正常',
+              remainMs: 0,
+              resumeAt: null,
+              since: null,
+              capabilities: { silent: false, focus: false, off: false, resume: false }
+            }
+        if (!md.label)
+          md.label =
+            md.kind === 'silent' ? '静一静' : md.kind === 'focus' ? '专注' : md.kind === 'off' ? '下班' : '正常'
+        if (typeof md.available !== 'boolean') md.available = Boolean(md.kind || md.resumeAt || md.active)
+        if (!md.capabilities)
+          md.capabilities = (capabilities && capabilities.mode) || {
+            silent: false,
+            focus: false,
+            off: false,
+            resume: false
+          }
+        const resumeMsLocal = md.resumeAt ? new Date(md.resumeAt).getTime() : NaN
+        if (!(Number(md.remainMs) > 0) && Number.isFinite(resumeMsLocal))
+          md.remainMs = Math.max(0, resumeMsLocal - Date.now())
+        const modeCaps = md.capabilities || { silent: false, focus: false, off: false, resume: false }
+        const modeRemain = md.active && md.remainMs ? ' · 剩余 ' + fmtDuration(md.remainMs) : ''
         // task-46：多会话视图（无 sessionList 时按当前运行时兜底单会话）
         const sl = sessionList || {
           supported: false,
@@ -1473,40 +1539,69 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          // ── 专注与静默（task-67：字段未到前为只读骨架，标注"待服务端"） ──
+          // ── 专注与静默（task-67 / v47 mode 契约：字段缺失时自动降级为禁用骨架） ──
           h(
             Card,
             {
               title: '专注与静默',
-              right: h('span', { style: S.hint }, '待服务端（task-65 mode 字段）')
+              right: h(
+                'span',
+                { style: S.hint },
+                md.available ? '当前：' + md.label + modeRemain : '待服务端（v47 mode 字段）'
+              )
             },
             h(
               'p',
               { style: S.hint },
-              '她可随时「静一静 / 专注 / 下班」，减少乱走和主动演出；恢复后照常。字段到位后此处直接接线。'
+              '静一静=除 S0（审批/等你选）外全静默；专注=减动作+仅 S0/审批冒泡；下班=停联动（手动互动保留）；恢复=立即回正常。优先级：mode > 免打扰 > 活跃度；到期自动恢复（autoResume）。'
             ),
             h(
               'div',
               { style: S.row },
               h(
                 'button',
-                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
-                '静一静 30 分钟'
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, busyNow || !modeCaps.silent ? S.btnDisabled : null),
+                  disabled: busyNow || !modeCaps.silent,
+                  title: modeCaps.silent ? '除 S0 外全静默' : '待服务端',
+                  onClick: () => runMode('silent', { minutes: Number(form.modeSilent) || 30 })
+                },
+                busy === 'mode:silent' ? '切换中…' : '静一静 ' + (Number(form.modeSilent) || 30) + ' 分钟'
               ),
               h(
                 'button',
-                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
-                '专注 2 小时'
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, busyNow || !modeCaps.focus ? S.btnDisabled : null),
+                  disabled: busyNow || !modeCaps.focus,
+                  title: modeCaps.focus ? '减动作+仅 S0/审批' : '待服务端',
+                  onClick: () => runMode('focus', { minutes: Number(form.modeFocus) || 50 })
+                },
+                busy === 'mode:focus' ? '切换中…' : '专注 ' + (Number(form.modeFocus) || 50) + ' 分钟'
               ),
               h(
                 'button',
-                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
-                '下班到明早'
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, busyNow || !modeCaps.off ? S.btnDisabled : null),
+                  disabled: busyNow || !modeCaps.off,
+                  title: modeCaps.off ? '停联动到明早（手动互动保留）' : '待服务端',
+                  onClick: () =>
+                    runMode('off', modeSettings && modeSettings.offUntil ? { until: modeSettings.offUntil } : {})
+                },
+                busy === 'mode:off' ? '切换中…' : '下班到明早'
               ),
               h(
                 'button',
-                { type: 'button', style: Object.assign({}, S.btn, S.btnDisabled), disabled: true, title: '待服务端' },
-                '恢复'
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.btn, busyNow || !modeCaps.resume ? S.btnDisabled : null),
+                  disabled: busyNow || !modeCaps.resume || !md.active,
+                  title: md.active ? '立即恢复' : '当前不在任何模式',
+                  onClick: () => runMode('resume')
+                },
+                busy === 'mode:resume' ? '切换中…' : '恢复'
               )
             ),
             h(
@@ -1516,19 +1611,38 @@ window.__ModuleLoader__.load({
                 'label',
                 { style: { flex: '0 0 170px' } },
                 h('span', { style: S.label }, '静一静默认时长（分钟）'),
-                h('input', { style: S.field, type: 'number', value: '30', disabled: true })
+                h('input', {
+                  style: S.field,
+                  type: 'number',
+                  min: 1,
+                  max: 240,
+                  value: form.modeSilent,
+                  onChange: (e) => touch({ modeSilent: e.target.value })
+                })
               ),
               h(
                 'label',
                 { style: { flex: '0 0 170px' } },
                 h('span', { style: S.label }, '专注默认时长（分钟）'),
-                h('input', { style: S.field, type: 'number', value: '120', disabled: true })
+                h('input', {
+                  style: S.field,
+                  type: 'number',
+                  min: 1,
+                  max: 480,
+                  value: form.modeFocus,
+                  onChange: (e) => touch({ modeFocus: e.target.value })
+                })
               ),
               h(
                 'label',
                 { style: { flex: '0 0 170px' } },
                 h('span', { style: S.label }, '下班恢复时间'),
-                h('input', { style: S.field, value: '08:00', disabled: true })
+                h('input', {
+                  style: S.field,
+                  value: '次日 08:00',
+                  disabled: true,
+                  title: '由联动插件 offUntilHour 决定'
+                })
               )
             ),
             h(
@@ -1539,29 +1653,18 @@ window.__ModuleLoader__.load({
                 { style: S.block },
                 h('span', { style: S.label }, '自动恢复（到点/开机后）'),
                 h(Toggle, {
-                  value: true,
-                  onChange: () => {},
-                  disabled: true,
+                  value: form.modeAutoResume,
+                  onChange: (v) => touch({ modeAutoResume: v }),
+                  disabled: busyNow,
                   onLabel: '自动恢复',
                   offLabel: '手动恢复'
-                })
-              ),
-              h(
-                'label',
-                { style: { flex: '1 1 220px' } },
-                h('span', { style: S.label }, '快捷键（冲突校验占位，仅提示不绑定）'),
-                h('input', {
-                  style: S.field,
-                  placeholder: '例如 Ctrl+Alt+S',
-                  disabled: true,
-                  title: '待服务端；启用后会校验与 DSH 快捷键冲突'
                 })
               )
             ),
             h(
               'p',
               { style: S.hint },
-              '快捷键冲突校验（占位逻辑）：格式需为「修饰键+字母」；与 DSH 内置快捷键或系统快捷键冲突时提示「已被占用」，不注册全局快捷键。字段（mode.active/kind/remainMs/resumeAt + capabilities.mode）到位后改为实时倒计时显示。'
+              '保存设置时写入 ui-config.mode（silentMinutes/focusMinutes/autoResume）；模式切换走 ui-action：mode-silent/mode-focus/mode-off/mode-resume，倒计时读 v2 mode.remainMs/resumeAt。全局快捷键已移除（用户决定）。'
             )
           ),
 
@@ -1665,7 +1768,12 @@ window.__ModuleLoader__.load({
               h(
                 'p',
                 { style: S.hint },
-                '费用为估算（cache 未单独计价，偏高）；白饭/token/峰谷更稳定。开关写入本机 localStorage，主页「今日数据」立即生效。'
+                (todayStats && todayStats.cacheSavedYuan != null
+                  ? '费用已含 cache 分价（较旧算法节省 ' +
+                    fmtMoney(todayStats.cacheSavedYuan) +
+                    '）；仍为估算。白饭/token/峰谷更稳定。'
+                  : '费用为估算（cache 未单独计价，偏高）；白饭/token/峰谷更稳定。') +
+                  '开关写入本机 localStorage，主页「今日数据」立即生效。'
               )
             ),
             h('p', { style: S.hint }, '达到上限后联动插件停用 LLM，回退台词池')
@@ -1862,26 +1970,7 @@ window.__ModuleLoader__.load({
                   offLabel: '关'
                 })
               ),
-              h(
-                'div',
-                null,
-                h('span', { style: S.label }, '音量'),
-                h(
-                  'div',
-                  { style: S.sliderRow },
-                  h('input', {
-                    style: S.slider,
-                    type: 'range',
-                    min: 0,
-                    max: 100,
-                    step: 5,
-                    value: Math.round(form.volume * 100),
-                    disabled: busyNow,
-                    onChange: (e) => touch({ volume: Number(e.target.value) / 100 })
-                  }),
-                  h('span', { style: S.sliderVal }, Math.round(form.volume * 100) + '%')
-                )
-              ),
+              h('span', { style: S.hint }, '音效：已关闭（用户决定，不可调）。'),
               h(
                 'label',
                 null,
@@ -1977,13 +2066,7 @@ window.__ModuleLoader__.load({
                 'div',
                 null,
                 h('span', { style: S.label }, '音效'),
-                h(Toggle, {
-                  value: form.soundOn,
-                  onChange: (v) => touch({ soundOn: v }),
-                  disabled: busyNow,
-                  onLabel: '开',
-                  offLabel: '关'
-                })
+                h('span', { style: S.hint }, '已移除（用户决定，不可调）')
               ),
               h(
                 'label',
@@ -2314,8 +2397,48 @@ window.__ModuleLoader__.load({
                 detail:
                   '每小时动作上限 · ' +
                   (state.guards && state.guards.noActionOnSameState === false ? '同状态可重复' : '同状态不重复')
+              }),
+              h(Stat, {
+                label: '宿主内存',
+                on: Boolean(hostMemory && hostMemory.lowFootprint !== false),
+                unknown: !hostMemory,
+                value: hostMemory ? hostMemory.rssMB + ' MB' : '未知',
+                detail: hostMemory
+                  ? 'heap ' +
+                    hostMemory.heapMB +
+                    'MB · timers ' +
+                    hostMemory.timers +
+                    (hostMemory.lowFootprint ? ' · 低占用中' : ' · 高于阈值 ' + hostMemory.thresholdRssMB + 'MB')
+                  : '等待 v2 hostMemory'
               })
             ),
+            hostMemory && (modeCaps.off || modeCaps.resume)
+              ? h(
+                  'div',
+                  { style: S.row },
+                  h('span', { style: S.hint }, '宿主内存偏高时可一键降载：'),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: Object.assign({}, S.btn, busyNow || !modeCaps.off ? S.btnDisabled : null),
+                      disabled: busyNow || !modeCaps.off,
+                      onClick: () => runMode('off', {})
+                    },
+                    busy === 'mode:off' ? '降载中…' : '下班降载（停自动联动）'
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: Object.assign({}, S.btn, busyNow || !modeCaps.resume || !md.active ? S.btnDisabled : null),
+                      disabled: busyNow || !modeCaps.resume || !md.active,
+                      onClick: () => runMode('resume')
+                    },
+                    busy === 'mode:resume' ? '恢复中…' : '恢复联动'
+                  )
+                )
+              : null,
             h(
               'p',
               { style: S.hint },
@@ -2398,7 +2521,7 @@ window.__ModuleLoader__.load({
                 h(
                   'p',
                   { style: S.hint },
-                  'intel-status（未激活）· Web 内置桌宠（不做）· 语音/ASR/TTS、hooks、OTel/analytics 展示'
+                  'intel-status（未激活）· Web 内置桌宠（不做）· 语音/ASR/TTS、hooks、OTel/analytics 展示 · 全局快捷键、音效/音量（用户决定，已移除）'
                 )
               )
             ),

@@ -52,6 +52,7 @@ import {
 } from './mode.js'
 import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
 import { buildTeamV2, emptyTeamV2 } from './team-view.js'
+import { composeReunion } from './text-fmt.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -1462,7 +1463,7 @@ export function apply(ctx, rawConfig) {
             ? '你回来啦，一天没见，我都想你了'
             : '你回来啦，刚才那会儿我还以为你忙完了'
 
-      const where = companion.lastActivityLabel ? '上次在' + companion.lastActivityLabel : ''
+      const activityLabel = companion.lastActivityLabel
       companion.lastGreetDate = todayKey
       companion.affinity = Math.min(100, (companion.affinity || 0) + 2)
       companion.mood = Math.min(100, (companion.mood || 0) + 3)
@@ -1470,9 +1471,10 @@ export function apply(ctx, rawConfig) {
       setTimeout(() => {
         try {
           send('walk:nearby')
+          // v49.1：文案清洗 —— 主句去尾标点 + 活动标签中文化（旧版会拼出 `…没走。，上次在thinking`）
           void generate('reunion', { tools: 0 })
             .then((g) =>
-              speak('morning', g.text + (where ? '，' + where : ''), {
+              speak('morning', composeReunion(g.text, activityLabel), {
                 force: true,
                 source: g.source,
                 style: 'greet',
@@ -1480,7 +1482,9 @@ export function apply(ctx, rawConfig) {
                 tokens: g.tokens
               })
             )
-            .catch(() => speak('morning', text, { force: true, source: 'pool', style: 'greet' }))
+            .catch(() =>
+              speak('morning', composeReunion(text, activityLabel), { force: true, source: 'pool', style: 'greet' })
+            )
         } catch {}
       }, 2500)
       pushEvent('reunion', 'S1', gap >= 7 * 86400000 ? '久别 7 天+' : '久别 2 天+', true)
@@ -1573,6 +1577,8 @@ export function apply(ctx, rawConfig) {
       const sess = sessionsPayload() // task-69：每次写盘只算一次（旧版算 4 次）
       const state = {
         updatedAt: new Date().toISOString(),
+        version: '0.49.0',
+        writerId: '0.49.0', // v49：多模块并存时辨认真正的写者（v2 version 与实际 loaded 一致性证据）
         host: true,
         pet: petOnline,
         pipe: petOnline,
@@ -1587,8 +1593,7 @@ export function apply(ctx, rawConfig) {
         provider: cfg.llm.provider,
         model: cfg.llm.model,
         recentSay: recentSay.slice(-10),
-        version: '0.48.0',
-        petVersion: 'v1.1.5+patch-v48',
+        petVersion: 'v1.1.5+patch-v49',
         lastAction,
         petSettings: cfg.petSettings || {},
         bubble: cfg.bubble || {},
@@ -2231,7 +2236,17 @@ export function apply(ctx, rawConfig) {
   }
   const attrSkipLogAt = {}
 
-  // ---------- v48：team v2 bootstrap（复用 attribution last-known，reload 后不等用户发消息就有数） ----------
+  // ---------- v48/v49：team v2 bootstrap（复用 attribution last-known，reload 后不等用户发消息就有数） ----------
+  const bootstrapDiagnostics = () => {
+    try {
+      const store = typeof ctx.get === 'function' ? ctx.get('sessions') : null
+      const id = activeSessionId || currentSessionId || null
+      const live = store && typeof store.list === 'function' ? store.list().length : -1
+      return { hasStore: !!store, hasId: !!id, liveSessions: live }
+    } catch (e) {
+      return { hasStore: false, hasId: false, liveSessions: -1, error: clip(e && e.message, 60) }
+    }
+  }
   const bootstrapTeamFromAttribution = () => {
     try {
       const store = typeof ctx.get === 'function' ? ctx.get('sessions') : null
@@ -2250,16 +2265,27 @@ export function apply(ctx, rawConfig) {
       return false
     }
   }
-  setTimeout(() => {
-    try {
-      const ok = bootstrapTeamFromAttribution()
-      if (ok) {
-        lastTeamV2At = 0 // 允许立即刷新（不受 ≤1/min 节流初始值影响）
-        refreshTeamV2(true)
-      }
-      log('info', 'team v2 bootstrap', { ok, from: 'attribution' })
-    } catch {}
-  }, 3000)
+  // 重试 5 次（3s/8s/15s/25s/40s）：host 重启后会话可能尚未进入 live store，早读会 miss
+  let teamBootstrapTry = 0
+  const tryBootstrapTeam = () => {
+    teamBootstrapTry += 1
+    const ok = bootstrapTeamFromAttribution()
+    const diag = bootstrapDiagnostics()
+    if (ok) {
+      lastTeamV2At = 0 // 允许立即刷新（不受 ≤1/min 节流初始值影响）
+      refreshTeamV2(true)
+      log('info', 'team v2 bootstrap', { ok: true, from: 'attribution', try: teamBootstrapTry })
+      return
+    }
+    if (teamBootstrapTry === 1) log('info', 'team v2 bootstrap retry', { try: teamBootstrapTry, ...diag })
+    if (teamBootstrapTry < 5) {
+      const delays = [5000, 7000, 10000, 15000]
+      setTimeout(tryBootstrapTeam, delays[teamBootstrapTry - 1] || 15000)
+      return
+    }
+    log('warn', 'team v2 bootstrap', { ok: false, from: 'attribution', ...diag })
+  }
+  setTimeout(tryBootstrapTeam, 3000)
   const bubbleDurFor = (kind, style) => {
     const b = cfg.bubble || {}
     if (kind === 'inner') return b.innerMs || 3000

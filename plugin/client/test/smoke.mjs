@@ -1516,6 +1516,194 @@ await testAsync('state.get 含 teamFeatures（无 host bridge 时为 unsupported
   dispose()
 })
 
+// ───────────────────────── 3.12 task-57 v47+：workspaceName/workspaceHash 隐私 ─────────────────────────
+console.log('\n[3.12] 工作区隐私（workspaceName/hash）')
+
+test('workspaceName+workspaceHash：同名不同工作区加 ·#hash 后缀，绝不泄漏绝对路径', () => {
+  const { normalizeSessions } = index.__test
+  const iso = (ms) => new Date(Date.now() - ms).toISOString()
+  const r = normalizeSessions(
+    {
+      currentSessionId: 's1',
+      userActiveCount: 3,
+      sessions: [
+        {
+          sessionId: 's1',
+          workspaceName: 'proj',
+          workspaceHash: 'aaaa1111',
+          title: 'im#1',
+          state: 'thinking',
+          lastSeenAt: iso(1000)
+        },
+        {
+          sessionId: 's2',
+          workspaceName: 'proj',
+          workspaceHash: 'bbbb2222',
+          title: 'im#2',
+          state: 'idle',
+          lastSeenAt: iso(2000)
+        },
+        {
+          sessionId: 's3',
+          workspaceName: 'im',
+          workspaceHash: 'cccc3333',
+          title: 'im#3',
+          state: 'idle',
+          lastSeenAt: iso(3000)
+        }
+      ]
+    },
+    null,
+    { now: Date.now() }
+  )
+  assert.equal(r.groups.length, 3)
+  const labels = r.groups.map((g) => g.workspace).sort()
+  assert.ok(labels.includes('proj·#aaaa'), labels.join(','))
+  assert.ok(labels.includes('proj·#bbbb'), labels.join(','))
+  assert.ok(labels.includes('im'), labels.join(','))
+  assert.ok(!JSON.stringify(r).includes('C:\\') && !JSON.stringify(r).includes('E:\\'))
+})
+
+test('旧 workspace 绝对路径兼容：只保留 basename 显示名', () => {
+  const { normalizeSessions } = index.__test
+  const iso = (ms) => new Date(Date.now() - ms).toISOString()
+  const r = normalizeSessions(
+    {
+      currentSessionId: 'x',
+      sessions: [
+        {
+          sessionId: 'x',
+          workspace: 'E:\\project\\XQWL-000185-北京数智模型',
+          title: 't',
+          state: 'idle',
+          lastSeenAt: iso(1000)
+        }
+      ]
+    },
+    null,
+    { now: Date.now() }
+  )
+  assert.equal(r.groups[0].workspace, 'XQWL-000185-北京数智模型')
+  assert.ok(!JSON.stringify(r).includes('E:\\project'))
+})
+
+// ───────────────────────── 3.13 task-67：控制模式（v47 mode 契约） ─────────────────────────
+console.log('\n[3.13] 控制模式 mode')
+
+const { normalizeModeView, MODE_DEFAULT_SETTINGS } = index.__test
+
+test('normalizeModeView：缺失 → 未就绪；silent 剩余时间/能力正确', () => {
+  const now = Date.parse('2026-10-23T09:00:00.000Z')
+  const absent = normalizeModeView({}, now)
+  assert.equal(absent.available, false)
+  assert.equal(absent.active, false)
+  assert.equal(absent.capabilities.silent, false)
+  const silent = normalizeModeView(
+    {
+      mode: {
+        active: true,
+        kind: 'silent',
+        resumeAt: new Date(now + 1800000).toISOString(),
+        since: new Date(now - 60000).toISOString()
+      },
+      capabilities: { mode: { silent: true, focus: true, off: true, resume: true } }
+    },
+    now
+  )
+  assert.equal(silent.available, true)
+  assert.equal(silent.active, true)
+  assert.equal(silent.kind, 'silent')
+  assert.equal(silent.label, '静一静')
+  assert.equal(silent.remainMs, 1800000)
+  assert.equal(silent.capabilities.resume, true)
+})
+
+test('ui-config.mode 默认值齐全，hotkey 格式校验（前端占位）', () => {
+  assert.equal(MODE_DEFAULT_SETTINGS.silentMinutes, 30)
+  assert.equal(MODE_DEFAULT_SETTINGS.focusMinutes, 50)
+  assert.equal(MODE_DEFAULT_SETTINGS.autoResume, true)
+  assert.equal(MODE_DEFAULT_SETTINGS.hotkey, '')
+})
+
+await testAsync('mode.request：能力缺失 → not-supported；v2 就绪 → 排队 mode-silent（含 minutes）', async () => {
+  const { routes, dispose } = mount()
+  const bad = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/mode.request',
+      body: { rpcId: 'r-m0', method: 'mode.request', payload: { name: 'silent', minutes: 20 } }
+    }),
+    makeRes()
+  )
+  assert.equal(JSON.parse(bad.body).result.error.code, 'not-supported')
+  dispose()
+
+  fs.writeFileSync(
+    tmpCfg.stateV2File,
+    JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      mode: { active: true, kind: 'silent', resumeAt: new Date(Date.now() + 600000).toISOString() },
+      capabilities: { mode: { silent: true, focus: true, off: true, resume: true } }
+    }),
+    'utf8'
+  )
+  fs.writeFileSync(tmpCfg.actionFile, JSON.stringify({ id: 'old', handledAt: 'x', status: 'done' }), 'utf8')
+  const h = buildHandler(tmpCfg, noopLog)
+  const { routes: routes2, dispose: dispose2 } = mountWith(h)
+  const res = await invoke(
+    routes2,
+    makeReq({
+      url: '/pet-bridge-ui/mode.request',
+      body: { rpcId: 'r-m1', method: 'mode.request', payload: { name: 'silent', minutes: 20 } }
+    }),
+    makeRes()
+  )
+  const result = JSON.parse(res.body).result
+  assert.equal(result.ok, true)
+  assert.equal(result.data.request.name, 'mode-silent')
+  assert.equal(result.data.request.minutes, 20)
+  dispose2()
+  fs.unlinkSync(tmpCfg.stateV2File)
+  fs.unlinkSync(tmpCfg.actionFile)
+})
+
+await testAsync('config.set mode：合法值写入/非法值拒绝', async () => {
+  const { routes, dispose } = mount()
+  const okRes = await invoke(
+    routes,
+    makeReq({
+      url: '/pet-bridge-ui/config.set',
+      body: {
+        rpcId: 'r-m2',
+        method: 'config.set',
+        payload: { mode: { silentMinutes: 45, focusMinutes: 90, autoResume: false, hotkey: 'Ctrl+Alt+S' } }
+      }
+    }),
+    makeRes()
+  )
+  assert.equal(JSON.parse(okRes.body).result.ok, true)
+  dispose()
+  const { routes: r2, dispose: d2 } = mount()
+  for (const badMode of [
+    { silentMinutes: 0 },
+    { focusMinutes: 999 },
+    { autoResume: 'yes' },
+    { hotkey: 'x'.repeat(50) },
+    { offUntil: 'not-a-date' }
+  ]) {
+    const res = await invoke(
+      r2,
+      makeReq({
+        url: '/pet-bridge-ui/config.set',
+        body: { rpcId: 'r-m3', method: 'config.set', payload: { mode: badMode } }
+      }),
+      makeRes()
+    )
+    assert.equal(JSON.parse(res.body).result.ok, false, JSON.stringify(badMode))
+  }
+  d2()
+})
+
 // ───────────────────────── 4. client bundle 契约 ─────────────────────────
 console.log('\n[4] client bundle 契约')
 
