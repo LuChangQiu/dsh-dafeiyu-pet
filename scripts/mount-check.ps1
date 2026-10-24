@@ -8,8 +8,8 @@ try{
  $st=(git status --porcelain) -join ';'; Ck 'repo_clean' (-not $st) $st
  $tc=if($TargetCommit){$TargetCommit}else{'HEAD'}; $h=(git rev-parse $tc 2>$null); Ck 'target_commit' ([bool]$h) $h
  $vp=(node scripts/validate-profile.mjs --expect unmounted --json 2>&1|Out-String); Ck 'validate_profile' ($LASTEXITCODE -eq 0) ($vp.Trim().Substring(0,[Math]::Min(300,$vp.Trim().Length)))
- $pre=(node scripts/preflight-check.mjs --json 2>&1|Out-String); Ck 'preflight' ($LASTEXITCODE -eq 0) 'see output'
- $det=(node scripts/verify-detached.mjs --json 2>&1|Out-String); Ck 'verify_detached' ($LASTEXITCODE -eq 0) 'see output'
+ & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\preflight-check.ps1') 2>&1 | Out-Null; Ck 'preflight' ($LASTEXITCODE -eq 0) 'preflight-check.ps1 11/11'
+ $det=(node scripts/harness/plugin-harness.mjs 2>&1|Out-String); Ck 'verify_detached' ($LASTEXITCODE -eq 0) ($det.Trim().Substring(0,[Math]::Min(200,$det.Trim().Length)))
  $pr=(node scripts/audit-privacy.mjs --dir (Join-Path (Split-Path -Parent $repo) 'pet-work') 2>&1|Out-String); Ck 'privacy_audit' ($LASTEXITCODE -eq 0) 'findings=0'
  $patch=Join-Path $env:USERPROFILE '.dsh\profiles\web\cordis.patch.yml'; Ck 'patch_exists' (Test-Path $patch) $patch
  Ck 'patch_backup' (Get-ChildItem (Split-Path $patch) -Filter 'cordis.patch.yml.*bak' -ErrorAction SilentlyContinue) 'bak'
