@@ -87,6 +87,8 @@ Invoke-Step "unit: state-layer" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: appraisal unit（delta/novelty）"; return }
   & node plugin/server/test/affect.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: affect unit（decay/attention/stage）"; return }
+  & node plugin/server/test/motivation.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: motivation unit（18 intent/utility/预算/拒绝/打断）"; return }
 }
 
 # 7) git 状态（信息项，不判失败）
