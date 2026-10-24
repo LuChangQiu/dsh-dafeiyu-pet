@@ -582,23 +582,35 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 | `待服务端` | pending，禁用/灰色，不显示假数据 | 同上 + 外观与渲染 |
 
 ## F.4 主页 3D 形象占位说明
-- 位置：主页「她今天怎么样」卡下，一行 `3D 形象：关闭（实验计划中，等 render.mode）`。
+- 位置：主页「她今天怎么样」卡下，一行 `3D 形象：关闭（「3D 渲染模式」占位禁用，待 render.mode 字段；角色设定以 29 角色圣经为准）`。
 - 变活：`render.mode` 接入后显示「3D 模式：关闭 / 实验」；启用/回退以 bridge 字段为准，失败展示原因并保持 2D。
 - 约束：占位不画 3D 资源、不引入额外请求；随 5s `state.get` 刷新。
+- 34 号「3D 渲染模式」在设置页仍为禁用占位（`disabled`），B4 不解锁。
+
+### F.4.1 形象位头像（task-107 B4）
+- **资产本地镜像**：`plugin/client/lib/assets/whale-girl/portrait.png`（与仓库 `assets/whale-girl/portrait.png` 同字节）+ `ATTRIBUTION.md`；随 `package.json files: ["lib"]` 分发，不依赖未装资产包。
+- **路由**：同 channel `GET <channel>/asset/portrait.png`，走 `mountWebRoute` GET 鉴权栅栏；`image/png` + `cache-control: no-store` + `x-content-type-options: nosniff`；文件缺失/损坏 → 404。
+- **位置**：主页头部头像位、聊天页头部头像位（44px 圆）、设置页「外观与渲染」形象位（64px 圆）。
+- **降级**：`<img onerror="this.remove()">` → 露出 29 色板渐变占位（发 #5060A3 / 裙 #2D366A / 品牌蓝 #4D6BFE），不破版、不报错、不发请求。
+- **署名（页面可见，纯文本无外链）**：YunYueSama · github.com/YunYueSama/codex-deepseek-pet · 大肥鱼项目署名许可 1.0 · 已裁剪/筛选/降采样（未重绘）· 非官方（DeepSeek 未推出/未认领任何拟人吉祥物）。
+- **channel 推导**：`portraitSrc(cfg.channel)`（host 渲染页时传 `cfg.channel`）；聊天页 `RPC_URL` 与主页 `CHANNEL` 同源推导，避免换 channel 后头像 404。**P3 已知**：浏览器侧 `lib/client.js` 的 `CHANNEL` 仍为固定常量（设置页 RPC/形象位），当前**仅默认 channel（`/pet-bridge-ui`）支持**完整 B4，自定义 channel 需 host 注入/动态化。
+- **测试**：`test/smoke.mjs [3.16]`；harness 支持 `--no-portrait` / `HARNESS_NO_PORTRAIT=1` 演练未装资产降级。
 
 ## F.5 挂载窗口 live 回归清单（下次挂载时按此快速过一遍）
 1. **安装版 hash** = HEAD blob（client/home）；`node --check`。
 2. **home DOM 0 路径**：页面文本正则 `[A-Za-z]:\\` 无命中。
-3. **3D 占位**：`renderStatus` = 「3D 形象：关闭（实验计划中，等 render.mode）」（字段未到）/ 正确显示状态（字段已到）。
+3. **3D 占位**：`renderStatus` = 「3D 形象：关闭（「3D 渲染模式」占位禁用，待 render.mode 字段…）」（字段未到）/ 正确显示状态（字段已到）；设置页「3D（实验）」按钮仍 `disabled`。
+3b. **形象位（B4）**：`GET <channel>/asset/portrait.png` 登录态 200 `image/png`（unlogged 401）；三处头像位与署名可见；未装资产（404）时露出 29 色板且不破版；DOM 0 绝对路径。
 4. **Phase-2 骨架**：六项显示「待服务端」；模型行 detail = 面板配置（未谎报 live）；MCP 标 inferred。
-5. **外观与渲染**：2D/3D 禁用 + 待服务端说明（字段未到）；字段到则按 F.1 验切换/回退。
+5. **外观与渲染**：2D/3D 禁用 + 待服务端说明（字段未到）；形象位头像 64px + 署名；字段到则按 F.1 验切换/回退。
 6. **team 真实数**：主页团队卡与 v2 `team.*` 一致（members/tasks/progress/blocked/ready）。
 7. **version + writerId**：v2 `version`/`writerId` 与面板显示一致。
 8. **privacy**：`audit-privacy --dir pet-work` findings=0；DOM 0 路径；无 subject/description/objective。
 9. **无 TEST HOOK**：patch `testHookFile`=0；v2 无 test/usage 字段；DOM 无 TEST HOOK 文案。
 10. **未挂载状态**：若窗口未开，`/pet-bridge-ui/home`=404、无 heartbeat（记录状态不变即可）。
-11. 截图归档：home（团队/3D 占位/能力地图）、settings（外观与渲染/Phase-2/兼容性）。
+11. 截图归档：home（团队/3D 占位/形象位/能力地图）、chat（头像位/署名）、settings（外观与渲染/形象位/Phase-2/兼容性）。
 12. 回滚：恢复 `evidence/ui-installed-backup-<ts>/` 或 `git revert <ui-commit>`；记录 REVIEW-LOG。
+13. **合并前（窗口后）**：main clean HEAD 复跑 `node plugin/client/test/smoke.mjs`（84/84）与 `powershell -File scripts/preflight-check.ps1`（13/13；worktree/隔离环境需 `PET_WORK_DIR` 指向共享 pet-work venv）；B4 分支合并后在主仓复跑同一门禁再安装。
 
 ## F.6 本节验收（文档批）
 - 文档仅新增本附录与独立清单文件，无代码/无 patch/无 pet 改动；repo 提交后 preflight 仍 11/11。

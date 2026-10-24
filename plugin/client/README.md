@@ -253,11 +253,22 @@ Get-Content '%PROJECT_ROOT%\tool\pet-integration-src\pet-work\evidence\pet-bridg
 ## 调试与验证命令
 
 ```powershell
-node test/smoke.mjs                 # 离线 24 项
+node test/smoke.mjs                 # 离线 smoke（当前 84 项，含 B3/B3.1/B4）
 node test/e2e-verify.mjs            # 真实链路（会短暂改 ui-config 并恢复，约 110s）
 node test/make-fixture.mjs <out>    # 生成 harness 数据快照
 # harness：复制 test/harness/index.html + lib/client.js + react UMD + fixture.js 到同一目录，浏览器打开
+node test/serve-chat-harness.mjs --port 3942 [--enabled] [--no-portrait]  # 聊天页 mock；--no-portrait=模拟未装资产（404→29 色板降级）
+node test/serve-home-harness.mjs 3910                                    # 主页 mock；HARNESS_NO_PORTRAIT=1 同上
 ```
+
+## task-107 B4：形象位头像（本地镜像 + 降级）
+
+- **资产**：`lib/assets/whale-girl/portrait.png`（与仓库 `assets/whale-girl/portrait.png` 同字节；YunYueSama / codex-deepseek-pet / 大肥鱼项目署名许可 1.0 / 已裁剪筛选降采样 / 非官方），随 `package.json files: ["lib"]` 分发，不依赖用户机器资产包；镜像目录含 ATTRIBUTION.md。
+- **路由**：同 channel `GET <channel>/asset/portrait.png`（走 `mountWebRoute` GET 栅栏鉴权；`image/png` + `no-store` + `nosniff`；资产缺失 404）。
+- **页面**：主页头部、聊天页头部（44px 圆）、设置页「外观与渲染」形象位（64px 圆）；`<img onerror>` 移除图片 → 29 色板渐变占位，不破版、不报错；三处均带可见署名（纯文本、无外链 scheme）。
+- **channel**：头像 src 由 `portraitSrc(cfg.channel)` 推导（host 渲染时传 `cfg.channel`）；聊天页 RPC_URL、主页 CHANNEL 同源推导，换 channel 时不劈叉。**注**：浏览器侧 `lib/client.js` 的 `CHANNEL` 仍为固定常量（设置页 RPC/形象位），故当前**仅默认 channel（`/pet-bridge-ui`）支持**完整 B4；自定义 channel 需 host 注入/动态化（P3，未阻塞合并）。
+- **3D**：「3D 渲染模式」仍为禁用占位（待 `render.mode`），B4 不解锁。
+- **测试**：smoke `[3.16]` 覆盖镜像同字节/署名/两页头像位与降级/设置页与 3D 禁用/路由/404 降级/channel 跟随。
 
 ## 更新（v17，2026-10-23）
 
