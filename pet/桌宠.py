@@ -4203,15 +4203,15 @@ class PetWindow(QWidget):
         self._whale_pat_cd = 0.0          # 点击摸头 / 嘴硬演出冷却（内部时钟秒）
         self._whale_cry_cd = 0.0          # 摔哭冷却（29 §2.3：30 分钟）
         self._bridge_mute_until = 0.0     # 桥侧 mute 到什么时候（闷声时不演梗）
-        self._whale_walk_rate = 1.6       # 走路帧慢放倍率（用户反馈摆臂太快；素材 notes 建议 ×1.6）
+        self._whale_walk_rate = 1.35      # 走路慢放倍率（体验评审：1.0 步/秒自然；1.2/1.35/1.6 可配三档）
         try:
             _wcfg = self.cfg.get("whale")
             if not isinstance(_wcfg, dict):
                 _wcfg = {"on": True}
             try:
-                self._whale_walk_rate = max(0.5, min(3.0, float(_wcfg.get("walkRate", 1.6) or 1.6)))
+                self._whale_walk_rate = max(0.5, min(3.0, float(_wcfg.get("walkRate", 1.35) or 1.35)))
             except (TypeError, ValueError):
-                self._whale_walk_rate = 1.6
+                self._whale_walk_rate = 1.35
             if _wcfg.get("on", True) and _whale_skin is not None:
                 self._whale = _whale_skin.load(__file__)
                 if self._whale is not None:
@@ -7247,8 +7247,18 @@ class PetWindow(QWidget):
             self._whale_clear_force()
         if self._whale_gag_ok() and now - getattr(self, "_life_greet_at", 0.0) >= 120.0:
             self._life_greet_at = now
-            self._bridge_bubble_kind = "greet"
-            self.say("你回来啦～我还以为你把我忘了", seconds=4.2)
+
+            # 28 §2.4：打盹唤醒先迷糊 0.8–1.5s 再开口 —— 与起身同帧冒泡像"装醒"；延迟 1.0s 且语气轻一点。
+            def _greet_after_wake():
+                try:
+                    if getattr(self, "_life_offline", False) or not self._whale_gag_ok():
+                        return
+                    self._bridge_bubble_kind = "greet"
+                    self.say("……你回来啦", seconds=4.0)
+                except Exception:
+                    pass
+
+            QTimer.singleShot(1000, _greet_after_wake)
         print("失联休眠：醒来")
 
     def _whale_tick(self):
@@ -7304,15 +7314,16 @@ class PetWindow(QWidget):
                             w.play(n, restart=True)
                     self._whale_micro_at = self.t + int(
                         random.uniform(8.0, 25.0) * 1000.0 / max(1, self.tick_ms))
-            # 走路摆臂太快（用户反馈）：按素材 notes 建议慢放 ×1.6（45→72ms/帧、1.44s→2.30s/循环）；
-            # tool 状态是"慢速 walk"，在正常步频上再慢 15%。倍率可配 whale.walkRate。
+            # 走路步频（体验评审 2026-10-24）：默认慢放 ×1.35（45→60.75ms/帧，1.94s/循环，≈1.03 步/秒）；
+            # ×1.2 / ×1.35 / ×1.6 三档可配（whale.walkRate，1.6 = 悠闲/深夜档）。
+            # tool 状态是"慢速 walk"，在正常步频上再慢 5%（不是过度拖慢）。
             # 注意方向：每帧推进的"动画时间"要除以倍率（rate>1 = 播得更慢），不是乘。
             step_ms = self.tick_ms
             _rate = 1.0
             if w.cur == "walk":
-                _rate = float(getattr(self, "_whale_walk_rate", 1.6) or 1.6)
+                _rate = float(getattr(self, "_whale_walk_rate", 1.35) or 1.35)
                 if str(getattr(self, "_bridge_state", {}).get("state") or "") == "tool":
-                    _rate *= 1.15
+                    _rate *= 1.05
                 _rate = max(0.5, min(3.0, _rate))
                 step_ms = self.tick_ms / _rate
             w.tick(step_ms)
