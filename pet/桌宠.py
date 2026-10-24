@@ -4038,7 +4038,8 @@ class PetWindow(QWidget):
         # 默认配置；老 config.json 缺的新键会自动补上（免得升级后 KeyError）
         cfg_defaults = {
             "mode": "wander",
-            "size": 0.7,
+            # 新装默认 184px（29 §12）：340 × (184/340) = 184；老 config.json 有值时不覆盖、不自动放大
+            "size": 184 / 340,
             "topmost": True,
             "passthrough": False,
             "autostart": False,
