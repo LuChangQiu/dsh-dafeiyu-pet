@@ -81,19 +81,24 @@ if (!acts.size) {
   for (const k of fallbackComposites) acts.add(k)
 }
 const out = { version: 1, generatedFrom: source, unknowns, acts: [...acts].sort(), fx: [...fx].sort() }
-const target = join(root, 'docs', 'generated', 'act-fx-whitelist.json')
-mkdirSync(dirname(target), { recursive: true })
+const text = JSON.stringify(out, null, 2) + '\n'
+// CF1 方案 A：真源 docs/generated + 随包副本 plugin/server/lib/generated（逐字节一致）
+const targets = [
+  join(root, 'docs', 'generated', 'act-fx-whitelist.json'),
+  join(root, 'plugin', 'server', 'lib', 'generated', 'act-fx-whitelist.json')
+]
+for (const t of targets) mkdirSync(dirname(t), { recursive: true })
 const check = process.argv.includes('--check')
 if (check) {
-  const cur = existsSync(target) ? JSON.parse(readFileSync(target, 'utf8')) : null
-  const same =
-    cur && JSON.stringify(cur.acts) === JSON.stringify(out.acts) && JSON.stringify(cur.fx) === JSON.stringify(out.fx)
-  if (!same) {
-    console.error('WHITELIST DRIFT: run node scripts/gen-act-fx-whitelist.mjs')
-    process.exit(1)
+  for (const t of targets) {
+    const cur = existsSync(t) ? readFileSync(t, 'utf8') : ''
+    if (cur !== text) {
+      console.error('WHITELIST DRIFT: ' + t + ' — run node scripts/gen-act-fx-whitelist.mjs')
+      process.exit(1)
+    }
   }
-  console.log('whitelist OK', out.acts.length, 'acts /', out.fx.length, 'fx')
+  console.log('whitelist OK', out.acts.length, 'acts /', out.fx.length, 'fx / 2 files in sync')
   process.exit(0)
 }
-writeFileSync(target, JSON.stringify(out, null, 2) + '\n', 'utf8')
-console.log('generated', target, 'acts=' + out.acts.length, 'fx=' + out.fx.length, 'source=' + source)
+for (const t of targets) writeFileSync(t, text, 'utf8')
+console.log('generated', targets.join(' + '), 'acts=' + out.acts.length, 'fx=' + out.fx.length, 'source=' + source)

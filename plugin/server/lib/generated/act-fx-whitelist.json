@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "generatedFrom": "manifest",
+  "unknowns": [
+    "composites.note"
+  ],
+  "acts": [
+    "caught",
+    "cheer",
+    "cry",
+    "dance",
+    "drag",
+    "eat",
+    "eatSatisfied",
+    "errorSequence",
+    "fall",
+    "hum",
+    "idleBase",
+    "idleSettle",
+    "idleShift",
+    "idleStretch",
+    "jump",
+    "land",
+    "lonelySit",
+    "pat",
+    "report",
+    "sleep",
+    "sneak",
+    "think",
+    "tsundere",
+    "turnStop",
+    "waitPeek",
+    "wake",
+    "walk",
+    "wave"
+  ],
+  "fx": [
+    "anger",
+    "blink",
+    "dizzy",
+    "happy",
+    "heart",
+    "love",
+    "sad",
+    "shy",
+    "sleepy",
+    "spin",
+    "surprise",
+    "sweat",
+    "tear",
+    "zzz"
+  ]
+}
