@@ -11,7 +11,7 @@ git -C $repo archive $TargetCommit plugin/server | tar -x -C $stage 2>$null; $in
 $pj=Get-Content (Join-Path $stage "package.json") -Raw | ConvertFrom-Json; $pluginVersion=$pj.version; if(-not $pluginVersion){ throw "plugin/server package.json version missing" }
 $dst=Join-Path $prof "node_modules\$newPkg"; if(Test-Path $dst){Remove-Item $dst -Recurse -Force}; Copy-Item $stage $dst -Recurse -Force
 $patch=Join-Path $prof 'cordis.patch.yml'; $bak="$patch.bak-mount-$(Get-Date -Format yyyyMMddHHmmss)"; Copy-Item $patch $bak -Force
-node (Join-Path $repo 'scripts\safe-patch.mjs') --activate --id "pet-bridge-v$version" --name $newPkg
+node (Join-Path $repo 'scripts\safe-patch.mjs') --patch $patch --activate --id "pet-bridge-v$version" --name $newPkg --json
 $deadline=(Get-Date).AddSeconds($TimeoutSec); $ok=$false
 while((Get-Date) -lt $deadline){ $log='E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'; if(Test-Path $log){ if((Get-Content $log -Tail 80 -Raw) -match ("loaded v" + [regex]::Escape($pluginVersion))){ $ok=$true; break } }; Start-Sleep 1 }
 if(-not $ok){ Copy-Item $bak $patch -Force; throw ("hot-load timeout (want loaded v" + $pluginVersion + "); rolled back patch from " + $bak) }
