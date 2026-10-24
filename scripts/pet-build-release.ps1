@@ -51,6 +51,15 @@ $wgPng = @($wgFiles | Where-Object { $_.Extension -eq '.png' })
 if ($wgPng.Count -lt 170) { throw "鲸鱼娘帧不完整：PNG=$($wgPng.Count)（期望 ≥170）" }
 if ($wgFiles.Count -lt 178) { throw "鲸鱼娘资产不完整：files=$($wgFiles.Count)（期望 ≥178）" }
 Write-Output "[build] assets ok: whale-girl $($wgFiles.Count) files ($($wgPng.Count) png)"
+# 2.6) 朋友自包含：把根 INSTALL.md 与 scripts/selfcheck.ps1 复制到 app 根，随 zip 分发
+#      （"解压 → 自检 → 启动"三步闭环；自检脚本会识别 packaged 模式：免 Python、无 repo 也可运行）
+$installDoc = Join-Path $RepoRoot 'INSTALL.md'
+$selfCheck = Join-Path $RepoRoot 'scripts\selfcheck.ps1'
+if (-not (Test-Path $installDoc)) { throw "缺少 INSTALL.md：$installDoc（发行包必须附带安装/自检说明）" }
+if (-not (Test-Path $selfCheck)) { throw "缺少 scripts\selfcheck.ps1：$selfCheck（朋友无法自检）" }
+Copy-Item -LiteralPath $installDoc -Destination (Join-Path $target 'INSTALL.md') -Force
+Copy-Item -LiteralPath $selfCheck -Destination (Join-Path $target 'selfcheck.ps1') -Force
+Write-Output '[build] docs ok: INSTALL.md + selfcheck.ps1 copied to app root'
 
 # 3) 打 zip + sha256
 $zip = Join-Path $OutDir ($outName + '.zip')
@@ -74,6 +83,9 @@ try {
   }
   $rootDup = @($names | Where-Object { $_ -like 'assets/whale-girl/*' })
   if ($rootDup.Count -gt 0) { throw "zip 存在重复鲸鱼娘资产（app 根 assets/whale-girl $($rootDup.Count) 项），请只保留 _internal 一份" }
+  if (-not ($names -contains 'INSTALL.md')) { throw 'zip 缺少 INSTALL.md（朋友解压后无法按三步安装）' }
+  if (-not ($names -contains 'selfcheck.ps1')) { throw 'zip 缺少 selfcheck.ps1（朋友无法自检）' }
+  Write-Output '[build] zip docs ok: INSTALL.md + selfcheck.ps1 present'
   Write-Output "[build] zip assets ok: _internal/assets/whale-girl $($wgZip.Count) entries (single copy)"
 } finally { $zipObj.Dispose() }
 # 4) 上传说明

@@ -64,15 +64,23 @@ function Get-RequiredFilesMap {
 }
 
 function Resolve-Defaults {
-  $script:RepoRoot = $RepoRoot
-  if (-not (Test-Path -LiteralPath $script:RepoRoot)) { throw "RepoRoot not found: $($script:RepoRoot)" }
-
-  if (-not $PetWork) {
-    if ($env:DAFEIYU_PET_WORK) { $PetWork = $env:DAFEIYU_PET_WORK }
-    elseif (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $script:RepoRoot) 'pet-work')) {
-      $PetWork = Join-Path (Split-Path -Parent $script:RepoRoot) 'pet-work'
-    } elseif (Test-Path -LiteralPath (Join-Path $script:RepoRoot 'pet-work')) {
-      $PetWork = Join-Path $script:RepoRoot 'pet-work'
+  $script:Packaged = Test-Path -LiteralPath (Join-Path $PSScriptRoot '大肥鱼桌宠.exe')
+  if ($script:Packaged) {
+    # 解压后的免 Python 发行包：app 根 = 大肥鱼桌宠.exe / INSTALL.md / selfcheck.ps1；无 repo/venv
+    $script:RepoRoot = $PSScriptRoot
+    $script:RepoRootAvailable = $false
+    if (-not $PetWork) { $PetWork = $PSScriptRoot }
+  } else {
+    $script:RepoRoot = $RepoRoot
+    if (-not (Test-Path -LiteralPath $script:RepoRoot)) { throw "RepoRoot not found: $($script:RepoRoot)" }
+    $script:RepoRootAvailable = $true
+    if (-not $PetWork) {
+      if ($env:DAFEIYU_PET_WORK) { $PetWork = $env:DAFEIYU_PET_WORK }
+      elseif (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $script:RepoRoot) 'pet-work')) {
+        $PetWork = Join-Path (Split-Path -Parent $script:RepoRoot) 'pet-work'
+      } elseif (Test-Path -LiteralPath (Join-Path $script:RepoRoot 'pet-work')) {
+        $PetWork = Join-Path $script:RepoRoot 'pet-work'
+      }
     }
   }
   $script:PetWork = $PetWork
@@ -94,6 +102,7 @@ function Resolve-Defaults {
   $script:PythonExe = $PythonExe
   $script:PipeName = '\\.\pipe\dafeiyu-pet-whale-single-instance'
 }
+
 
 # ---------- 1) 插件完整性 ----------
 function Test-Plugin {
@@ -160,6 +169,12 @@ function Test-Plugin {
 # ---------- 2) venv / Python 依赖 ----------
 function Test-Venv {
   $r = [ordered]@{ ok = $false; petWork = $script:PetWork; venv = $null; python = $null; version = $null; error = $null }
+  if ($script:Packaged) {
+    # 免 Python 发行包：自带 Python 运行时，不依赖 pet-work/.venv
+    $r.ok = $true
+    $r.version = 'packaged(no-python-needed)'
+    return $r
+  }
   if (-not $script:PetWork -or -not (Test-Path -LiteralPath $script:PetWork)) {
     Add-Issue 'petwork-missing' 'error' 'pet-work 目录未找到（用 -PetWork 指定，或设置 DAFEIYU_PET_WORK）'
     return $r
@@ -190,35 +205,61 @@ function Test-Venv {
 # ---------- 3) 计划任务 ----------
 function Test-ScheduledTask {
   $r = [ordered]@{ ok = $false; name = $TaskName; state = $null; action = $null; script = $null; exists = $false }
+  $sevMissing = if ($script:Packaged) { 'warn' } else { 'error' }
   $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if (-not $t) {
-    Add-Issue 'task-missing' 'error' "计划任务未注册：$TaskName"
+    Add-Issue 'task-missing' $sevMissing "计划任务未注册：$TaskName"
     return $r
   }
   $r.exists = $true
   $r.state = "$($t.State)"
   $act = @($t.Actions)[0]
   $r.action = ("{0} {1}" -f $act.Execute, $act.Arguments).Trim()
-  if ($r.state -match 'Disabled') { Add-Issue 'task-disabled' 'error' "计划任务已禁用：$TaskName" }
+  if ($r.state -match 'Disabled') { Add-Issue 'task-disabled' $sevMissing "计划任务已禁用：$TaskName" }
+  # 兼容两种目标：start-pet.ps1（源码/源码布局）或 大肥鱼桌宠.exe（packaged 布局）
+  $target = $null
   $m = [regex]::Match($r.action, '-File\s+"?([^"]+?\.ps1)"?')
-  if ($m.Success) {
-    $r.script = $m.Groups[1].Value
-    if (-not (Test-Path -LiteralPath $r.script)) {
-      Add-Issue 'task-script-stale' 'error' "计划任务指向的脚本不存在：$($r.script)"
+  if ($m.Success) { $target = $m.Groups[1].Value }
+  else {
+    $m2 = [regex]::Match($r.action, '"([^"]+?\.exe)"')
+    if ($m2.Success) { $target = $m2.Groups[1].Value }
+    elseif ($act.Execute -match '\.exe$') { $target = $act.Execute }
+  }
+  if ($target) {
+    $r.script = $target
+    if (-not (Test-Path -LiteralPath $target)) {
+      Add-Issue 'task-script-stale' $sevMissing "计划任务指向的目标不存在：$target"
     } elseif ($r.state -notmatch 'Disabled') { $r.ok = $true }
   } else {
-    Add-Issue 'task-action-invalid' 'error' ("计划任务动作无法解析 start-pet.ps1：" + $r.action)
+    Add-Issue 'task-action-invalid' $sevMissing ("计划任务动作无法解析 start-pet.ps1/exe：" + $r.action)
   }
   return $r
 }
 
+
 # ---------- 4) pipe / 桌宠进程 ----------
+function Test-PipePingDotNet {
+  try {
+    $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'dafeiyu-pet-whale-single-instance', [System.IO.Pipes.PipeDirection]::InOut)
+    $client.Connect(1500)
+    $writer = New-Object System.IO.StreamWriter($client)
+    $writer.AutoFlush = $true
+    $writer.WriteLine('ping')
+    $reader = New-Object System.IO.StreamReader($client)
+    $line = $reader.ReadLine()
+    $client.Dispose()
+    return $line
+  } catch { return $null }
+}
+
 function Test-Pipe {
   $r = [ordered]@{ ok = $false; pipe = $script:PipeName; pipeExists = $false; petProcess = @(); ping = $null }
   $r.pipeExists = Test-Path -LiteralPath $script:PipeName
-  $r.petProcess = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object {
+  $petProcs = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object {
       $_.CommandLine -and $_.CommandLine -like '*桌宠.py*'
     } | ForEach-Object { $_.ProcessId })
+  $exeProcs = @(Get-Process -Name '大肥鱼桌宠' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  $r.petProcess = @($petProcs + $exeProcs)
   if (-not $r.pipeExists) {
     Add-Issue 'pipe-down' 'error' "命名管道不可达：$($script:PipeName)（桌宠未启动）"
     return $r
@@ -240,6 +281,13 @@ function Test-Pipe {
         Add-Issue 'pipe-probe-failed' 'error' ("pipe ping 执行失败：" + $_.Exception.Message)
         return $r
       }
+    } elseif ($script:Packaged) {
+      $reply = Test-PipePingDotNet
+      $r.ping = "$reply"
+      if (-not ($reply -match 'pong')) {
+        Add-Issue 'pipe-no-pong' 'error' ("pipe ping 未返回 pong（.NET 探测）：" + "$reply")
+        return $r
+      }
     } else {
       Add-Issue 'pet-cmd-missing' 'warn' "未找到 $cmd（跳过 ping 探测，仅检查管道存在）"
     }
@@ -247,6 +295,7 @@ function Test-Pipe {
   $r.ok = $true
   return $r
 }
+
 
 # ---------- 5) patch 状态（只读） ----------
 function Test-Patch {
@@ -339,7 +388,9 @@ function Invoke-Repairs([hashtable]$checks) {
       Sort-Object LastWriteTime -Descending)
   }
   $repoServer = Join-Path $script:RepoRoot 'plugin\server'
-  if ($serverDirs.Count -eq 0) {
+  if (-not $script:RepoRootAvailable) {
+    Add-Repair 'plugin-server-reinstall' 'skipped' 'packaged 模式不含 repo 插件源码；插件更新请用新发行包或 install.ps1'
+  } elseif ($serverDirs.Count -eq 0) {
     if ($write) { Add-Repair 'plugin-server-reinstall' 'failed' '未找到已安装 server 包（无法确定目标包名）；请运行 install/install.ps1 安装' }
     else { Add-Repair 'plugin-server-reinstall' $gateResult ('将运行 install/install.ps1 安装 server 包（' + $gateDetail + '）') }
   } else {
@@ -432,18 +483,26 @@ function Invoke-Repairs([hashtable]$checks) {
   # 4) 计划任务
   if (-not $checks.task.ok) {
     if (-not $write) {
-      Add-Repair 'schtask-register' $gateResult ('将重新注册计划任务 ' + $TaskName + ' → start-pet.ps1（' + $gateDetail + '）')
+      Add-Repair 'schtask-register' $gateResult ('将重新注册计划任务 ' + $TaskName + '（' + $gateDetail + '）')
     } else {
-      $startScript = ''
-      if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
       try {
+        $exePath = Join-Path $PSScriptRoot '大肥鱼桌宠.exe'
+        $startScript = ''
+        if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
         if (-not $startScript -or -not (Test-Path -LiteralPath $startScript)) {
           $startScript = Join-Path $script:RepoRoot 'scripts\start-pet.ps1'
         }
-        if (-not (Test-Path -LiteralPath $startScript)) { throw "start-pet.ps1 未找到（pet-work/tools 或 repo/scripts）" }
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startScript + '"')
-        Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
-        Add-Repair 'schtask-register' 'done' ('已重新注册计划任务 ' + $TaskName + ' → ' + $startScript)
+        if ($script:Packaged -and (Test-Path -LiteralPath $exePath)) {
+          $action = New-ScheduledTaskAction -Execute $exePath
+          Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
+          Add-Repair 'schtask-register' 'done' ('已注册计划任务 ' + $TaskName + ' → ' + $exePath + '（packaged）')
+        } elseif (Test-Path -LiteralPath $startScript) {
+          $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startScript + '"')
+          Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
+          Add-Repair 'schtask-register' 'done' ('已重新注册计划任务 ' + $TaskName + ' → ' + $startScript)
+        } else {
+          throw '未找到 start-pet.ps1 或 packaged exe'
+        }
       } catch {
         Add-Repair 'schtask-register' 'failed' ('注册失败：' + $_.Exception.Message)
       }
@@ -453,24 +512,33 @@ function Invoke-Repairs([hashtable]$checks) {
   # 5) pipe：缺管道时尝试拉起桌宠（不强杀）
   if (-not $checks.pipe.ok) {
     if (-not $write) {
-      Add-Repair 'pet-start' $gateResult ('将执行 start-pet.ps1 拉起桌宠（' + $gateDetail + '）')
+      Add-Repair 'pet-start' $gateResult ('将拉起桌宠（' + $gateDetail + '）')
     } else {
-      $startScript = ''
-      if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
-      if ($startScript -and (Test-Path -LiteralPath $startScript)) {
-        try {
+      $started = $false
+      try {
+        $exePath = Join-Path $PSScriptRoot '大肥鱼桌宠.exe'
+        $startScript = ''
+        if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
+        if ($script:Packaged -and (Test-Path -LiteralPath $exePath)) {
+          Start-Process -FilePath $exePath -WorkingDirectory $PSScriptRoot -ErrorAction Stop | Out-Null
+          $started = $true
+        } elseif ($startScript -and (Test-Path -LiteralPath $startScript)) {
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startScript | Out-Null
+          $started = $true
+        }
+        if ($started) {
           Start-Sleep -Seconds 8
           $ok = Test-Path -LiteralPath $script:PipeName
-          Add-Repair 'pet-start' $(if ($ok) { 'done' } else { 'failed' }) $(if ($ok) { '已拉起桌宠且管道可达' } else { '已执行 start-pet，但 8s 内管道仍不可达' })
-        } catch {
-          Add-Repair 'pet-start' 'failed' ('拉起桌宠失败：' + $_.Exception.Message)
+          Add-Repair 'pet-start' $(if ($ok) { 'done' } else { 'failed' }) $(if ($ok) { '已拉起桌宠且管道可达' } else { '已拉起，但 8s 内管道仍不可达' })
+        } else {
+          Add-Repair 'pet-start' 'failed' '未找到 packaged exe 或 start-pet.ps1（需 -PetWork）'
         }
-      } else {
-        Add-Repair 'pet-start' 'failed' '未找到 start-pet.ps1（需 -PetWork）'
+      } catch {
+        Add-Repair 'pet-start' 'failed' ('拉起桌宠失败：' + $_.Exception.Message)
       }
     }
   } else { Add-Repair 'pet-start' 'skipped' '桌宠运行正常，无需修复' }
+
 
   # 6) patch：只读，不自动改（挂载/回滚走 mount 协议）
   if ($checks.patch.state -eq 'partial' -or $checks.patch.state -eq 'missing-blocks') {
@@ -511,6 +579,23 @@ if ($Repair) {
   $checks.versions = Test-Versions
 }
 
+if ($script:Packaged) {
+  # 免 Python 独立发行包：DSH 联动（插件/patch/自启）为可选能力，缺省只告警不判 unhealthy；
+  # venv/pipe 仍是硬错误（桌宠本身必须能跑）。
+  $soft = @(
+    'plugin-node-modules-missing', 'plugin-server-missing', 'plugin-server-incomplete', 'plugin-server-outdated',
+    'plugin-ui-missing', 'plugin-ui-incomplete',
+    'task-missing', 'task-disabled', 'task-script-stale', 'task-action-invalid',
+    'patch-missing', 'patch-blocks-missing', 'patch-partial'
+  )
+  foreach ($iss in $script:Issues) {
+    if (($soft -contains $iss.code) -and $iss.severity -eq 'error') {
+      $iss.severity = 'warn'
+      $iss.detail = $iss.detail + '（packaged 独立运行模式：DSH 联动/自启为可选）'
+    }
+  }
+}
+
 $errors = @($script:Issues | Where-Object { $_.severity -eq 'error' })
 $warns = @($script:Issues | Where-Object { $_.severity -eq 'warn' })
 $result = [ordered]@{
@@ -524,12 +609,14 @@ $result = [ordered]@{
   petWork     = $script:PetWork
   profileDir  = $script:ProfileDir
   mode        = $script:Mode
+  packaged    = [bool]$script:Packaged
   repairRequested = [bool]$Repair
 }
 if ($Repair) { $result['issuesBeforeRepair'] = @($preRepairIssues) }
 
 if ($Human) {
   Write-Output ('selfcheck: ' + $(if ($result.healthy) { 'HEALTHY' } else { 'UNHEALTHY' }) + "  (errors=$($errors.Count), warnings=$($warns.Count), repairs=$(@($script:Repairs).Count))")
+  if ($script:Packaged) { Write-Output '  mode: packaged（免 Python 发行包：自带运行时，不依赖 pet-work/.venv；DSH 联动/自启为可选）' }
   foreach ($c in $checks.Keys) {
     $v = $checks[$c]
     $state = if ($v.Contains('ok') -and $v.ok) { 'ok' } else { 'check' }
