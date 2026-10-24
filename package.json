@@ -1,10 +1,10 @@
 {
-  "name": "dsh-dafeiyu-pet",
-  "version": "0.26.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "DSH 大肥鱼桌宠联动（单仓产品：pet/ + plugin/server + plugin/client）",
-  "scripts": {`r`n    "verify:detached": "node scripts/harness/plugin-harness.mjs",
+  "version": "0.26.0",
+  "name": "dsh-dafeiyu-pet",
+  "scripts": {
+    "verify:detached": "node scripts/harness/plugin-harness.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "prettier --write \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "nodecheck": "node scripts/lint.mjs"
@@ -14,5 +14,6 @@
     "@eslint/js": "^9.14.0",
     "prettier": "^3.3.3"
   },
-  "license": "MIT"
+  "description": "DSH 大肥鱼桌宠联动（单仓产品：pet/ + plugin/server + plugin/client）",
+  "private": true
 }
