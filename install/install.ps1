@@ -66,7 +66,15 @@ Write-Info '回滚：scripts\plugin-rollback.ps1 / scripts\pet-rollback.ps1'
 $taskName = 'DafeiyuPetStart'
 $startScript = Join-Path $PetWork 'tools\start-pet.ps1'
 if (-not (Test-Path -LiteralPath $startScript)) { throw "start-pet.ps1 not found: $startScript" }
+$backupXml = Join-Path $env:TEMP ('DafeiyuPetStart-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml')
+$hasOldTask = $false
 try {
+  # 旧任务先备份 XML（注册失败时恢复，避免"删了旧的又建不成"）
+  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+    & schtasks.exe /Query /TN $taskName /XML 2>$null | Set-Content -LiteralPath $backupXml -Encoding UTF8
+    $hasOldTask = (Test-Path -LiteralPath $backupXml) -and ((Get-Content -LiteralPath $backupXml -Raw -ErrorAction SilentlyContinue) -match '<Task ')
+    if ($hasOldTask) { Write-Info ("旧任务 XML 已备份: " + $backupXml) }
+  }
   # 旧任务先清（ONCE 任务重启后不会自启；残留也会让新触发器不生效）
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
   & schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
@@ -79,7 +87,17 @@ try {
   Write-Info ("scheduled task registered: " + $taskName + " (AtLogOn, delay 30s, LIMITED)")
   Write-Info ("按需启动：schtasks /Run /TN " + $taskName)
 } catch {
-  Write-Info ("WARN: 计划任务注册失败（登录自启不可用；仍可手动 start-pet.ps1）: " + $_.Exception.Message)
+  $regErr = $_.Exception.Message
+  if ($hasOldTask) {
+    try {
+      Register-ScheduledTask -TaskName $taskName -Xml (Get-Content -LiteralPath $backupXml -Raw) -Force -ErrorAction Stop | Out-Null
+      Write-Info ("WARN: 计划任务注册失败，已从备份恢复旧任务: " + $backupXml + "（原因：" + $regErr + "）")
+    } catch {
+      Write-Info ("WARN: 计划任务注册失败且备份恢复失败：" + $_.Exception.Message + "；原错误：" + $regErr + "；仍可手动 start-pet.ps1")
+    }
+  } else {
+    Write-Info ("WARN: 计划任务注册失败（无旧任务可恢复；登录自启不可用，仍可手动 start-pet.ps1）: " + $regErr)
+  }
 }
 
 # 5) 代码规范 pre-commit 钩子（仓库内 .githooks：node --check + prettier + ruff）

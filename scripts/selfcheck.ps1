@@ -520,6 +520,13 @@ function Invoke-Repairs([hashtable]$checks) {
         } else {
           throw '未找到 start-pet.ps1 或 packaged exe'
         }
+        # 旧任务先备份 XML（注册失败时恢复，避免删旧建新失败后无任务）
+        $backupXml = Join-Path $env:TEMP ('DafeiyuPetStart-repair-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml')
+        $hasOldTask2 = $false
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+          & schtasks.exe /Query /TN $TaskName /XML 2>$null | Set-Content -LiteralPath $backupXml -Encoding UTF8
+          $hasOldTask2 = (Test-Path -LiteralPath $backupXml) -and ((Get-Content -LiteralPath $backupXml -Raw -ErrorAction SilentlyContinue) -match '<Task ')
+        }
         # 旧任务先清（避免 ONCE/旧触发器残留）
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
         & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
@@ -530,7 +537,17 @@ function Invoke-Repairs([hashtable]$checks) {
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
         Add-Repair 'schtask-register' 'done' ('已重注册登录自启任务 ' + $TaskName + ' → ' + $targetDesc + '（AtLogOn/30s/LIMITED）')
       } catch {
-        Add-Repair 'schtask-register' 'failed' ('注册失败：' + $_.Exception.Message)
+        $regErr2 = $_.Exception.Message
+        if ($hasOldTask2) {
+          try {
+            Register-ScheduledTask -TaskName $TaskName -Xml (Get-Content -LiteralPath $backupXml -Raw) -Force -ErrorAction Stop | Out-Null
+            Add-Repair 'schtask-register' 'failed' ('注册失败，已从备份恢复旧任务（' + $backupXml + '）：' + $regErr2)
+          } catch {
+            Add-Repair 'schtask-register' 'failed' ('注册失败且备份恢复失败（' + $backupXml + '）：' + $regErr2 + '；恢复错误：' + $_.Exception.Message)
+          }
+        } else {
+          Add-Repair 'schtask-register' 'failed' ('注册失败（无旧任务可恢复）：' + $regErr2)
+        }
       }
     }
   } else { Add-Repair 'schtask-register' 'skipped' '计划任务正常，无需修复' }

@@ -26,6 +26,15 @@
 - 鲸鱼娘资产随包、构建自检；行为层（反应延迟/打断恢复/走神）与状态诚实化（卡住/失败/等待）分支待窗口后合并；
 - 窗口后合并顺序见 `verify/MONDAY-MERGE-PLAN.md`（以 Lead 最终版为准）。
 
+### 自测：登录自启（不碰真实任务/不重启/不拉起生产 pet）
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-logon-autostart.ps1
+# pet-work 非默认路径时：先 $env:PET_WORK_DIR='...'，或传 -PetWorkDir
+```
+- 使用临时任务 `DafeiyuPetStartTest` + 临时无害动作脚本（仅写 marker 后 exit 0），断言 LogonTrigger/PT30S/LIMITED、`/Run` marker+LastTaskResult=0、
+  selfcheck 正/反样本与 `-Repair` 重注册；结束后删除临时任务/脚本/标记文件。
+- 注册/修复前会导出旧任务 XML 到 `%TEMP%\DafeiyuPetStart-*-backup-*.xml`；注册失败自动从备份恢复并记录日志。
+
 ### 已知限制
 - 计划任务为**当前用户**登录触发；换用户登录/远程桌面会话不会重复拉起（单实例管道保证只有一个桌宠）。
 - 若策略禁止创建计划任务：自检会报 `task-missing`/`task-trigger-not-logon`，可手动启动或由管理员预置任务。
