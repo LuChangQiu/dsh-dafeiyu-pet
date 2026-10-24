@@ -6,6 +6,7 @@
   "scripts": {
     "verify:detached": "node scripts/harness/plugin-harness.mjs",
     "verify:whale-assets": "node scripts/test-whale-assets.mjs",
+    "test:attention-wiring": "node plugin/server/test/attention-budget.test.mjs && node plugin/server/test/attention-wiring.test.mjs && node plugin/server/test/attention-wiring-contract.test.mjs && node plugin/server/test/attention-index.test.mjs",
     "test:attention-budget": "node plugin/server/test/attention-budget.test.mjs",
     "test:whale-wiring": "node --test plugin/server/test/whale-acts.test.mjs plugin/server/test/cf1-wiring-contract.test.mjs",
     "test:whale-pipe": "node --test plugin/server/test/cf1-pipe.test.mjs",

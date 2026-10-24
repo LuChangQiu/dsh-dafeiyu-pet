@@ -91,3 +91,52 @@
 
 - 单测 **16/16**：默认预算/硬上限 clamp/反应不计/切日重置+拒绝跨日/5 类抑制门/无视 2 次暂停+24h 恢复+频率 0.5/显式静音/用户互动清零/topic 7 天/序列化容错/原子写无 tmp 残留/日志仅计数枚举/本地时间助手/S0 直通/quiet 下反应也不越过/recordProactive 拒绝 reaction/topic 加盐 hash 不落原文。
 - `node plugin/server/test/attention-budget.test.mjs` 退出码 0；<1s；不启 DSH、不碰 pipe。
+
+
+---
+
+## 9. 接线实现（`feat/attention-wiring`，窗口后灰度）
+
+> 分支基于 `feat/attention-budget@d319202`；**默认关**；索引不接事件循环以外的新 timer。
+
+### 9.1 配置（`cfg.attentionBudget`）
+```jsonc
+{
+  "enabled": false,          // 默认关：disabled = 零调用/零读盘/零写盘，行为同现状
+  "stateFile": "",           // 建议 pet-work/attention-budget.json；空 = 仅内存
+  "proactivePerDay": 3,      // 0–4（硬上限 4）
+  "ignoreAfterSec": 60,      // 主动发出后 N 秒无用户交互 → 记一次 ignored（近似口径）
+  "persistMs": 30000,        // 状态变化后落盘节流
+  "topic": "",               // 内部枚举/ID（会加盐 hash）；空 = 不记录
+  "suppress": { "dnd": false, "fullscreen": false, "typing": false }
+}
+```
+
+### 9.2 index.js 接线点
+1. **创建**：仅 `cfg.attentionBudget.enabled === true` 时 `createAttentionWiring(...)`；否则 `null`（不读状态文件、不建实例、无日志）。
+2. **主动开口路径**（`whaleAct`，report/wave/sneak）：
+   - 决策通过后、`act()` 发送前：`attentionWiring.gate({kind, isS0:false, isReaction:false, nowMs})`
+   - 被抑制：`log debug 'whale act suppressed' {reason:'attention:<reason>'}`, **不记账**、不发动作；
+   - `act()` 成功后才 `recordProactive({kind, nowMs})`（被 guard 拒绝不耗预算）。
+3. **用户交互**：`user/message` 事件、`ui-action`（点击/摸头/喂食/叫她/ack 等）→ `noteInteraction()` 清零拒绝/暂停/pending。
+4. **无视近似**：现有 bridge **没有**"用户未响应注意力气泡"信号，口径写死为：
+   **主动发出后 `ignoreAfterSec`（默认 60s）内无任何用户交互 → 记一次 ignored**；
+   每次主动只判一次，用户任何交互清除 pending；两次 ignored → 24h 暂停（预算模块规则）。
+5. **S0 直通**：approval/waiting_input 不经过 `whaleAct`；如需显式判定用 `gate({isS0:true})` → allowed，不占预算。
+6. **tick/落盘**：复用现有 status 心跳（5s）调 `attentionWiring.tick()`（无视判定 + 节流落盘），**不新增 interval**。
+7. **dispose**：强制 flush 状态文件后停止（disabled 无操作）。
+
+### 9.3 持久化与隐私
+- `attention-budget.json`：原子写（tmp+rename），默认 30s 节流；含 `topicSalt`、计数、`rejection.topicKey`（hash）、`topicAvoid`（hash 列表）。
+- 不存用户原文/路径/会话 ID；日志只含 `enabled/used/max/paused/count` 等计数（`logView`）。
+- 状态文件 LOCAL ONLY；删除即恢复默认（3/天、无拒绝记忆）。
+
+### 9.4 回滚
+- `attentionBudget.enabled=false`（默认）→ 完全恢复原行为，零副作用。
+- 不存在 schema 迁移；文件可删除；不影响 CF1/whaleActs 既有门禁（预算只是在 `act()` 前多一层允许判定）。
+
+### 9.5 验收（本轮）
+- `plugin/server/test/attention-wiring.test.mjs` **9/9**：disabled 零副作用（不读/不写/无状态文件）、budget 3/4 拦截、S0 直通、quiet+互动清零、ignore 60s 近似（一次/两次暂停）、节流落盘+dispose flush、topic 隐私、真实 `shouldFire`+预算组合。
+- `plugin/server/test/attention-wiring-contract.test.mjs` **7/7**：index 接线点静态断言（默认关、仅 enabled 创建、gate/recordProactive/noteInteraction×2/tick/dispose、S0 不路由 whaleAct）。
+- `plugin/server/test/attention-index.test.mjs` **2/2**：真实 index.js + mock ctx——disabled 不创建状态文件/无 wiring 日志；enabled 创建并记 `attention budget wiring`（启动不写盘，仅主动后写）。
+- 回归：attention-budget **16/16**；preflight `unit: attention`（<5s）。

@@ -79,6 +79,18 @@ Invoke-Step "unit: whale-wiring" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts/CF1 wiring fixtures（unit，<5s）"; return }
 }
 
+# 6f) P0-3 主动开口预算/接线（纯逻辑；默认关；<5s）
+Invoke-Step "unit: attention" {
+  & node plugin/server/test/attention-budget.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: attention-budget（预算/抑制/拒绝/隐私）"; return }
+  & node plugin/server/test/attention-wiring.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: attention-wiring（disabled 零副作用/gate/S0/ignore/节流落盘）"; return }
+  & node plugin/server/test/attention-wiring-contract.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: attention-wiring 契约（index 接线点/默认关）"; return }
+  & node plugin/server/test/attention-index.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: attention-index（mock ctx：disabled 零副作用/enabled 创建）"; return }
+}
+
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="

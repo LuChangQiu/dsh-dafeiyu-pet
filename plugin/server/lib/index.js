@@ -36,6 +36,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { toolTypeOf } from './tool-types.js'
 import { DEFAULT_WHALE_ACTS, normalizeWhaleActConfig, loadWhitelist, shouldFire } from './whale-acts.js'
+import { createAttentionWiring, DEFAULT_ATTENTION_WIRING_CONFIG } from './attention-wiring.js'
 import { usageParts, costOf, flatCostOf, splitCost, priceTable, legacyParts, DEFAULT_PRICING } from './pricing.js'
 import {
   normalizeKind,
@@ -150,6 +151,10 @@ const DEFAULTS = {
   // 随包副本 plugin/server/lib/generated/。enabled=false = kill switch；replaceClassicActs=true 时
   // 用 act:report 替代 report 的 act:stretch、act:wave 替代 morning 的 act:jump（OQ1=A）。
   whaleActs: { ...DEFAULT_WHALE_ACTS },
+  // P0-3 主动开口预算（默认关：disabled 时零调用/零读盘/零写盘，行为同现状）
+  // enabled 后：report/wave/sneak 前 gate（isReaction:false）→ allowed 才发 + recordProactive；
+  // 用户交互 → noteInteraction 清零；发出后 ignoreAfterSec 无交互 → 近似 ignored；S0 直通。
+  attentionBudget: { ...DEFAULT_ATTENTION_WIRING_CONFIG },
   spike: { enabled: true, ratio: 1.8, absFloor: 3000, window: 20, minSamples: 8, cooldownMs: 600000, dailyCap: 2 },
   rice: { enabled: true, bowlTokens: 100000 },
   hesitate: { enabled: true, minMs: 900, maxMs: 1500 },
@@ -1015,6 +1020,9 @@ export function apply(ctx, rawConfig) {
       const j = JSON.parse(raw)
       if (!j || !j.name || j.handledAt) return
       const aid = String(j.id || '')
+      try {
+        attentionWiring?.noteInteraction()
+      } catch {}
       let status = 'done',
         message = ''
       try {
@@ -1200,6 +1208,9 @@ export function apply(ctx, rawConfig) {
         if (base) today.longestTurnMs = Math.max(today.longestTurnMs || 0, Date.now() - base)
       } catch {}
       saveCompanion()
+      try {
+        attentionWiring?.tick()
+      } catch {}
       pushStatusToPet()
       writeState()
     }, cfg.statusChannel.heartbeatMs || 5000)
@@ -2448,6 +2459,17 @@ export function apply(ctx, rawConfig) {
   }
   const whaleActState = { last: {}, day: '', today: {} }
   let lastSneakEvalAt = 0
+  // P0-3：默认关。disabled 时不创建预算/不读盘/不写盘（零副作用）；enabled 才创建。
+  const attentionWiring =
+    cfg.attentionBudget && cfg.attentionBudget.enabled === true
+      ? createAttentionWiring({
+          config: cfg,
+          now: () => Date.now(),
+          mode: () => String(modeState.kind || 'active')
+        })
+      : null
+  if (attentionWiring)
+    log('info', 'attention budget wiring', { enabled: true, stateFile: !!cfg.attentionBudget.stateFile })
   /**
    * 决策 → 发送。只负责"该不该发"；实际发送复用现有 act()（保留 noActionOnSameState /
    * maxActionsPerHour 等守卫），日志只记 key/reason（不含文本/数字/路径）。
@@ -2484,6 +2506,14 @@ export function apply(ctx, rawConfig) {
       log('debug', 'whale act suppressed', { key, reason: res.reason })
       return false
     }
+    // P0-3：主动开口预算/抑制门（默认关 = 零调用）。S0 不走 whaleAct（由调用方直通，不占预算）。
+    if (attentionWiring) {
+      const gate = attentionWiring.gate({ kind: key, isS0: false, isReaction: false, nowMs })
+      if (!gate.allowed) {
+        log('debug', 'whale act suppressed', { key, reason: 'attention:' + gate.reason })
+        return false
+      }
+    }
     // P2（reviewer）：先发送成功再记 cooldown/日上限 —— act() 被 guard 拒绝时不白耗预算。
     // CF1 是事件驱动的一次性演出：显式 ignoreSameState，避免被同轮其它动作占住 state 而吞掉。
     if (!act(key, { ignoreSameState: true })) {
@@ -2492,6 +2522,9 @@ export function apply(ctx, rawConfig) {
     }
     whaleActState.last[key] = nowMs
     whaleActState.today[key] = (whaleActState.today[key] || 0) + 1
+    try {
+      attentionWiring?.recordProactive({ kind: key, nowMs })
+    } catch {}
     log('info', 'whale act', { key, reason: res.reason })
     return true
   }
@@ -2660,6 +2693,9 @@ export function apply(ctx, rawConfig) {
     const hdr = session.header || {}
     const rec0 = recEarly
     if (t === 'user/message') {
+      try {
+        attentionWiring?.noteInteraction()
+      } catch {}
       const srcKind = d.source && d.source.kind
       if (srcKind === 'user' && rec0.role === 'user') {
         rec0.lastUserMessageAt = Date.now()
@@ -3262,6 +3298,10 @@ export function apply(ctx, rawConfig) {
   if (cfg.testHookFile) startTestHook(cfg.testHookFile)
 
   const dispose = () => {
+    // P0-3：flush attention 状态（enabled 才写；disabled 无操作）
+    try {
+      attentionWiring?.dispose()
+    } catch {}
     // v47-hotfix/task-69：reload 时完整停掉本实例定时器/队列并 flush 待写盘数据
     pipeDisposed = true
     pipeQ.length = 0
