@@ -10,9 +10,9 @@ $stage=Join-Path $repo "build\$newPkg"; if(Test-Path $stage){Remove-Item $stage 
 git -C $repo archive $TargetCommit plugin/server | tar -x -C $stage 2>$null; if(-not (Test-Path "$stage\plugin\server")){ Copy-Item "$repo\plugin\server\*" $stage -Recurse -Force }
 $dst=Join-Path $prof "node_modules\$newPkg"; if(Test-Path $dst){Remove-Item $dst -Recurse -Force}; Copy-Item $stage $dst -Recurse -Force
 $patch=Join-Path $prof 'cordis.patch.yml'; Copy-Item $patch "$patch.bak-mount-$(Get-Date -Format yyyyMMddHHmmss)" -Force
-node (Join-Path $repo 'scripts\safe-patch.mjs') --patch $patch --activate $newPkg --json
+node (Join-Path $repo 'scripts\safe-patch.mjs') --activate --id "pet-bridge-v$version" --name $newPkg
 $deadline=(Get-Date).AddSeconds($TimeoutSec); $ok=$false
-while((Get-Date) -lt $deadline){ $log="$env:USERPROFILE\pet-work\evidence\pet-bridge-main.log"; if(Test-Path $log){ if((Get-Content $log -Tail 80 -Raw) -match "loaded v$version"){ $ok=$true; break } }; Start-Sleep 1 }
+while((Get-Date) -lt $deadline){ $log='E:\project\AI提效\tool\pet-integration-src\pet-work\evidence\pet-bridge-main.log'; if(Test-Path $log){ if((Get-Content $log -Tail 80 -Raw) -match "loaded v$version"){ $ok=$true; break } }; Start-Sleep 1 }
 if(-not $ok){ Copy-Item "$patch.bak-mount-*" $patch -Force; throw 'hot-load timeout; rolled back patch' }
-$samples=@(); for($i=0;$i -lt $SampleCount;$i++){ $p=Get-Process node -ErrorAction SilentlyContinue | Select-Object -First 1; $samples += @{at=(Get-Date -Format o);wsMB=if($p){[math]::Round($p.WorkingSet64/1MB,1)}else{$null}}; Start-Sleep -Seconds 30 }
+$samples=@(); for($i=0;$i -lt $SampleCount;$i++){ $conn=Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; $hp=if($conn){Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue}else{$null}; $samples += @{at=(Get-Date -Format o);hostPid=if($conn){$conn.OwningProcess}else{$null};wsMB=if($hp){[math]::Round($hp.WorkingSet64/1MB,1)}else{$null}}; Start-Sleep -Seconds 30 }
 "OK mounted $newPkg samples=$($samples.Count)"; $samples|ConvertTo-Json -Depth 4|Set-Content (Join-Path $repo "evidence\mount-$version.json")
