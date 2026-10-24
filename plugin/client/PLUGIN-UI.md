@@ -545,3 +545,61 @@ tech-scout v26（产品仓 HEAD `7ee465f`）已开始写 `state.json.status`（�
 - 检查：`node --check` 全过、`npm run lint` 全绿、smoke 65/65、client prettier 全过。
 - 隐私：面板/主页 DOM 0 绝对路径；团队/目标只渲染计数与状态（无 subject/description/objective）；费用只渲染数字。
 - 回滚：UI-only 变更，`git revert <client commit>` 即恢复旧面板；patch 仅追加 `# ui-sync <ts>` 注释，语义不变（备份见 `evidence/cordis.patch.backup-<ts>.yml`）。
+---
+
+# 附录 F — task-62 静态骨架：占位契约 / 待服务端字段 / 标记规则 / 挂载窗口回归
+
+> 状态：静态骨架已部署（commit `24c4381`，安装版 blob = HEAD blob；DSH 未挂载）。本附录为契约与回归清单，随文档批提交。
+
+## F.1 外观与渲染：2D / 3D 占位契约（`render.mode`）
+- **字段归属**：`render.mode` 由 **bridge-dev** 落 v2（插件字段 + ui-config）；3d-dev 只负责 spike 与「3D 可用性/性能结论」，不直接写面板字段。
+- **期望形状（待定稿）**：`bridge-state-v2.json.render = {mode:'2d'|'3d', available:boolean, reason:string|null, updatedAt}`。
+- **当前行为（未接入）**：设置页「外观与渲染」中 `[2D（默认）] [3D（实验）]` 均为 **disabled**，标题右「待服务端（render.mode）」；说明文案「3D 原型验证中…切换失败自动回 2D…当前固定 2D」。
+- **变活规则**：`render.mode` 可用时启用切换；切换到 3D 失败/不可用 → 自动回 2D 并显示 `reason`（不抛错、不白屏）；2D 始终可用。
+- **失败降级**：字段缺失 → `placeholder/pending`（禁用占位）；`available=false` → 3D 不可选并显示原因；`mode='3d'` 但渲染失败 → 面板回 2D + 提示「3D 已回退」。
+- **隐私**：仅枚举 mode/available/reason，无模型/纹理/路径数据。
+
+## F.2 Phase-2 能力「待服务端」字段清单与来源矩阵
+| 能力 | 期望 v2 字段（bridge-dev） | 面板当前显示 | 变活规则 |
+|---|---|---|---|
+| 模型 / 渠道 | （现有）`provider`、`model`、`llmEnabled` | 面板配置值 + detail「面板配置（非会话实时；会话模型待 v2）」 | 若 v2 提供会话实时 model/selection → 改标 live 并显示来源 |
+| 技能 | `skills:{total,recent:[{name,count}]}`（不含描述） | 待服务端 | total=0 → 「暂无技能」；>0 → 计数 + 最近使用名称 |
+| MCP 服务器 | `mcp:{servers:[name],inferred:true,updatedAt}` | 待服务端（**推断 inferred**） | 显示 servers 列表并标 inferred；连接状态未知绝不谎报 |
+| Jobs / 定时 | `jobs:{registered,settled,running}`、`schedules:{total,nextAt,lastDeliveredAt}` | 待服务端 | 标量计数；无数据 → 暂无 |
+| 上下文压力 | `context:{pressure,breakdown:{system,tools,messages}}` | 待服务端 | 0–1/占比条；低频读、无内容 |
+| 编排 | `orchestration:{workflow:{active,phase,members},ralph:{active,round,lastStatus},subagents:{active,total,failed}}` | 待服务端 | 只显示阶段/轮次/计数；不读 log/任务描述 |
+| 3D 渲染 | `render:{mode,available,reason}` | 待服务端（见 F.1） | 见 F.1 |
+
+> 所有字段「有字段但为空」→「暂无…」且**不显示 0/0%**；异常 → 「已降级」；缺失 → 「待服务端」。仅计数/枚举/状态，无 subject/description/objective/schedule prompt/job label/内容/路径/原文。
+
+## F.3 能力地图标记规则（全局）
+| 标记 | 含义 | 例子 |
+|---|---|---|
+| `live` | v2 实时字段有真实数据 | 状态通道、多会话、事件、情绪、团队/计划、控制模式、宿主内存、费用 cache 分项 |
+| `fallback` | host 只读投影（v2 缺字段时兜底） | 团队/计划（host 投影），数据源标注「fallback（只读投影）」 |
+| `inferred` | 工具名/事件推断，非官方状态 API | MCP 服务器（`mcp__<server>__*`） |
+| `placeholder` | 预留占位，字段未到 | Phase-2 能力六项、3D 形象 |
+| `待服务端` | pending，禁用/灰色，不显示假数据 | 同上 + 外观与渲染 |
+
+## F.4 主页 3D 形象占位说明
+- 位置：主页「她今天怎么样」卡下，一行 `3D 形象：关闭（实验计划中，等 render.mode）`。
+- 变活：`render.mode` 接入后显示「3D 模式：关闭 / 实验」；启用/回退以 bridge 字段为准，失败展示原因并保持 2D。
+- 约束：占位不画 3D 资源、不引入额外请求；随 5s `state.get` 刷新。
+
+## F.5 挂载窗口 live 回归清单（下次挂载时按此快速过一遍）
+1. **安装版 hash** = HEAD blob（client/home）；`node --check`。
+2. **home DOM 0 路径**：页面文本正则 `[A-Za-z]:\\` 无命中。
+3. **3D 占位**：`renderStatus` = 「3D 形象：关闭（实验计划中，等 render.mode）」（字段未到）/ 正确显示状态（字段已到）。
+4. **Phase-2 骨架**：六项显示「待服务端」；模型行 detail = 面板配置（未谎报 live）；MCP 标 inferred。
+5. **外观与渲染**：2D/3D 禁用 + 待服务端说明（字段未到）；字段到则按 F.1 验切换/回退。
+6. **team 真实数**：主页团队卡与 v2 `team.*` 一致（members/tasks/progress/blocked/ready）。
+7. **version + writerId**：v2 `version`/`writerId` 与面板显示一致。
+8. **privacy**：`audit-privacy --dir pet-work` findings=0；DOM 0 路径；无 subject/description/objective。
+9. **无 TEST HOOK**：patch `testHookFile`=0；v2 无 test/usage 字段；DOM 无 TEST HOOK 文案。
+10. **未挂载状态**：若窗口未开，`/pet-bridge-ui/home`=404、无 heartbeat（记录状态不变即可）。
+11. 截图归档：home（团队/3D 占位/能力地图）、settings（外观与渲染/Phase-2/兼容性）。
+12. 回滚：恢复 `evidence/ui-installed-backup-<ts>/` 或 `git revert <ui-commit>`；记录 REVIEW-LOG。
+
+## F.6 本节验收（文档批）
+- 文档仅新增本附录与独立清单文件，无代码/无 patch/无 pet 改动；repo 提交后 preflight 仍 11/11。
+- 与 22 §2.2、19 v4 §8 IA 一致；所有「待服务端」项在字段到位前不启用、不造数。
