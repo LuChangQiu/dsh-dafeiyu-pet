@@ -4240,6 +4240,8 @@ class PetWindow(QWidget):
         self._bhv_last_state_action = None
         self._bhv_skit_until = 0.0
         self._bhv_debug = bool(os.environ.get("PET_BEHAVIOR_DEBUG"))
+        self._bhv_log_path = str(os.environ.get("PET_BEHAVIOR_LOG") or "")
+
 
         # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
         _lc = self.cfg.get("lifecycle")
@@ -7284,11 +7286,19 @@ class PetWindow(QWidget):
 
     # ---------- P0-2 行为层：反应延迟 / 打断恢复 / 走神 ----------
     def _bhv_log(self, msg):
-        if getattr(self, "_bhv_debug", False):
-            try:
-                print("[bhv] " + msg, flush=True)
-            except Exception:
-                pass
+        line = "[bhv] " + str(msg)
+        verbose = getattr(self, "_bhv_debug", False)
+        log_path = getattr(self, "_bhv_log_path", "")
+        if not verbose and not log_path:
+            return
+        try:
+            if log_path:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write("%.3f %s\n" % (time.time(), line))
+            if verbose:
+                print(line, flush=True)
+        except Exception:
+            pass
 
     def _bhv_note_activity(self):
         self._bhv_last_active = time.time()
@@ -11538,6 +11548,7 @@ def main():
                         w._bhv_cancel_pending()
                     except Exception:
                         pass
+                    w._bhv_last_state_action = None   # idle 后同状态可重新触发（不被去重拦住）
                     w._whale_clear_force()
                 elif _wh is not None and _mapped and _wh.has(_mapped):
                     try:
