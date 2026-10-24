@@ -72,3 +72,37 @@ node "$work\tools\pet-cmd.mjs" 'ping'
 
 - 冻结后不重启 pet、不部署；仅允许只读验证（`pet-cmd ping`/截图）。
 - 任何回滚操作先在 `verify/REVIEW-LOG.md` 记录原因与时间。
+
+## 5. 发行包构建检查清单（免 Python zip）
+
+> 背景（2026-10-24 P0）：`pet/桌宠.spec` 的 datas 曾只含 `pet/assets`，漏掉仓库根
+> `assets/whale-girl`，发行版静默回退 classic。分支 `feat/release-assets` 已修 spec/build 脚本，
+> 合并后每次发版按本清单执行。
+
+```powershell
+$repo = 'E:\project\AI提效\tool\dsh-dafeiyu-pet-repo'
+$work = 'E:\project\AI提效\tool\pet-integration-src\pet-work'
+# 输出在 repo 外（避免脏树）；版本号按发版填写
+powershell -File "$repo\scripts\pet-build-release.ps1" `
+  -Version 1.1.5-dsh.2-whalegirl `
+  -PythonExe "$work\.venv\Scripts\python.exe" `
+  -OutDir "$work\release-build"
+```
+
+构建脚本内置两道资产门禁（缺失/不完整直接失败）：
+
+1. **目录自检**：`<app>\_internal\assets\whale-girl\manifest.json` 存在，PNG ≥170、文件 ≥178；
+2. **zip 自检**：`_internal/assets/whale-girl/*` ≥178 项、manifest 存在，且 **不允许** 出现
+   app 根 `assets/whale-girl/*` 重复副本（只打一份，避免 zip 膨胀约 9.5MB）。
+
+发布前人工复核：
+
+- [ ] zip 文件名/版本号与 Release 一致；`.sha256` 同目录生成并核对；
+- [ ] zip 大小合理（含鲸鱼娘约 97–99MB；不含时约 77MB → 视为缺资产）；
+- [ ] 受控冒烟：停生产 pet → 解压/直接用 dist exe 启动 → 窗口标题「大肥鱼桌宠」、`ping→pong`、
+      截图确认**鲸鱼娘（非 classic）**、`act:wave` 帧动画可见 → 停 exe → `start-pet.ps1 -Restart` 恢复生产；
+- [ ] 恢复后确认生产 pid/pipe/截图，清理 dist 进程；
+- [ ] GitHub Release 上传 zip + `.sha256`；插件自举 `lifecycle.releaseZipUrl` 指向该资产；
+- [ ] 记录构建时间/HEAD/sha256 到 `verify/RELEASE-BUILD-SMOKE.md` 或 Release notes。
+
+> 冒烟失败时：立即停止 dist exe、用 `start-pet.ps1 -Restart` 恢复生产，再排查；不得让生产长期停摆。
