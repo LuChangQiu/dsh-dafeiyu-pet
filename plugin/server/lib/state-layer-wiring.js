@@ -130,7 +130,11 @@ export function createStateLayerWiring(opts = {}) {
     enabled = value === true
     layer.setEnabled(enabled)
     if (!enabled) {
-      lastSnapshot = layer.snapshot()
+      perfScripts.length = 0
+      lastSnapshot = null
+      try {
+        emitState(null)
+      } catch {}
       log('info', 'state layer disabled (kill switch)')
     } else {
       log('info', 'state layer enabled')
@@ -141,6 +145,11 @@ export function createStateLayerWiring(opts = {}) {
     enabled = false
     try {
       layer.setEnabled(false)
+    } catch {}
+    perfScripts.length = 0
+    lastSnapshot = null
+    try {
+      emitState(null)
     } catch {}
     if (typeof offHandler === 'function') {
       try {

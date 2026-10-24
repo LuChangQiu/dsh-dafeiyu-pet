@@ -105,13 +105,16 @@ await run('kill switch: stops emissions and freezes snapshot; re-enable resumes'
   assert.equal(emitted.length, 1)
   const off = w.setEnabled(false)
   assert.equal(off.enabled, false)
+  assert.equal(w.getPerf().length, 0)
   ctx._emit('session/event', mockSession(), mockEvent('turn/end', { reason: { kind: 'completed' } }))
-  assert.equal(emitted.length, 1, 'no emit while disabled')
-  assert.equal(w.getSnapshot().state, 'thinking')
+  assert.equal(emitted.length, 2, 'kill switch emits a null reset once')
+  assert.equal(emitted[1], null)
+  assert.equal(w.getSnapshot(), null, 'kill switch clears snapshot view')
+  assert.equal(w.getPerf().length, 0, 'kill switch clears perf scripts')
   w.setEnabled(true)
   ctx._emit('session/event', mockSession(), mockEvent('approval/asked', { id: 'a1', toolName: 'pwsh' }))
-  assert.equal(emitted.length, 2)
-  assert.equal(emitted[1].state, 'approval')
+  assert.equal(emitted.length, 3)
+  assert.equal(emitted[2].state, 'approval')
 })
 
 await run('perf script: not enabled by default; enabled+motivation emits to perf only', async () => {
@@ -146,10 +149,16 @@ await run('dispose: unsubscribes handler; further events no-op', async () => {
     mode: () => 'active'
   })
   assert.equal(ctx._count('session/event'), 1)
+  ctx._emit('session/event', mockSession(), mockEvent('turn/start', { turn: 1 }))
+  assert.equal(emitted.length, 1)
   w.dispose()
   assert.equal(ctx._count('session/event'), 0)
+  assert.equal(emitted.length, 2, 'dispose emits a null reset')
+  assert.equal(emitted[1], null)
+  assert.equal(w.getSnapshot(), null)
+  assert.equal(w.getPerf().length, 0)
   ctx._emit('session/event', mockSession(), mockEvent('turn/start', { turn: 2 }))
-  assert.equal(emitted.length, 0)
+  assert.equal(emitted.length, 2)
 })
 
 await run('event.type form is accepted (real index onEvent shape)', async () => {
