@@ -6,6 +6,9 @@
   [string]$PatchFile = '',
   [string]$PythonExe = '',
   [switch]$Repair,
+  [switch]$DryRun,
+  [switch]$Sandbox,
+  [switch]$Yes,
   [switch]$Human,
   [switch]$SkipPipeProbe
 )
@@ -27,7 +30,9 @@
 #
 # 示例：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Repair
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Repair -Yes     # 真实修复（需确认）
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Repair -DryRun  # 只演练（零写入）
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Repair -Sandbox # 沙盒：强制零写入/零进程
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -PetWork D:\pet-work -Human
 #
 # 兼容 Windows PowerShell 5.1 / PowerShell 7；文件需 UTF-8 with BOM。
@@ -321,6 +326,9 @@ function Test-Versions {
 # ---------- 修复（-Repair，幂等） ----------
 function Invoke-Repairs([hashtable]$checks) {
   $nm = Join-Path $script:ProfileDir 'node_modules'
+  $write = -not ($script:Sandbox -or $script:DryRun)
+  $gateResult = if ($script:Sandbox) { 'sandbox-blocked' } elseif ($script:DryRun) { 'planned' } else { 'doing' }
+  $gateDetail = if ($script:Sandbox) { 'sandbox 模式：仅校验，禁止复制/建 venv/注册任务/拉起进程' } elseif ($script:DryRun) { 'dry-run：仅计划，不执行写操作' } else { '' }
 
   # 1) server 包：repo plugin/server → 已安装最新包（无包则提示走 install/install.ps1）
   $req = Get-RequiredFilesMap
@@ -332,7 +340,8 @@ function Invoke-Repairs([hashtable]$checks) {
   }
   $repoServer = Join-Path $script:RepoRoot 'plugin\server'
   if ($serverDirs.Count -eq 0) {
-    Add-Repair 'plugin-server' 'failed' '未找到已安装 server 包（无法确定目标包名）；请运行 install/install.ps1 安装'
+    if ($write) { Add-Repair 'plugin-server-reinstall' 'failed' '未找到已安装 server 包（无法确定目标包名）；请运行 install/install.ps1 安装' }
+    else { Add-Repair 'plugin-server-reinstall' $gateResult ('将运行 install/install.ps1 安装 server 包（' + $gateDetail + '）') }
   } else {
     $pkg = $serverDirs[0]
     $missing = @($req['plugin-server'] | Where-Object { -not (Test-Path -LiteralPath (Join-Path $pkg.FullName $_)) })
@@ -344,26 +353,28 @@ function Invoke-Repairs([hashtable]$checks) {
           Where-Object { -not (Test-Path -LiteralPath (Join-Path $instLib $_.Name)) }).Count -gt 0
     }
     if ($missing.Count -gt 0 -or $hasRepoNewer) {
-      try {
-        $bak = Join-Path $pkg.FullName ('.selfcheck-backup-' + $stamp)
-        New-Item -ItemType Directory -Force -Path $bak | Out-Null
-        foreach ($f in @('package.json', 'lib')) {
-          $src = Join-Path $pkg.FullName $f
-          if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $bak -Recurse -Force -ErrorAction SilentlyContinue }
+      if (-not $write) {
+        Add-Repair 'plugin-server-reinstall' $gateResult ('将备份并以 repo plugin/server 覆盖 ' + $pkg.Name + '（' + $gateDetail + '）')
+      } else {
+        try {
+          $bak = Join-Path $pkg.FullName ('.selfcheck-backup-' + $stamp)
+          New-Item -ItemType Directory -Force -Path $bak | Out-Null
+          foreach ($f in @('package.json', 'lib')) {
+            $src = Join-Path $pkg.FullName $f
+            if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $bak -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+          if (Test-Path -LiteralPath $repoServer) {
+            Copy-Item -Path (Join-Path $repoServer '*') -Destination $pkg.FullName -Recurse -Force
+            Add-Repair 'plugin-server-reinstall' 'done' ('已从 repo plugin/server 重装到 ' + $pkg.Name + '（备份 ' + (Split-Path -Leaf $bak) + '）')
+            $script:NeedRestart = $true
+          } else {
+            Add-Repair 'plugin-server-reinstall' 'failed' 'repo plugin/server 不存在'
+          }
+        } catch {
+          Add-Repair 'plugin-server-reinstall' 'failed' ('重装失败：' + $_.Exception.Message)
         }
-        if (Test-Path -LiteralPath $repoServer) {
-          Copy-Item -Path (Join-Path $repoServer '*') -Destination $pkg.FullName -Recurse -Force
-          Add-Repair 'plugin-server-reinstall' 'done' ("已从 repo plugin/server 重装到 " + $pkg.Name + "（备份 " + (Split-Path -Leaf $bak) + "）")
-          $script:NeedRestart = $true
-        } else {
-          Add-Repair 'plugin-server-reinstall' 'failed' 'repo plugin/server 不存在'
-        }
-      } catch {
-        Add-Repair 'plugin-server-reinstall' 'failed' ("重装失败：" + $_.Exception.Message)
       }
-    } else {
-      Add-Repair 'plugin-server-reinstall' 'skipped' 'server 包完整且无 repo 新文件，无需修复'
-    }
+    } else { Add-Repair 'plugin-server-reinstall' 'skipped' 'server 包完整且无 repo 新文件，无需修复' }
   }
 
   # 2) ui 包
@@ -372,18 +383,22 @@ function Invoke-Repairs([hashtable]$checks) {
   if ((Test-Path -LiteralPath $uiDir) -and (Test-Path -LiteralPath $repoUi)) {
     $missing = @($req['plugin-ui'] | Where-Object { -not (Test-Path -LiteralPath (Join-Path $uiDir $_)) })
     if ($missing.Count -gt 0) {
-      try {
-        $bak = Join-Path $uiDir ('.selfcheck-backup-' + $stamp)
-        New-Item -ItemType Directory -Force -Path $bak | Out-Null
-        foreach ($f in @('package.json', 'lib', 'NOTICE', 'README.md')) {
-          $src = Join-Path $uiDir $f
-          if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $bak -Recurse -Force -ErrorAction SilentlyContinue }
+      if (-not $write) {
+        Add-Repair 'plugin-ui-reinstall' $gateResult ('将备份并以 repo plugin/client 覆盖 dsh-pet-bridge-ui（' + $gateDetail + '）')
+      } else {
+        try {
+          $bak = Join-Path $uiDir ('.selfcheck-backup-' + $stamp)
+          New-Item -ItemType Directory -Force -Path $bak | Out-Null
+          foreach ($f in @('package.json', 'lib', 'NOTICE', 'README.md')) {
+            $src = Join-Path $uiDir $f
+            if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $bak -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+          Copy-Item -Path (Join-Path $repoUi '*') -Destination $uiDir -Recurse -Force
+          Add-Repair 'plugin-ui-reinstall' 'done' '已从 repo plugin/client 重装 ui 包（含备份）'
+          $script:NeedRestart = $true
+        } catch {
+          Add-Repair 'plugin-ui-reinstall' 'failed' ('重装失败：' + $_.Exception.Message)
         }
-        Copy-Item -Path (Join-Path $repoUi '*') -Destination $uiDir -Recurse -Force
-        Add-Repair 'plugin-ui-reinstall' 'done' '已从 repo plugin/client 重装 ui 包（含备份）'
-        $script:NeedRestart = $true
-      } catch {
-        Add-Repair 'plugin-ui-reinstall' 'failed' ("重装失败：" + $_.Exception.Message)
       }
     } else { Add-Repair 'plugin-ui-reinstall' 'skipped' 'ui 包完整，无需修复' }
   }
@@ -391,7 +406,9 @@ function Invoke-Repairs([hashtable]$checks) {
   # 3) venv
   if (-not $checks.venv.ok) {
     if (-not $script:PetWork -or -not (Test-Path -LiteralPath $script:PetWork)) {
-      Add-Repair 'venv-rebuild' 'failed' 'pet-work 不存在，无法创建 venv'
+      Add-Repair 'venv-rebuild' $(if ($write) { 'failed' } else { $gateResult }) 'pet-work 不存在，无法创建 venv'
+    } elseif (-not $write) {
+      Add-Repair 'venv-rebuild' $gateResult ('将创建/修复 ' + (Join-Path $script:PetWork '.venv') + ' 并安装 pet/requirements.txt（' + $gateDetail + '）')
     } else {
       try {
         $venv = Join-Path $script:PetWork '.venv'
@@ -407,43 +424,51 @@ function Invoke-Repairs([hashtable]$checks) {
         }
         Add-Repair 'venv-rebuild' 'done' '已创建 venv 并安装 pet/requirements.txt'
       } catch {
-        Add-Repair 'venv-rebuild' 'failed' ("venv 修复失败：" + $_.Exception.Message)
+        Add-Repair 'venv-rebuild' 'failed' ('venv 修复失败：' + $_.Exception.Message)
       }
     }
   } else { Add-Repair 'venv-rebuild' 'skipped' 'venv 正常，无需修复' }
 
   # 4) 计划任务
   if (-not $checks.task.ok) {
-    $startScript = ''
-    if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
-    try {
-      if (-not $startScript -or -not (Test-Path -LiteralPath $startScript)) {
-        $startScript = Join-Path $script:RepoRoot 'scripts\start-pet.ps1'
+    if (-not $write) {
+      Add-Repair 'schtask-register' $gateResult ('将重新注册计划任务 ' + $TaskName + ' → start-pet.ps1（' + $gateDetail + '）')
+    } else {
+      $startScript = ''
+      if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
+      try {
+        if (-not $startScript -or -not (Test-Path -LiteralPath $startScript)) {
+          $startScript = Join-Path $script:RepoRoot 'scripts\start-pet.ps1'
+        }
+        if (-not (Test-Path -LiteralPath $startScript)) { throw "start-pet.ps1 未找到（pet-work/tools 或 repo/scripts）" }
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startScript + '"')
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
+        Add-Repair 'schtask-register' 'done' ('已重新注册计划任务 ' + $TaskName + ' → ' + $startScript)
+      } catch {
+        Add-Repair 'schtask-register' 'failed' ('注册失败：' + $_.Exception.Message)
       }
-      if (-not (Test-Path -LiteralPath $startScript)) { throw "start-pet.ps1 未找到（pet-work/tools 或 repo/scripts）" }
-      $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startScript + '"')
-      Register-ScheduledTask -TaskName $TaskName -Action $action -Force -ErrorAction Stop | Out-Null
-      Add-Repair 'schtask-register' 'done' ("已重新注册计划任务 " + $TaskName + " → " + $startScript)
-    } catch {
-      Add-Repair 'schtask-register' 'failed' ("注册失败：" + $_.Exception.Message)
     }
   } else { Add-Repair 'schtask-register' 'skipped' '计划任务正常，无需修复' }
 
   # 5) pipe：缺管道时尝试拉起桌宠（不强杀）
   if (-not $checks.pipe.ok) {
-    $startScript = ''
-    if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
-    if ($startScript -and (Test-Path -LiteralPath $startScript)) {
-      try {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startScript | Out-Null
-        Start-Sleep -Seconds 8
-        $ok = Test-Path -LiteralPath $script:PipeName
-        Add-Repair 'pet-start' $(if ($ok) { 'done' } else { 'failed' }) $(if ($ok) { '已拉起桌宠且管道可达' } else { '已执行 start-pet，但 8s 内管道仍不可达' })
-      } catch {
-        Add-Repair 'pet-start' 'failed' ("拉起桌宠失败：" + $_.Exception.Message)
-      }
+    if (-not $write) {
+      Add-Repair 'pet-start' $gateResult ('将执行 start-pet.ps1 拉起桌宠（' + $gateDetail + '）')
     } else {
-      Add-Repair 'pet-start' 'failed' '未找到 start-pet.ps1（需 -PetWork）'
+      $startScript = ''
+      if ($script:PetWork) { $startScript = Join-Path $script:PetWork 'tools\start-pet.ps1' }
+      if ($startScript -and (Test-Path -LiteralPath $startScript)) {
+        try {
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startScript | Out-Null
+          Start-Sleep -Seconds 8
+          $ok = Test-Path -LiteralPath $script:PipeName
+          Add-Repair 'pet-start' $(if ($ok) { 'done' } else { 'failed' }) $(if ($ok) { '已拉起桌宠且管道可达' } else { '已执行 start-pet，但 8s 内管道仍不可达' })
+        } catch {
+          Add-Repair 'pet-start' 'failed' ('拉起桌宠失败：' + $_.Exception.Message)
+        }
+      } else {
+        Add-Repair 'pet-start' 'failed' '未找到 start-pet.ps1（需 -PetWork）'
+      }
     }
   } else { Add-Repair 'pet-start' 'skipped' '桌宠运行正常，无需修复' }
 
@@ -452,9 +477,19 @@ function Invoke-Repairs([hashtable]$checks) {
     Add-Repair 'patch-repair' 'skipped' 'patch 异常需人工/挂载工具处理（selfcheck 不自动改 patch）'
   } else { Add-Repair 'patch-repair' 'skipped' 'patch 状态无需修复' }
 }
-
 # ---------- 主流程 ----------
 Resolve-Defaults
+
+# -Repair 安全闸门：默认必须显式 -Yes 确认；-DryRun / -Sandbox 只演练、零写入/零进程。
+$script:DryRun = [bool]$DryRun
+$script:Sandbox = [bool]$Sandbox
+$script:Mode = if ($Sandbox) { 'sandbox' } elseif ($DryRun) { 'dry-run' } else { 'normal' }
+if ($Repair -and -not $script:DryRun -and -not $script:Sandbox -and -not $Yes) {
+  $msg = '-Repair 会写 profile 插件包、创建/修改 venv、注册计划任务并可能拉起桌宠；请显式加 -Yes 确认，或先用 -DryRun/-Sandbox 演练。'
+  Write-Output (@{ healthy = $false; mode = 'blocked-need-confirm'; issues = @(@{ code = 'repair-needs-confirm'; severity = 'error'; detail = $msg }); repairs = @(); needRestart = $false } | ConvertTo-Json -Depth 8)
+  exit 2
+}
+
 $checks = [ordered]@{}
 $checks.plugin = Test-Plugin
 $checks.venv = Test-Venv
@@ -488,6 +523,8 @@ $result = [ordered]@{
   repoRoot    = $script:RepoRoot
   petWork     = $script:PetWork
   profileDir  = $script:ProfileDir
+  mode        = $script:Mode
+  repairRequested = [bool]$Repair
 }
 if ($Repair) { $result['issuesBeforeRepair'] = @($preRepairIssues) }
 

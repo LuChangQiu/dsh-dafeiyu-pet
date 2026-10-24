@@ -54,7 +54,10 @@ node pet-work\tools\pet-cmd.mjs ping
 | `-ProfileDir` | `$env:DSH_HOME` 或 `%USERPROFILE%\.dsh` + `profiles\web` | DSH profile（插件 node_modules 与 cordis.patch.yml 所在） |
 | `-TaskName` | `DafeiyuPetStart` | 开机启动计划任务名 |
 | `-PatchFile` | `<ProfileDir>\cordis.patch.yml` | DSH patch 文件 |
-| `-Repair` | 关 | 执行幂等修复：重装插件包 / 重建 venv / 重注册计划任务 / 拉起桌宠 |
+| `-Repair` | 关 | 执行幂等修复：重装插件包 / 重建 venv / 重注册计划任务 / 拉起桌宠（**默认需加 `-Yes` 确认**） |
+| `-DryRun` | 关 | 配合 `-Repair`：只打印/记录将执行的动作，**零写入** |
+| `-Sandbox` | 关 | 配合 `-Repair`：强制沙盒（不复制插件、不建/改 venv、不注册任务、不拉起 pet），仅校验；可安全用于真实路径演练 |
+| `-Yes` | 关 | 明确确认真实修复（会写 profile/venv/计划任务，可能拉起桌宠） |
 | `-Human` | 关 | 先打印人类可读摘要，再输出 JSON |
 | `-SkipPipeProbe` | 关 | 只检查管道存在，不执行 pet-cmd ping |
 
@@ -67,6 +70,13 @@ node pet-work\tools\pet-cmd.mjs ping
 6. `versions`：repo `plugin/server|client` 版本 vs 已安装包；生产 `pet/桌宠.py` vs repo 源码 SHA256（drift 检测）；读取 `bridge-state-v2.json` 的 version/petVersion 供参考。
 
 **退出码**：`0` = healthy；`1` = 有 error。可直接用于安装脚本/CI。
+
+### 修复安全闸门（重要）
+
+- **默认必须显式 `-Yes`**：`selfcheck.ps1 -Repair` 直接运行会以退出码 2 拒绝，并给出 `repair-needs-confirm` 说明（会写 profile/venv/计划任务、可能拉起 pet）；
+- **先演练**：`-Repair -DryRun`（只计划，零写入）或 `-Repair -Sandbox`（强制沙盒，零写入/零进程，可对真实路径做 scope 校验）；
+- 幂等：重复 `-Repair -Yes` 不会重复破坏；插件重装前会备份到包内 `.selfcheck-backup-<ts>`；
+- 不触碰 `config.json` / `ui-config.json` / `memory` / `logs` / 用户对话数据；patch 仅提示、不自动改。
 
 ### -Repair 行为（幂等，不覆盖用户数据）
 - 插件包不完整/落后 → 从 `repo/plugin/server|client` 重装，先备份旧文件到包内 `.selfcheck-backup-<时间戳>`；
