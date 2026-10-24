@@ -193,6 +193,7 @@ export function renderHomeHtml() {
     '      <h2>她今天怎么样</h2>',
     '      <div class="words" id="companionWords"><div><div class="k">心情</div><div class="v">—</div></div><div><div class="k">精力</div><div class="v">—</div></div><div><div class="k">好感</div><div class="v">—</div></div></div>',
     '      <p class="empty" style="margin-top:8px" id="companionHint"></p>',
+    '      <p class="empty" style="margin-top:4px" id="renderStatus">3D 形象：关闭（实验计划中，等 render.mode）</p>',
     '    </section>',
     '    <section class="card">',
     '      <h2>团队 <span class="muted" id="teamSource"></span></h2>',

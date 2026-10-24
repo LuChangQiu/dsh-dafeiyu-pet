@@ -1988,6 +1988,45 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          // ── 外观与渲染（task-62/3D：render.mode 2D/3D 占位，字段未到前禁用） ──
+          h(
+            Card,
+            {
+              title: '外观与渲染',
+              right: h('span', { style: S.hint }, '待服务端（render.mode）')
+            },
+            h(
+              'div',
+              { style: S.row },
+              h('span', { style: S.label }, '渲染模式'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.chip, S.chipActive),
+                  disabled: true,
+                  title: '当前默认 2D；3D 原型验证中'
+                },
+                '2D（默认）'
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: Object.assign({}, S.chip, S.btnDisabled),
+                  disabled: true,
+                  title: '待 render.mode 字段（bridge-dev/3d-dev）'
+                },
+                '3D（实验）'
+              )
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '3D 原型验证中：等 render.mode 字段接入后可切换 2D / 3D；切换失败会自动回 2D，不影响桌宠与联动。当前固定 2D。'
+            )
+          ),
+
           // ── 语录与气泡 ──
           h(
             Card,
@@ -2446,6 +2485,54 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          // ── Phase-2 能力卡（骨架：字段未到前只显示「待服务端」，不猜数据） ──
+          h(
+            Card,
+            {
+              title: 'Phase-2 能力（骨架）',
+              right: h('span', { style: S.hint }, '静态骨架 · 字段到位后变活')
+            },
+            h(
+              'div',
+              { style: S.statusGrid },
+              h(Stat, {
+                label: '模型 / 渠道',
+                on: Boolean(config && (config.provider || config.model)),
+                unknown: !(config && (config.provider || config.model)),
+                value:
+                  config && (config.provider || config.model)
+                    ? (config.provider || '?') + ' / ' + (config.model || '?')
+                    : '待服务端',
+                detail: '面板配置（非会话实时；会话模型待 v2）'
+              }),
+              h(Stat, { label: '技能', unknown: true, value: '待服务端', detail: 'skills.list + 最近使用计数' }),
+              h(Stat, {
+                label: 'MCP 服务器',
+                unknown: true,
+                value: '待服务端（推断 inferred）',
+                detail: '工具名 mcp__<server>__* 推断，非官方状态 API'
+              }),
+              h(Stat, { label: 'Jobs / 定时', unknown: true, value: '待服务端', detail: 'job/schedule 标量计数' }),
+              h(Stat, {
+                label: '上下文压力',
+                unknown: true,
+                value: '待服务端',
+                detail: 'contextPressure/contextBreakdown'
+              }),
+              h(Stat, {
+                label: '编排（Workflow / Ralph / Subagent）',
+                unknown: true,
+                value: '待服务端',
+                detail: '阶段/轮次/父子计数'
+              })
+            ),
+            h(
+              'p',
+              { style: S.hint },
+              '按 19 v4 §8 IA + 22 能力矩阵预留：只显示计数/枚举/状态，绝不读内容；未接入统一「待服务端」，不谎报连接状态。'
+            )
+          ),
+
           // ── DSH 能力地图（简版，静态矩阵；22 §2.2；待 task-66 数据接入后变活） ──
           h(
             Card,
@@ -2463,6 +2550,9 @@ window.__ModuleLoader__.load({
                   events && events.supported ? '事件时间线' : null,
                   companion && companion.supported ? '情绪' : null,
                   teamFeatures && teamFeatures.status !== 'unsupported' ? '团队/计划' : null,
+                  mode && mode.available ? '控制模式' : null,
+                  hostMemory ? '宿主内存' : null,
+                  todayStats && todayStats.cacheSavedYuan != null ? '费用 cache 分项' : null,
                   capabilities && capabilities.interactions && capabilities.interactions.head ? '互动' : null,
                   files && files.stateSource === 'v2' ? 'v2 状态文件' : null,
                   '主页',

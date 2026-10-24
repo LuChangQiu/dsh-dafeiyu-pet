@@ -1430,6 +1430,8 @@ test('renderHomeHtml：自包含（无外链 http(s)），含主页关键节点'
   assert.match(html, /运行中的对话/)
   assert.match(html, /今日数据/)
   assert.match(html, /她今天怎么样/)
+  // task-62/3D：主页预留 3D 形象状态占位（render.mode 未接入前显示关闭）
+  assert.match(html, /3D 形象/)
   assert.doesNotMatch(html, /https?:\/\//)
 })
 
