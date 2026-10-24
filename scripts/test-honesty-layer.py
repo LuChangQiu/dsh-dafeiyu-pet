@@ -89,7 +89,10 @@ check('waiting_input 短句存在', w.waiting_line() == w.config.waiting_input_l
 w3 = StateHonesty({'honesty': {'enabled': False}})
 w3.note_state('waiting_input', now=0.0)
 check('disabled 时不补等待短句', w3.waiting_line() == '')
-check('waiting_input 不会进入卡住', StateHonesty({}).stuck_due(100.0) is False)
+wi = StateHonesty({})
+wi.note_state('waiting_input', now=0.0)
+check('waiting_input 相同实例：busy=False', wi.is_busy() is False)
+check('waiting_input 相同实例：推进时间也不卡住/不慢眨', wi.stuck_due(100.0) is False and wi.stuck_blink_due(100.0) is False)
 
 # ---------- P1：error×2 后成功 → 取消 pending cry ----------
 pc = StateHonesty({})
