@@ -1,7 +1,9 @@
 {
   "version": 1,
   "generatedFrom": "manifest",
-  "unknowns": [],
+  "unknowns": [
+    "composites.note"
+  ],
   "acts": [
     "caught",
     "cheer",
@@ -20,7 +22,6 @@
     "jump",
     "land",
     "lonelySit",
-    "note",
     "pat",
     "report",
     "sleep",

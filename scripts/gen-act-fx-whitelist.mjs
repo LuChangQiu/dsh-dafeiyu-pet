@@ -58,6 +58,7 @@ const FX_14 = [
 const acts = new Set()
 const fx = new Set(FX_14)
 let source = 'fallback(task-92 pending)'
+let unknowns = []
 try {
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -65,7 +66,6 @@ try {
     const c = m.composites || {}
     for (const k of Object.keys(a)) acts.add(k)
     const META = new Set(['note', 'notes', 'description', 'version', 'meta'])
-    const unknowns = []
     for (const k of Object.keys(c)) {
       if (META.has(k)) {
         unknowns.push('composites.' + k)
