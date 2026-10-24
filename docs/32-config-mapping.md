@@ -50,3 +50,4 @@
 ## E. 应急控制（保留）
 
 `start-pet.ps1 -Check|-Restart`、`pet-rollback.ps1 -StartOfficial|-RevertPatch`、`plugin-rollback.ps1`、`cmd:nativeui:on|off`、`cmd:config:*`、DSH 面板按钮（plugin-ui）。
+- ender.enhance / ender.tilt_max_deg / ender.shadow|parallax|physics|edges|gaze：A 路线 2.5D 增强开关（默认全开，alse 回滚；见 docs/RENDER-ENHANCE.md）。

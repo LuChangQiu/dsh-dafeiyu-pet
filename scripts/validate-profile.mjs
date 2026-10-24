@@ -1,8 +1,9 @@
 /**
  * profile patch 校验器（只读）：
- *   node scripts/validate-profile.mjs [--patch <cordis.patch.yml>] [--json]
+ *   node scripts/validate-profile.mjs [--patch <cordis.patch.yml>] [--expect mounted|unmounted|any] [--json]
  * 检查：YAML 可解析（重复 key 会失败）、顶层数组、id 不重复、
- *       pet-bridge-vNN 恰好 1 个、pet-bridge-ui 恰好 1 个、插件 name 与 id 匹配。
+ *       pet-bridge-vNN / pet-bridge-ui 挂载状态一致（MOUNT-PROTOCOL：默认未挂载；挂载窗口各 1 个）、
+ *       插件 name 与 id 匹配、生产禁 testHookFile。
  * 退出码：0 通过；1 失败；2 参数/文件错误。
  */
 
@@ -16,6 +17,11 @@ const opt = (name, def) => {
   return i >= 0 && args[i + 1] !== undefined && !args[i + 1].startsWith('--') ? args[i + 1] : def
 }
 const jsonOut = args.includes('--json')
+const expect = String(opt('expect', 'any')).toLowerCase()
+if (!['mounted', 'unmounted', 'any'].includes(expect)) {
+  console.error('validate-profile: --expect 只能是 mounted|unmounted|any')
+  process.exit(2)
+}
 
 const defaultPatch = process.env.DSH_PROFILE_PATCH || 'C:/Users/xiqi/.dsh/profiles/web/cordis.patch.yml'
 const file = path.resolve(opt('patch', defaultPatch))
@@ -25,12 +31,14 @@ if (!fs.existsSync(file)) {
   process.exit(2)
 }
 
-const result = await validatePatchFile(file)
+const result = await validatePatchFile(file, { expect })
 const report = {
   patch: file,
   bytes: result.bytes,
   hasBom: result.hasBom,
   ok: result.ok,
+  mounted: !!result.mounted,
+  expect,
   errors: result.errors,
   warnings: result.warnings || [],
   ids: result.ids || [],
@@ -39,9 +47,11 @@ const report = {
 if (jsonOut) console.log(JSON.stringify(report, null, 2))
 else {
   console.log(`validate-profile: ${file}`)
-  console.log(`  bytes=${report.bytes} bom=${report.hasBom} ids=${report.ids.length}`)
+  console.log(
+    `  bytes=${report.bytes} bom=${report.hasBom} ids=${report.ids.length} mounted=${report.mounted} expect=${report.expect}`
+  )
   for (const w of report.warnings) console.log(`  WARN ${w}`)
   for (const e of report.errors) console.log(`  FAIL ${e}`)
-  console.log(report.ok ? '  YAML OK / 插件块命中 OK' : '  校验失败')
+  console.log(report.ok ? '  YAML OK / 挂载状态 OK' : '  校验失败')
 }
 process.exit(report.ok ? 0 : 1)

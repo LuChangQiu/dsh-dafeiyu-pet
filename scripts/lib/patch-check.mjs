@@ -34,7 +34,8 @@ export async function loadYaml() {
  * @param {string} text 文件内容
  * @returns {Promise<{ok:boolean, errors:string[], ids:string[], warnings:string[]}>}
  */
-export async function validatePatchText(text) {
+export async function validatePatchText(text, opts = {}) {
+  const expect = String(opts.expect || 'any').toLowerCase() // mounted | unmounted | any
   const errors = []
   const warnings = []
   let doc = null
@@ -63,12 +64,21 @@ export async function validatePatchText(text) {
   const dupIds = ids.filter((v, i) => ids.indexOf(v) !== i)
   if (dupIds.length) errors.push('重复 id：' + [...new Set(dupIds)].join(', '))
 
-  // 插件块命中检查：pet-bridge-vNN 恰好 1 个；pet-bridge-ui 恰好 1 个
+  // 插件块命中检查（MOUNT-PROTOCOL：默认未挂载=两块都注释；挂载窗口=两块各 1 个）
   const bridgeIds = ids.filter((v) => /^pet-bridge-v\d+$/.test(v))
   const uiIds = ids.filter((v) => v === 'pet-bridge-ui')
-  if (bridgeIds.length !== 1)
-    errors.push(`pet-bridge-vNN 命中 ${bridgeIds.length} 个（应恰好 1 个）：${bridgeIds.join(',') || '无'}`)
-  if (uiIds.length !== 1) errors.push(`pet-bridge-ui 命中 ${uiIds.length} 个（应恰好 1 个）`)
+  if (bridgeIds.length > 1)
+    errors.push(`pet-bridge-vNN 命中 ${bridgeIds.length} 个（最多 1 个）：${bridgeIds.join(',')}`)
+  if (uiIds.length > 1) errors.push(`pet-bridge-ui 命中 ${uiIds.length} 个（最多 1 个）`)
+  if (bridgeIds.length !== uiIds.length) {
+    errors.push(
+      `挂载状态不一致：pet-bridge-vNN=${bridgeIds.length} 个，pet-bridge-ui=${uiIds.length} 个（应同时挂载或同时未挂载）`
+    )
+  }
+  const mounted = bridgeIds.length === 1 && uiIds.length === 1
+  if (expect === 'mounted' && !mounted) errors.push('期望已挂载（mounted），但插件块未同时出现')
+  if (expect === 'unmounted' && mounted) errors.push('期望未挂载（unmounted，MOUNT-PROTOCOL 默认），但插件块仍存在')
+  if (!mounted && expect === 'any') warnings.push('当前插件块未挂载（MOUNT-PROTOCOL 默认状态）')
   if (bridgeIds.length === 1) {
     const bridge = doc.flatMap((e) => e?.insert || []).find((x) => x?.id === bridgeIds[0])
     const wantName = 'dsh-' + bridgeIds[0]
@@ -80,17 +90,22 @@ export async function validatePatchText(text) {
       errors.push('生产 patch 不允许启用 testHookFile（TEST HOOK 仅通过 ui-config.testHook.file 动态开启）')
     }
   }
-  if (bridgeIds.length === 1 && uiIds.length === 1) {
+  if (mounted) {
     // 顺序提示：pet-bridge-ui 应在 pet-bridge-vNN 之后（不强制，仅提示）
     const bi = ids.indexOf(bridgeIds[0])
     const ui = ids.indexOf('pet-bridge-ui')
     if (ui < bi) warnings.push('pet-bridge-ui 位于 pet-bridge-vNN 之前（通常不期望）')
   }
-  return { ok: errors.length === 0, errors, ids, warnings }
+  return { ok: errors.length === 0, errors, ids, warnings, mounted, expect }
 }
 
 /** 读取并校验 patch 文件。 */
-export async function validatePatchFile(file) {
+export async function validatePatchFile(file, opts = {}) {
   const text = fs.readFileSync(file, 'utf8')
-  return { ...(await validatePatchText(text)), file, bytes: text.length, hasBom: text.charCodeAt(0) === 0xfeff }
+  return {
+    ...(await validatePatchText(text, opts)),
+    file,
+    bytes: text.length,
+    hasBom: text.charCodeAt(0) === 0xfeff
+  }
 }

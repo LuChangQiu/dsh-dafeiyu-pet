@@ -51,6 +51,7 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QCursor,
     QFont,
@@ -62,6 +63,7 @@ from PySide6.QtGui import (
     QPainter,
     QPixmap,
     QPolygonF,
+    QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -4071,6 +4073,16 @@ class PetWindow(QWidget):
             "music_link": True,
             "music_lyrics": True,
             "perf_mode": True,
+            # A 路线 2.5D「3D 感」增强（task-74；默认开，render.enhance=false 完全回滚原渲染）
+            "render": {
+                "enhance": True,
+                "tilt_max_deg": 20.0,
+                "shadow": True,
+                "parallax": True,
+                "physics": True,
+                "edges": True,
+                "gaze": True,
+            },
             "custom_skins": {},
             "skin_library": {"pet": [], "widget": []},   # 两本分开：三维形象 / 挂件形象
             "skin_draft": {},                             # 三维形象没挑完的三张图
@@ -4189,6 +4201,29 @@ class PetWindow(QWidget):
         self.drag_start_pos = None
         self.last_line = ""
         self.last_press_pos = None
+
+        # ---- A 路线 2.5D「3D 感」增强状态（task-74；旧配置自动补默认；enhance=false 时全部旁路） ----
+        _r = self.cfg.get("render")
+        if not isinstance(_r, dict):
+            _r = {}
+        self.render = {
+            "enhance": bool(_r.get("enhance", True)),
+            "tilt_max_deg": max(0.0, min(25.0, float(_r.get("tilt_max_deg", 12.0) or 12.0))),
+            "shadow": bool(_r.get("shadow", True)),
+            "parallax": bool(_r.get("parallax", True)),
+            "physics": bool(_r.get("physics", True)),
+            "edges": bool(_r.get("edges", True)),
+            "gaze": bool(_r.get("gaze", True)),
+        }
+        self.cfg["render"] = self.render
+        self._enh_phys = None           # 抛掷物理 {"vx","vy","bounces"}
+        self._enh_drag_samples = []     # 拖拽速度采样 [(ms,gx,gy)]
+        self._enh_land = 0.0            # 落地压扁量 0~1（指数衰减）
+        self._enh_dizzy_until = 0.0     # 眩晕截止（秒）
+        self._enh_edge = None           # 边缘姿态 {"side","since_ms"}
+        self._enh_gaze = 0.0            # 视线偏移 -1~1（x）
+        self._enh_gaze_y = 0.0          # 视线偏移 -1~1（y）
+        self._enh_last_edge_check = 0
 
         # 余额挂件状态
         self.balance = None          # {"total": 24.05, "currency": "CNY", "today": 0.0, "stale": False}
@@ -5985,6 +6020,325 @@ class PetWindow(QWidget):
         self.update()
 
     # ---------- 吸附 / 翻转 ----------
+    # ================= A 路线 2.5D「3D 感」增强（task-74） =================
+    def set_render_enhance(self, on):
+        """render.enhance 开关：默认开；关闭后完全回到原渲染与原拖拽行为（可回滚）。"""
+        self.render["enhance"] = bool(on)
+        self.cfg["render"] = self.render
+        if not on:
+            self._enh_phys = None
+            self._enh_edge = None
+            self._enh_land = 0.0
+            self._enh_dizzy_until = 0.0
+            self._enh_gaze = 0.0
+        try:
+            self.save_config()
+        except Exception:
+            pass
+        print("A 路线渲染增强:", "on" if on else "off")
+        self.update()
+
+    def _enh_on(self):
+        return bool(getattr(self, "render", {}).get("enhance", False))
+
+    def _enh_drag_clear(self):
+        self._enh_drag_samples = []
+
+    def _enh_note_drag(self, gp):
+        if not self._enh_on():
+            return
+        samples = getattr(self, "_enh_drag_samples", None)
+        if samples is None:
+            samples = self._enh_drag_samples = []
+        samples.append((self.t * self.tick_ms, int(gp.x()), int(gp.y())))
+        if len(samples) > 12:
+            del samples[:-12]
+
+    def _enh_take_throw(self):
+        """用最近 ~120ms 的拖拽采样算抛掷速度（px/s）。"""
+        samples = getattr(self, "_enh_drag_samples", []) or []
+        self._enh_drag_samples = []
+        if len(samples) < 2:
+            return (0.0, 0.0)
+        t1, x1, y1 = samples[-1]
+        for t0, x0, y0 in reversed(samples[:-1]):
+            dt = max(1, t1 - t0) / 1000.0
+            if t1 - t0 >= 80:
+                return ((x1 - x0) / dt, (y1 - y0) / dt)
+        t0, x0, y0 = samples[0]
+        dt = max(1, t1 - t0) / 1000.0
+        return ((x1 - x0) / dt, (y1 - y0) / dt)
+
+    def _enh_start_throw(self, vx, vy):
+        if not self._enh_on() or not self.render.get("physics", True):
+            return False
+        cap = 2600.0  # 23 §4.2：初速上限 2600
+        vx *= 1.05
+        vy *= 1.05
+        sp = (vx * vx + vy * vy) ** 0.5
+        if sp > cap:
+            k = cap / sp
+            vx, vy = vx * k, vy * k
+        if abs(vx) < 260 and abs(vy) < 260:  # 23 §4.2：甩出阈值 260px/s
+            return False
+        self._enh_phys = {"vx": vx, "vy": vy, "bounces": 0, "t": 0.0}
+        self._enh_edge = None
+        self.target = None
+        return True
+
+    def _enh_tick(self, now_ms):
+        """每帧：落地缓冲/视线/边缘姿态/物理；返回 True 表示本帧由增强层接管位移。"""
+        if not self._enh_on():
+            return False
+        if self._enh_land > 0:
+            self._enh_land = max(0.0, self._enh_land - 0.06)
+        # 视线跟随（不拖动、不飞行、设置窗口关闭、非跟随模式）
+        if (self.render.get("gaze") and not self.dragging and self._enh_phys is None
+                and not self.ui_open and self.mode != "follow"):
+            try:
+                cur = QCursor.pos()
+                cx = self.x() + self.width() / 2
+                cy = self.y() + self.height() / 2
+                dx = max(-1.0, min(1.0, (cur.x() - cx) / 260.0))
+                dy = max(-1.0, min(1.0, (cur.y() - cy) / 220.0))
+                self._enh_gaze += (dx - self._enh_gaze) * 0.07   # 平滑 ~300ms（50fps）
+                self._enh_gaze_y += (dy - self._enh_gaze_y) * 0.07
+            except Exception:
+                self._enh_gaze *= 0.9
+                self._enh_gaze_y *= 0.9
+        else:
+            self._enh_gaze *= 0.9
+            self._enh_gaze_y *= 0.9
+        # 边缘姿态：贴边 16px 内进入四边姿态（23 §4.2：吸附 16px）；拖离 40px 解除
+        if self.render.get("edges") and not self.dragging and self._enh_phys is None:
+            if now_ms - self._enh_last_edge_check >= 250:
+                self._enh_last_edge_check = now_ms
+                side = self._edge_side()
+                if side:
+                    if not self._enh_edge or self._enh_edge.get("side") != side:
+                        self._enh_edge = {"side": side, "since_ms": now_ms}
+                        # 左右贴边用侧面精灵（朝向屏幕内侧）
+                        if side in ("left", "right"):
+                            self._set_dir(side, -1 if side == "left" else 1)
+                elif self._enh_edge:
+                    # 拖离超过 40px 才解除（滞回，防抖）
+                    self._enh_edge = None
+        elif self._enh_phys is not None:
+            self._enh_edge = None
+        return self._enh_tick_physics()
+
+    def _enh_tick_physics(self):
+        phys = self._enh_phys
+        if phys is None:
+            return False
+        geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        dt = max(0.001, self.tick_ms / 1000.0)
+        phys["t"] = float(phys.get("t", 0.0)) + dt
+        x, y = float(self.x()), float(self.y())
+        vx, vy = phys["vx"], phys["vy"]
+        vy += 2200.0 * dt                      # 23 §4.2：g=2200
+        damp = math.exp(-1.2 * dt)             # 线性阻尼 1.2/s
+        vx *= damp
+        vy *= damp
+        x += vx * dt
+        y += vy * dt
+        w, h = self.width(), self.height()
+        left, top = geo.left(), geo.top()
+        right = geo.right() - w + 1
+        bottom = geo.bottom() - h + 1
+        hit = False
+        if x < left:
+            x, vx = left, -vx * 0.45           # 撞墙反弹 0.45
+            hit = True
+        elif x > right:
+            x, vx = right, -vx * 0.45
+            hit = True
+        if y < top:
+            y, vy = top, -vy * 0.45
+            hit = True
+        elif y > bottom:
+            y, vy = bottom, -vy * 0.20         # 落地反弹 0.2
+            hit = True
+        phys["vx"], phys["vy"] = vx, vy
+        if hit:
+            phys["bounces"] += 1
+            speed = (vx * vx + vy * vy) ** 0.5
+            if speed > 650 and phys["bounces"] <= 4:
+                self._enh_dizzy_until = self._secs() + max(0.6, min(2.0, 0.6 + speed / 1600.0))
+                try:
+                    self._bridge_fx_play("dizzy")
+                except Exception:
+                    pass
+        self.move(int(x), int(y))
+        # 落地：低速触底 → 压扁回弹（地面摩擦 0.3）+ 结束飞行
+        on_floor = y >= bottom - 1
+        if on_floor and abs(vy) < 260 and abs(vx) < 90:
+            self._enh_phys = None
+            self._enh_land = 1.0
+            self._enh_dizzy_until = max(self._enh_dizzy_until, self._secs() + 0.35)
+            self.rest_until = self.t * self.tick_ms + random.randint(4000, 9000)
+            self._set_dir("down", 1)
+        return True
+
+    def _edge_side(self):
+        """贴边探测（16px 内，23 §4.2）；角落按 左/右 > 上 > 下 优先。"""
+        try:
+            geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+            x, y, w, h = self.x(), self.y(), self.width(), self.height()
+            probe = 16
+            if x <= geo.left() + probe:
+                return "left"
+            if x + w >= geo.right() - probe:
+                return "right"
+            if y <= geo.top() + probe:
+                return "top"
+            if y + h >= geo.bottom() - probe:
+                return "bottom"
+        except Exception:
+            pass
+        return None
+
+    def _enh_state(self, now):
+        """paintEvent 用：一帧增强参数（关闭时返回中性值 = 原渲染）。"""
+        neutral = {"rot": 0.0, "dx": 0.0, "dy": 0.0, "sx": 1.0, "sy": 1.0,
+                   "bubble_dx": 0.0, "bubble_dy": 0.0, "shadow_alpha": 0.0,
+                   "shadow_dx": 0.0, "shadow_rx": 0.0, "shadow_ry": 0.0}
+        if not self._enh_on():
+            return neutral
+        max_deg = min(20.0, float(self.render.get("tilt_max_deg", 20.0) or 20.0))
+        idle = (not self.dragging) and self._enh_phys is None
+        rot = 0.0
+        dx = dy = 0.0
+        sx = sy = 1.0
+        if idle:  # idle 微倾斜 ±4/2/3°（23 §4.2）
+            rot += math.sin(now * 1.7) * 4.0
+            dx += math.sin(now * 1.1) * 3.0
+            dy += math.sin(now * 2.5) * 2.0
+        phys = self._enh_phys
+        if phys is not None:  # 飞行：vx/40 + 角阻尼 4/s；垂直速度 → pitch
+            vx, vy = phys.get("vx", 0.0), phys.get("vy", 0.0)
+            rot += max(-max_deg, min(max_deg, vx / 40.0)) * math.exp(-4.0 * float(phys.get("t", 0.0)))
+            dy -= max(-10.0, min(10.0, abs(vy) / 240.0))
+            sx += max(-0.05, min(0.05, abs(vy) / 9000.0))
+            sy -= max(-0.05, min(0.05, abs(vy) / 9000.0))
+        if self.render.get("gaze"):  # 视线 ±22°/±14°（23 §4.2）
+            rot += self._enh_gaze * 22.0
+            dy += self._enh_gaze_y * 14.0 * 0.3
+        side = (self._enh_edge or {}).get("side") if self.render.get("edges") else None
+        if side:
+            since_s = float((self._enh_edge or {}).get("since_ms", 0)) / 1000.0
+            e = min(1.0, max(0.0, (now - since_s) / 0.12))     # OutBack 120ms 过渡
+            u = e - 1.0
+            ease = 1.0 + 2.70158 * u ** 3 + 1.70158 * u ** 2
+            if side == "left":     # 左右贴边：整体 ≤30°，用侧面精灵（_enh_tick 已切朝向）
+                rot += -30.0 * ease
+                dx -= 4.0 * ease
+            elif side == "right":
+                rot += 30.0 * ease
+                dx += 4.0 * ease
+            elif side == "top":    # 贴顶边：整体 −90° 躺下 + 压扁 8% + ±2° 钟摆
+                rot += (-90.0 + math.sin(now * 2.0) * 2.0) * ease
+                sy *= 1.0 - 0.08 * ease
+                dy -= 6.0 * ease
+            elif side == "bottom": # 任务栏坐姿
+                sx += 0.06 * ease
+                sy -= 0.06 * ease
+                dy -= 2.0 * ease
+        if self._enh_land > 0:  # 落地压扁：1.12/0.88 → 1.03/0.97 → 1.0（23 §4.2）
+            p = 1.0 - self._enh_land
+            if p < 0.35:
+                k = p / 0.35
+                sy *= 1.0 - 0.12 * k
+                sx *= 1.0 + 0.12 * k
+            else:
+                k = (p - 0.35) / 0.65
+                sy *= 0.88 + 0.15 * k
+                sx *= 1.12 - 0.12 * k
+        if now < self._enh_dizzy_until:  # 眩晕：短促摇头
+            rot += math.sin(now * 46.0) * max_deg * 0.45
+            dx += math.sin(now * 31.0) * 1.5
+        par = bool(self.render.get("parallax"))
+        # 三层视差：阴影 0.55 / 本体 1.0 / 气泡 1.18（错位 ≤6px）
+        bubble_dx = max(-6.0, min(6.0, dx * 1.18)) if par else 0.0
+        bubble_dy = max(-6.0, min(6.0, dy * 1.18)) if par else 0.0
+        shadow_alpha = shadow_dx = shadow_rx = shadow_ry = 0.0
+        if self.render.get("shadow"):
+            lift = min(1.0, abs(dy) / 10.0 + abs(rot) / max(1.0, max_deg) * 0.25 + (0.35 if phys else 0.0))
+            shadow_alpha = 0.28 - 0.10 * lift       # 0.28 → 0.18（随高度变淡）
+            shadow_dx = (dx * 0.55 + rot * 0.35) if par else rot * 0.35
+            speed = (abs(phys.get("vx", 0.0)) + abs(phys.get("vy", 0.0))) if phys else 0.0
+            shadow_rx = 34.0 + 12.0 * lift + min(10.0, speed / 260.0)   # 随速度拉长
+            shadow_ry = 8.0 + 2.0 * lift
+        return {"rot": rot, "dx": dx, "dy": dy, "sx": sx, "sy": sy,
+                "bubble_dx": bubble_dx, "bubble_dy": bubble_dy,
+                "shadow_alpha": shadow_alpha, "shadow_dx": shadow_dx,
+                "shadow_rx": shadow_rx, "shadow_ry": shadow_ry}
+
+    def _enh_paint_shadow(self, p, cx, bottom, st):
+        """双层软阴影：偏移 (0,8)、模糊 10、α 0.18~0.28、随速度拉长（23 §4.2）。"""
+        if not self._enh_on() or st.get("shadow_alpha", 0) <= 0.01:
+            return
+        try:
+            gx = cx + st.get("shadow_dx", 0.0)
+            gy = bottom - 8.0
+            rx = max(6.0, st.get("shadow_rx", 34.0))
+            ry = max(3.0, st.get("shadow_ry", 8.0))
+            alpha = float(st["shadow_alpha"])
+            for scale, a_mul in ((1.25, 0.55), (1.0, 1.0)):  # 外圈更淡 → 近似 blur 10
+                rr = rx * scale
+                grad = QRadialGradient(QPointF(gx, gy), rr)
+                grad.setColorAt(0.0, QColor(20, 24, 40, int(255 * alpha * a_mul)))
+                grad.setColorAt(0.6, QColor(20, 24, 40, int(255 * alpha * a_mul * 0.45)))
+                grad.setColorAt(1.0, QColor(20, 24, 40, 0))
+                p.save()
+                p.translate(gx, gy)
+                p.scale(1.0, max(0.25, (ry * scale) / rr))
+                p.translate(-gx, -gy)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(grad))
+                p.drawEllipse(QPointF(gx, gy), rr, rr)
+                p.restore()
+        except Exception:
+            pass
+
+    def _enh_bridge(self, action, val):
+        """验收通道：enh:on|off / phys:throw:vx,vy / phys:stop / edge:left|right|top|bottom|none。"""
+        try:
+            if action == "enh":
+                self.set_render_enhance(str(val).lower() in ("on", "1", "true", "开"))
+                return "enh:" + ("on" if self._enh_on() else "off")
+            if action == "phys" and str(val).startswith("throw"):
+                nums = str(val).split(":", 1)[1] if ":" in str(val) else ""
+                vx_s, _, vy_s = nums.partition(",")
+                try:
+                    vx, vy = float(vx_s or 0), float(vy_s or 0)
+                except Exception:
+                    vx, vy = 620.0, -520.0
+                ok = self._enh_start_throw(vx, vy)
+                return "phys:throw" + ("" if ok else ":skip")
+            if action == "phys" and str(val) in ("stop", "reset"):
+                self._enh_phys = None
+                self._enh_land = 0.0
+                self._enh_dizzy_until = 0.0
+                return "phys:stop"
+            if action == "edge" and str(val) in ("left", "right", "top", "bottom", "none"):
+                geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+                w, h = self.width(), self.height()
+                if val == "left":
+                    self.move(geo.left(), self.y())
+                elif val == "right":
+                    self.move(geo.right() - w + 1, self.y())
+                elif val == "top":
+                    self.move(self.x(), geo.top())
+                elif val == "bottom":
+                    self.move(self.x(), geo.bottom() - h + 1)
+                self._enh_edge = None if val == "none" else {"side": val, "since_ms": self.t * self.tick_ms}
+                self.update()
+                return "edge:" + str(val)
+        except Exception as exc:
+            return "enh:error:" + repr(exc)[:60]
+        return "enh:unknown"
+
     def _snap_to_edge(self):
         """松手后按四分之一区域吸附屏幕四边（角落可组合），左吸附时整体水平翻转。"""
         if not self.snap_on:
@@ -6026,6 +6380,11 @@ class PetWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         now = self._secs()
+        # A 路线增强：一帧参数（关闭时中性值）+ 气泡层视差位移
+        st = self._enh_state(now)
+        p.save()
+        if st["bubble_dx"] or st["bubble_dy"]:
+            p.translate(st["bubble_dx"], st["bubble_dy"])
 
         mode = self._bubble_mode(now)
         if mode != "lyric":
@@ -6133,6 +6492,10 @@ class PetWindow(QWidget):
             self._paint_lyric_bubble(p)
 
         cx = self.width() / 2
+        bottom = BUBBLE_H + MARGIN + self.cur_h
+        p.restore()          # 气泡层视差结束
+        # A 路线增强：贴地软阴影（身体之前画，作为"地面"）
+        self._enh_paint_shadow(p, cx, bottom, st)
         walking = self.target is not None and not self.dragging
         if walking:
             sway = math.sin(now * 9.0) * 3.5
@@ -6171,8 +6534,15 @@ class PetWindow(QWidget):
             p.save()
             p.setOpacity(opacity)
             p.translate(cx, bottom)
-            p.rotate(sway + act_rot)
+            p.rotate(sway + act_rot + st["rot"])
             p.translate(-cx, -bottom)
+            # A 路线增强：身体位移/透视缩放（以底边中心为锚，避免脚底漂移）
+            if st["dx"] or st["dy"]:
+                p.translate(st["dx"], st["dy"])
+            if st["sx"] != 1.0 or st["sy"] != 1.0:
+                p.translate(cx, bottom)
+                p.scale(st["sx"], st["sy"])
+                p.translate(-cx, -bottom)
             # 行走朝向 与 左吸附整体翻转 叠加（异或）
             if (facing < 0) != bool(self.flip_x):
                 p.translate(cx, 0)
@@ -6787,6 +7157,10 @@ class PetWindow(QWidget):
             return
 
         if self.dragging:
+            self.update()
+            return
+        # A 路线增强：视线/边缘姿态/抛掷物理（物理接管时跳过普通移动）
+        if self._enh_tick(self.t * self.tick_ms):
             self.update()
             return
         now_ms = self.t * self.tick_ms
@@ -7564,6 +7938,7 @@ class PetWindow(QWidget):
             self.dragging = False
             self._drag_blocked = False
             self.drag_start_pos = e.globalPosition().toPoint()
+            self._enh_drag_clear()      # A 路线：重置拖拽速度采样
 
     def mouseMoveEvent(self, e):
         if self._forward_mouse_to_menu(e):
@@ -7587,7 +7962,13 @@ class PetWindow(QWidget):
                 self.drag_offset = e.globalPosition().toPoint() - QPoint(self.x(), self.y())
             if self.dragging and self.drag_offset is not None:
                 pos = e.globalPosition().toPoint() - self.drag_offset
-                self.move(pos)
+                # A 路线：抓取滞后 60~90ms（50fps 下每帧追 78%）
+                if self._enh_on():
+                    cx0, cy0 = self.x(), self.y()
+                    self.move(int(cx0 + (pos.x() - cx0) * 0.78), int(cy0 + (pos.y() - cy0) * 0.78))
+                else:
+                    self.move(pos)
+                self._enh_note_drag(e.globalPosition().toPoint())
                 if abs(delta.x()) > 10:
                     self._set_dir("left" if delta.x() < 0 else "right", 1 if delta.x() < 0 else -1)
                 try:
@@ -7620,6 +8001,13 @@ class PetWindow(QWidget):
                 self.target = None
                 self.rest_until = self.t * self.tick_ms + random.randint(6000, 14000)
                 self._snap_to_edge()    # 松手后吸附到最近的边
+                # A 路线：甩出速度 → 惯性飞行（阈值 260px/s，上限 2600）
+                try:
+                    _vx, _vy = self._enh_take_throw()
+                    if (abs(_vx) + abs(_vy)) > 260 and self._enh_start_throw(_vx, _vy):
+                        self._enh_edge = None
+                except Exception:
+                    pass
                 try:
                     if abs(getattr(self, "_bridge_drag_vx", 0)) > 120:
                         getattr(self, "_bridge_fx_play", lambda _n: None)("spin")
@@ -10577,6 +10965,12 @@ def main():
             except Exception:
                 pass
             return "state"
+        if line.startswith("enh:") or line.startswith("phys:") or line.startswith("edge:"):
+            # A 路线验收/测试通道（不影响正常协议）
+            if muted:
+                return "muted"
+            _act, _, _val = line.partition(":")
+            return w._enh_bridge(_act.strip().lower(), _val.strip())
         if line.startswith("cmd:"):
             if muted:
                 return "muted"
@@ -10638,6 +11032,7 @@ def main():
                         "skin": ("set_skin", str), "soundOn": ("set_sound", bool),
                         "volume": ("set_volume", float), "musicLink": ("set_music_link", bool),
                         "doubleClick": ("set_double_click", str),
+                        "renderEnhance": ("set_render_enhance", bool),
                     }
                     for _k, _v in _spec.items():
                         if _k == "quiet":
