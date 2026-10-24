@@ -232,6 +232,13 @@ SPRITE_DIR = os.path.join(BUNDLE_DIR, "sprites")
 ASSET_DIR = os.path.join(BUNDLE_DIR, "assets")     # 音效 + 小鲸鱼挂件形象
 CONFIG_PATH = os.path.join(USER_DIR, "config.json")
 
+# 鲸鱼娘 2D 帧动画皮肤（素材 YunYueSama/codex-deepseek-pet，署名许可 1.0；
+# 缺失/损坏时自动回退原三视图 classic，不影响桌宠启动）
+try:
+    import whale_skin as _whale_skin
+except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
+    _whale_skin = None
+
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
 # （先把自己的目录塞进 sys.path：直接 exec 加载本文件时也能找到 ui_console）
@@ -4073,6 +4080,10 @@ class PetWindow(QWidget):
             "music_link": True,
             "music_lyrics": True,
             "perf_mode": True,
+            # 鲸鱼娘 2D 帧动画皮肤（素材：codex-deepseek-pet；资产缺失自动回退 classic）
+            "whale": {
+                "on": True,
+            },
             # A 路线 2.5D「3D 感」增强（task-74；默认开，render.enhance=false 完全回滚原渲染）
             "render": {
                 "enhance": True,
@@ -4175,6 +4186,22 @@ class PetWindow(QWidget):
         # 否则第一帧就没图可画
         self._ensure_sprites(self.cur_h)
         self._apply_window_size()
+
+        # ---- 鲸鱼娘 2D 帧动画（默认开启；资产缺失/异常自动回退原三视图） ----
+        self._whale = None
+        self._whale_force = None          # 外部动作（act:）强制播放的动作名
+        self._whale_micro_at = 0          # 下一次 idle 小动作的 tick
+        try:
+            _wcfg = self.cfg.get("whale")
+            if not isinstance(_wcfg, dict):
+                _wcfg = {"on": True}
+            if _wcfg.get("on", True) and _whale_skin is not None:
+                self._whale = _whale_skin.load(__file__)
+                if self._whale is not None:
+                    self._whale.play("idleBase")
+        except Exception as _whale_err:
+            print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
+            self._whale = None
 
         # 状态
         self.mode = self.cfg["mode"] if self.cfg["mode"] in ("wander", "follow", "still") else "wander"
@@ -6538,12 +6565,23 @@ class PetWindow(QWidget):
             if key is None:
                 return
             name, h, facing = key
-            pix = self.sprites[(name, h)]
-            ph = pix.height() * scale * (1 + act_sy) * press_sy
-            pw = pix.width() * scale * (1 + act_sx) * press_sx
-            dx = cx - pw / 2
             bottom = BUBBLE_H + MARGIN + self.cur_h
-            dy = bottom - ph + jump + bob
+            # 鲸鱼娘帧动画：帧画布带脚底留白，按 foot_ratio 对齐落地点；挂件形象 / 回退时走原逻辑
+            whale = getattr(self, "_whale", None)
+            if whale is not None and name != "挂件":
+                pix = whale.pixmap(h)
+                if pix is None or pix.isNull():
+                    return
+                ph = pix.height() * scale * (1 + act_sy) * press_sy
+                pw = pix.width() * scale * (1 + act_sx) * press_sx
+                dx = cx - pw / 2
+                dy = bottom - ph * whale.foot_ratio() + jump + bob
+            else:
+                pix = self.sprites[(name, h)]
+                ph = pix.height() * scale * (1 + act_sy) * press_sy
+                pw = pix.width() * scale * (1 + act_sx) * press_sx
+                dx = cx - pw / 2
+                dy = bottom - ph + jump + bob
             p.save()
             p.setOpacity(opacity)
             p.translate(cx, bottom)
@@ -6992,6 +7030,49 @@ class PetWindow(QWidget):
             ty += fm.height()
         p.setOpacity(1.0)
 
+    # ---------- 鲸鱼娘 2D 帧动画 ----------
+    def _whale_active(self):
+        w = getattr(self, "_whale", None)
+        return w is not None and getattr(w, "ok", False)
+
+    def _whale_play(self, name, restart=True):
+        """外部（act: 指令）触发一次帧动作；返回是否播放成功。"""
+        w = getattr(self, "_whale", None)
+        if w is None or not w.has(name):
+            return False
+        w.play(name, restart=restart)
+        return True
+
+    def _whale_tick(self):
+        """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
+        w = getattr(self, "_whale", None)
+        if w is None:
+            return
+        try:
+            force = self._whale_force
+            if force:
+                if w.has(force):
+                    if w.cur != force:
+                        w.play(force, restart=True)
+                    if w.finished:          # 单次动作播完 → 回到待机
+                        self._whale_force = None
+                else:
+                    self._whale_force = None
+            elif self.dragging:
+                w.play("drag")
+            elif self.target is not None:
+                w.play("walk")
+            elif w.finished or w.cur in ("", "walk", "drag"):
+                w.play("idleBase")
+            elif w.cur == "idleBase" and self.t >= self._whale_micro_at:
+                n = random.choice(("idleShift", "idleSettle", "idleStretch"))
+                if w.has(n):
+                    w.play(n, restart=True)
+                self._whale_micro_at = self.t + random.randint(300, 700)
+            w.tick(self.tick_ms)
+        except Exception:
+            pass
+
     def _sprite_key(self):
         if self.skin == SKIN_WIDGET:
             return ("挂件", self.cur_h,
@@ -7032,6 +7113,7 @@ class PetWindow(QWidget):
     # ---------- 逻辑 ----------
     def tick(self):
         self.t += 1
+        self._whale_tick()
 
         # 歌词换句的过渡动画：发现"该显示的那一句"变了就淡入淡出一下
         if self._music_playing() and self.music_lyrics and self._lyric_lines:
@@ -10850,6 +10932,14 @@ def main():
             elif act == "peek":
                 w.action, w.action_t = "sway", 0.7
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.45)
+            elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn"):
+                # 鲸鱼娘 2D 帧动作：eat / steal(偷吃) / sleep / wave / dance / turn
+                clip = {"steal": "sneak"}.get(act, act)
+                wh = getattr(w, "_whale", None)
+                if wh is not None and wh.has(clip):
+                    w._whale_force = clip
+                    return "acted:" + act
+                return "unknownact:" + act
             elif act in ("press", "squash"):
                 w.press_t = 1.0
             elif act == "show":
