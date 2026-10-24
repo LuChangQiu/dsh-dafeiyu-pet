@@ -1,0 +1,92 @@
+# ATTENTION-BUDGET（主动开口预算 / 抑制门 / 拒绝记忆）
+
+> 分支：`feat/attention-budget`（基于 `bb9d435`）。本轮只交付**纯逻辑模块 + 单测 + 本文档**；
+> **不接 `index.js` 事件**、不碰 pet/pipe、不影响任何运行时行为。接线留窗口后单独做。
+
+## 0. 目的与非目标
+
+**目的**：让桌宠"主动开口"有节制、可拒绝、可恢复。
+
+**非目标（写死）**：
+- 不卖惨、不报复、不操纵（拒绝后不冷暴力、不暗示"你不理我"、不反复试探）。
+- 不做无限主动（有硬上限）；不因被拒绝而降低诚实/安全规则。
+- 不读/不存 DSH 消息原文、工具参数、路径、凭据；日志只有计数/枚举。
+- 事件反应（approval、error、turn/end 等真实事件触发）**不计入主动预算**。
+
+## 1. 预算（主动开口）
+
+| 规则 | 值 | 说明 |
+|---|---|---|
+| 默认/天 | **3** | 只统计 `proactive`（主动/惊喜）开口；反应类不计 |
+| 硬上限/天 | **4** | 即使配置更大也 clamp 到 4 |
+| 切日 | **本地日 00:00** | 以本地日期键 `YYYY-MM-DD` 切日；切日重置 used，不重置拒绝暂停 |
+| 频次系数 | 拒绝暂停期 **0.5** | 暂停 24h 内频率 ×0.5；恢复后 1.0 |
+| 计数时机 | 真正开口后 | 由接线层在成功发言后调 `recordProactive()`；事件反应调 `recordReaction()`（不计数） |
+
+## 2. 抑制门（预算内也归零）
+
+按顺序判定；任一命中 → `allowed:false`（`suppressed:true`，`reasons[]`）：
+
+1. **深夜**：本地 23:30–08:00（`night`）
+2. **免打扰/静音模式**：`mode ∈ {silent, focus, off}`（`mode-quiet`）
+3. **系统免打扰/DND**：`dnd:true`（`dnd`）
+4. **全屏**：`fullscreen:true`（`fullscreen`）
+5. **打字中**：`typing:true`（`typing`）
+
+> 接线层需从 OS/宿主侧提供 `mode/dnd/fullscreen/typing` 输入；本模块只做纯判定。
+> **安全例外**：S0（approval/等待输入）与用户直接互动不属于"主动开口"，应由调用方直通，不经过本预算（或在接线层以 `isReaction:true` 放行）。
+
+## 3. 拒绝记忆
+
+| 信号 | 规则 | 状态 |
+|---|---|---|
+| 用户无视（60s 无回应）N 次 | `ignoredThreshold=2` → 暂停主动 **24h**，`kind='ignored'` | `rejection{lastAt,count,kind,pauseUntilMs,topic}` |
+| 用户显式「安静/静一静/下班」 | 立即暂停主动 **24h**，`kind='quiet'` | 同上 |
+| 暂停期内 | 不主动；频率 ×0.5；换更安静方式（接线层执行） | `frequencyFactor()` |
+| 同 topic | 拒绝后 **7 天**内不碰该 topic | `topicAvoid{topic: untilMs}` |
+| 用户主动互动一次 | **立即清零** streak/pause/topicAvoid | `recordUserInteraction()` |
+
+- 状态文件（接线层建议）：`pet-work/attention-budget.json`；**原子写**（tmp + rename），仅在状态变化时节流落盘，不在热路径写。
+- 反序列化容错：缺失/非法 JSON → 当天空状态，不崩溃；`proactiveMax` clamp 到 0..4。
+- 不记录拒绝原因文本；`topic` 只做 40 字符摘要标签，不写用户原文。
+
+## 4. 模块 API（`plugin/server/lib/attention-budget.js`）
+
+| API | 作用 |
+|---|---|
+| `createAttentionBudget({now, dayKeyFn, config, state})` | 创建实例；clock/dayKey 可注入（测试用） |
+| `canSpeak({nowMs,isReaction,topic,mode,dnd,fullscreen,typing})` | 判定是否允许；返回 `{allowed,reason,reasons,suppressed,frequencyFactor,used,max,remaining,...}`；reason：`ok/reaction/night/mode-quiet/dnd/fullscreen/typing/rejection-pause/topic-avoid/budget` |
+| `recordProactive({nowMs,...ctx})` | 发言成功后计数；被拦截则不计数 |
+| `recordReaction()` | 事件反应（不计数） |
+| `recordIgnored({topic,nowMs})` | 无视一次；达到阈值 → 24h 暂停 |
+| `recordQuiet({topic,nowMs})` | 显式静音 → 24h 暂停 |
+| `recordUserInteraction({nowMs})` | 清零拒绝/话题冷却 |
+| `suppression(ctx,nowMs)` / `frequencyFactor(nowMs)` / `topicAvoided(topic,nowMs)` | 单点查询 |
+| `view(nowMs)` / `logView(nowMs)` / `getState()` / `rollover(nowMs)` | 面板视图 / 日志计数 / 持久化状态 / 切日 |
+| `serializeBudgetState` / `deserializeBudgetState` / `readBudgetState(file)` / `writeBudgetStateAtomic(file,state)` | 持久化工具（非热路径） |
+| `ATTENTION_DEFAULTS` | 默认配置（3/4、23:30–08:00、拒绝 2 次/24h/0.5/7d） |
+
+## 5. 日志与隐私
+
+- 日志只允许：`{dayKey, used, max, hardCap, paused, rejectionCount, rejectionKind, frequencyFactor, topicAvoidCount}`（`logView()`）。
+- 禁止：用户文本、拒绝原因原文、路径、会话 ID、topic 原文（topic 仅摘要标签，且不落日志文本）。
+- 不新增 timer；落盘由接线层在状态变化后节流调用（如 ≥30s 合并）。
+
+## 6. 接线点（窗口后，另开分支）
+
+1. **whaleActs / 主动池**：决定说之前 `canSpeak(...)`；成功后 `recordProactive()`；被无视 60s → `recordIgnored()`；用户说"安静" → `recordQuiet()`；用户任何互动 → `recordUserInteraction()`。
+2. **CHAT settings**：面板频率档位只写 `proactivePerDay`（0–4 clamp），不直接写拒绝状态。
+3. **OS 输入**：`mode`（现有 mode）、`dnd/fullscreen/typing` 由宿主/OS 视窗状态提供；缺失默认 false。
+4. **持久化**：`attention-budget.json` 原子写 + 启动读取；与 `companion.json` 分离，各自 schema。
+5. **S0 安全例外**：approval/等待输入直通，不消耗主动预算。
+
+## 7. 回滚
+
+- 接线层开关（建议 `attentionBudget.enabled=false` 默认关）→ 不加载、不落盘、零副作用。
+- 删除 `attention-budget.json` 即恢复默认（3/天、无拒绝记忆）。
+- 本模块纯函数、无 schema 迁移依赖；合并前分支独立，不碰 main。
+
+## 8. 验收（本轮）
+
+- 单测 **13/13**：默认预算/硬上限 clamp/反应不计/切日重置+拒绝跨日/5 类抑制门/无视 2 次暂停+24h 恢复+频率 0.5/显式静音/用户互动清零/topic 7 天/序列化容错/原子写无 tmp 残留/日志仅计数枚举/本地时间助手。
+- `node plugin/server/test/attention-budget.test.mjs` 退出码 0；<1s；不启 DSH、不碰 pipe。
