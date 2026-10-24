@@ -15,12 +15,14 @@ const classifyTool = (name, rules) => {
   if (has(rules.readPrefixes)) return 'read'
   return 'unknown'
 }
-export function createStateMachine({
-  stateMap,
-  now = () => Date.now(),
-  mode = () => 'normal',
-  rng = Math.random
-} = {}) {
+export function createStateMachine(opts = {}) {
+  const {
+    stateMap,
+    now = () => Date.now(),
+    mode = () => 'normal',
+    initialState = 'idle',
+    initialCounters = null
+  } = opts
   if (!stateMap || !stateMap.states || !stateMap.events) throw new Error('state-map missing')
   const states = stateMap.states
   const events = stateMap.events
@@ -67,6 +69,7 @@ export function createStateMachine({
   const priorityOf = (name) => (stateDef(name) && Number(stateDef(name).priority)) || priorityTable.E2 || 60
   const ttlOf = (name) => (stateDef(name) && Number(stateDef(name).ttlMs)) || 0
   const minDwellOf = (name) => (stateDef(name) && Number(stateDef(name).minDwellMs)) || 0
+  if (initialState && stateDef(initialState)) current = String(initialState)
 
   const resolvePresentation = (target, sub) => {
     const def = stateDef(target)
@@ -181,6 +184,11 @@ export function createStateMachine({
     }
     if (type === 'llm/retry') counters.retry += 1
     if (type === 'session/event' && event.data && event.data.background) counters.backgroundCount += 1
+    if (type === 'user/message' && event.data && event.data.sessionChanged)
+      counters.activeSwitchCount = (counters.activeSwitchCount || 0) + 1
+    counters.jobs = counters.jobs || { active: 0, completedToday: 0, failedToday: 0 }
+    if (type === 'job/registered') counters.jobs.active = (counters.jobs.active || 0) + 1
+    if (type === 'job/settled') counters.jobs.active = Math.max(0, (counters.jobs.active || 0) - 1)
     current = target
     subkind = sub
     since = ts

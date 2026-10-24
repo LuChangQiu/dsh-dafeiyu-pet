@@ -26,8 +26,20 @@ for (const line of lines) {
   } catch {
     continue
   }
-  const mode = (fx.given && fx.given.preconditions && fx.given.preconditions.mode) || 'normal'
-  const m = createStateMachine({ stateMap: map, now: () => 0, mode: () => mode })
+  const pre = (fx.given && fx.given.preconditions) || {}
+  const mode = pre.mode || 'normal'
+  if (!pre.state) {
+    fail++
+    failures.push({ id: fx.id, error: 'missing preconditions.state' })
+    continue
+  }
+  const m = createStateMachine({
+    stateMap: map,
+    now: () => 0,
+    mode: () => mode,
+    initialState: pre.state,
+    initialCounters: pre.counters || null
+  })
   let snap = m.snapshot()
   for (const ev of (fx.given && fx.given.events) || []) snap = m.handle(ev, { mode })
   const exp = fx.expect || {}
@@ -38,7 +50,22 @@ for (const line of lines) {
   const okComp = !pres.composite || vocab.composites.has(pres.composite)
   const okExpr = !pres.expression || vocab.expressions.has(pres.expression)
   const okFx = !pres.fx || vocab.fx.has(pres.fx)
-  const okCounters = !exp.counters || Object.entries(exp.counters).every(([k, v]) => snap.counters[k] === v)
+  const PERF_COUNTERS = ['costLedgerUpdated']
+  const own = Object.keys(exp.counters || {}).filter((k) => PERF_COUNTERS.includes(k))
+  if (own.length) {
+    fail++
+    failures.push({ id: fx.id, error: 'counter ownership: ' + own.join(',') })
+    continue
+  }
+  const okCounters =
+    !exp.counters ||
+    Object.entries(exp.counters).every(([k, v]) => {
+      if (k.startsWith('jobs.')) {
+        const sub = k.slice(5)
+        return (snap.counters.jobs || {})[sub] === v
+      }
+      return snap.counters[k] === v
+    })
   if (okState && okSub && okClip && okComp && okExpr && okFx && okCounters) pass++
   else {
     fail++

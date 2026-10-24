@@ -3,9 +3,9 @@
   "version": 2.1,
   "doc": "STATE-SEMANTICS.md v1.1 / PERFORMANCE-CONTRACT.md v1.1",
   "docVersion": "1.1",
-  "fixturesVersion": "1.2",
-  "fixtureSchemaVersion": 2,
-  "fixturesClarification": "docs/FIXTURE-CLARIFICATION-v1.md（intent/oneShot/presentation/counters 权威口径）",
+  "fixturesVersion": "1.3",
+  "fixtureSchemaVersion": 3,
+  "fixturesClarification": "docs/FIXTURE-CLARIFICATION-v1.md + docs/FIXTURE-CLARIFICATION-v2.md（v2 裁决 assistant/message、preconditions 必填、counters 归属）",
   "fixturesCount": 54,
   "vocabulary": "docs/vocabulary.draft.json@1.2（ACT/FX/EXPRESSION/BUBBLE 唯一词表真源；本文件禁止另立同名表）",
   "vocabularyCompat": {
@@ -219,6 +219,10 @@
     "model/selection": { "target": "model_switch", "subkind": "selection", "tier": "E2", "cooldownMs": 60000 },
     "request/context": { "target": "model_switch", "subkind": "route", "tier": "E2", "cooldownMs": 60000, "panelOnly": true },
     "session/created": { "target": null, "counters": ["sessions"] },
+    "assistant/message": {
+      "target": null, "stateUnchanged": true, "counters": [],
+      "note": "usage-only：不改变 state；账本归 cost/perf 层；正文禁止解析；显式登记=不计 unknownEventCount"
+    },
     "session/disposed": { "target": "session_focus", "when": "was current", "tier": "E2" },
     "goal/change": { "target": null, "oneShot": true, "tier": "E2" },
     "plan/mode": { "target": null, "oneShot": true, "tier": "E2" },
@@ -260,21 +264,29 @@
     }
   },
   "fixtureCounters": {
-    "canonicalKeys": ["turn", "step", "toolCalls", "toolResults", "approvalsAsked", "approvalsDecided", "retry", "jobs.active", "jobs.completedToday", "jobs.failedToday", "backgroundCount", "unknownEventCount", "unknownIntentKind", "dispatchCount", "costLedgerUpdated"],
-    "rule": "绝对期望（回放后累计），只列被影响 key；tool/approval 按 id 去重；turn/step 为事件次数，与 data.turn 数值无关",
+    "ownership": {
+      "stateMachine": ["turn", "step", "toolCalls", "toolResults", "approvalsAsked", "approvalsDecided", "retry", "jobs.active", "backgroundCount", "unknownEventCount", "unknownIntentKind", "dispatchCount", "activeSwitchCount"],
+      "perfCost": ["costLedgerUpdated", "jobs.completedToday", "jobs.failedToday"],
+      "panel": ["tokenUsage", "contextPressure", "usageTotals"]
+    },
+    "stateMachineKeysCanonical": ["turn", "step", "toolCalls", "toolResults", "approvalsAsked", "approvalsDecided", "retry", "jobs.active", "backgroundCount", "unknownEventCount", "unknownIntentKind", "dispatchCount", "activeSwitchCount"],
+    "rule": "state fixtures 的 expect.counters 只允许 stateMachine 表 key；出现 perfCost/panel key → fixture invalid: counter ownership FAIL；绝对期望（回放后累计），tool/approval 按 id 去重；turn/step 为事件次数，与 data.turn 数值无关",
     "dedupe": { "toolCalls": "callId", "toolResults": "callId", "approvalsAsked": "id", "approvalsDecided": "id", "jobs.active": "jobId", "backgroundCount": "session" }
   },
   "fixtureSchema": {
-    "version": 2,
-    "count": 54,
-    "files": ["docs/state-fixtures.draft.jsonl"],
+    "version": 3,
+    "count": {"state": 54, "performance": 32},
+    "files": ["docs/state-fixtures.draft.jsonl", "docs/performance-fixtures.draft.jsonl"],
+    "requiredPreconditions": ["state"],
+    "preconditionsRule": "schema 3 起 given.preconditions.state 必填（无先前状态显式写 idle）；preconditions.counters 承载初始计数（不再接受顶层点号 key）",
     "requiredExpect": ["state"],
+    "noRouteEvents": ["assistant/message", "session/title"],
     "oneShotRule": {
       "stateExit": ["approval/decided", "userQuestions.settled"],
       "pureOneShot": ["goal/change", "plan/mode", "team/task", "team/member", "working-directory/change"],
       "rule": "state-exit 改 state（stateUnchanged:false）；pure oneShot state 不变（state 回显当前值，stateUnchanged:true）；每条 fixture 必须有 expect.state"
     },
-    "clarification": "docs/FIXTURE-CLARIFICATION-v1.md"
+    "clarification": ["docs/FIXTURE-CLARIFICATION-v1.md", "docs/FIXTURE-CLARIFICATION-v2.md"]
   },
   "oneShots": {
     "approval_return": { "on": "approval/decided", "clip": "turnStop", "expression": "idleSmile", "bubbleLevel": "S3", "move": "back", "cooldownMs": 15000 },
