@@ -1,7 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 const root = process.cwd()
-const manifestPath = join(root, '..', '..', 'pet-integration-src', 'pet-work', 'assets', 'whale-girl', 'manifest.json')
+const candidates = [
+  join(root, 'assets', 'whale-girl', 'manifest.json'),
+  join(root, 'pet', 'assets', 'whale-girl', 'manifest.json'),
+  join(root, '..', '..', 'pet-integration-src', 'pet-work', 'assets', 'whale-girl', 'manifest.json')
+]
+const manifestPath = candidates.find((p) => existsSync(p)) || candidates[candidates.length - 1]
 const fallbackClips = [
   'idle',
   'walk',

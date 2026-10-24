@@ -4084,6 +4084,12 @@ class PetWindow(QWidget):
             "whale": {
                 "on": True,
             },
+            # 失联休眠（task-77）：DSH 长时间没消息 → 离线打盹；默认不擅自退出（Agent 安全）
+            "lifecycle": {
+                "offlineAfterMs": 120000,   # 2 分钟没收到任何管道命令 → 进入离线打盹
+                "exitWithDsh": False,       # 默认不跟 DSH 一起退出，防误退
+                "exitAfterMs": 600000,      # exitWithDsh=true 时，静默满 10 分钟才退出
+            },
             # A 路线 2.5D「3D 感」增强（task-74；默认开，render.enhance=false 完全回滚原渲染）
             "render": {
                 "enhance": True,
@@ -4206,6 +4212,29 @@ class PetWindow(QWidget):
         except Exception as _whale_err:
             print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
             self._whale = None
+
+        # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
+        _lc = self.cfg.get("lifecycle")
+        if not isinstance(_lc, dict):
+            _lc = {}
+        try:
+            _lc_off = int(_lc.get("offlineAfterMs", 120000) or 120000)
+        except (TypeError, ValueError):
+            _lc_off = 120000
+        try:
+            _lc_exit = int(_lc.get("exitAfterMs", 600000) or 600000)
+        except (TypeError, ValueError):
+            _lc_exit = 600000
+        self.lifecycle = {
+            "offlineAfterMs": max(5000, min(3600000, _lc_off)),
+            "exitWithDsh": bool(_lc.get("exitWithDsh", False)),
+            "exitAfterMs": max(60000, min(86400000, _lc_exit)),
+        }
+        self._last_line_at = time.time()     # 最近一次收到管道命令的墙上时间
+        self._life_offline = False           # 离线打盹中
+        self._life_offline_at = 0.0
+        self._life_greet_at = 0.0            # 醒来问好的冷却（墙上时间）
+        self._life_silent_ms = 0
 
         # 状态
         self.mode = self.cfg["mode"] if self.cfg["mode"] in ("wander", "follow", "still") else "wander"
@@ -7134,6 +7163,72 @@ class PetWindow(QWidget):
         if w.has("land"):
             self._whale_force_play("land")
 
+    # ---------- 失联休眠（task-77） ----------
+    def _life_tick(self):
+        """管道静默太久 → 离线打盹；重新收到命令/用户操作 → 醒来问好（冷却）。
+
+        默认只在本地打盹、不退出（lifecycle.exitWithDsh=false 防误退）。
+        """
+        now = time.time()
+        silent = max(0.0, now - float(getattr(self, "_last_line_at", now) or now))
+        self._life_silent_ms = int(silent * 1000)
+        lc = getattr(self, "lifecycle", None) or {}
+        off_ms = max(1000, int(lc.get("offlineAfterMs", 120000) or 120000))
+        if bool(lc.get("exitWithDsh", False)):
+            exit_ms = max(60000, int(lc.get("exitAfterMs", 600000) or 600000))
+            if silent * 1000.0 >= exit_ms:          # 只在显式开启时才退出
+                print("失联休眠：静默 %.0fs 且 exitWithDsh=true，准备退出" % silent)
+                try:
+                    QTimer.singleShot(0, QApplication.instance().quit)
+                except Exception:
+                    pass
+                return
+        if not getattr(self, "_life_offline", False):
+            if silent * 1000.0 >= off_ms:
+                self._life_enter_offline(now)
+            return
+        # 打盹中：命令到达（_last_line_at 被刷新）→ 醒；否则维持 sleep 末帧
+        if silent * 1000.0 < off_ms:
+            self._life_wake(now)
+        elif (not self.dragging
+              and getattr(self, "_whale_force", None) not in ("sleep", "wake")):
+            self._whale_force_play("sleep")
+
+    def _life_enter_offline(self, now=None):
+        """进入离线打盹：停下所有动作、躺平睡觉；白天冒一个"？"，深夜/免打扰不冒泡（28 §4.8）。"""
+        now = time.time() if now is None else now
+        if getattr(self, "_life_offline", False):
+            return
+        self._life_offline = True
+        self._life_offline_at = now
+        self.target = None
+        self.cur_speed = 0.0
+        try:
+            self._enh_phys = None
+        except Exception:
+            pass
+        self._whale_force_play("sleep")
+        if self._whale_gag_ok():
+            self._bridge_bubble_kind = ""
+            self.say("……？（等你好久了）", inner=True, seconds=4.0)
+        print("失联休眠：进入离线打盹（静默 %.1fs）" % (now - getattr(self, "_last_line_at", now)))
+
+    def _life_wake(self, now=None):
+        """退出离线打盹：起身 + 问候（120 秒冷却；深夜/免打扰不冒泡）。"""
+        now = time.time() if now is None else now
+        if not getattr(self, "_life_offline", False):
+            return
+        self._life_offline = False
+        self._life_offline_at = 0.0
+        self.rest_until = self.t * self.tick_ms + random.randint(2000, 5000)
+        if not self._whale_force_play("wake"):
+            self._whale_clear_force()
+        if self._whale_gag_ok() and now - getattr(self, "_life_greet_at", 0.0) >= 120.0:
+            self._life_greet_at = now
+            self._bridge_bubble_kind = "greet"
+            self.say("你回来啦～我还以为你把我忘了", seconds=4.2)
+        print("失联休眠：醒来")
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
@@ -7144,6 +7239,9 @@ class PetWindow(QWidget):
             # 用户操作优先：拖拽/抛掷一开始就清掉外部强制动作（act: 播一半也打断）
             if self.dragging:
                 self._whale_clear_force()
+                if getattr(self, "_life_offline", False):
+                    self._life_wake()       # 被拎起来就醒（sleep 不会压住拖拽帧）
+                    self._whale_clear_force()
             force = self._whale_force
             if force:
                 if w.has(force):
@@ -7229,6 +7327,7 @@ class PetWindow(QWidget):
     # ---------- 逻辑 ----------
     def tick(self):
         self.t += 1
+        self._life_tick()
         self._whale_tick()
 
         # 歌词换句的过渡动画：发现"该显示的那一句"变了就淡入淡出一下
@@ -7368,6 +7467,9 @@ class PetWindow(QWidget):
             return
 
         if self.dragging:
+            self.update()
+            return
+        if getattr(self, "_life_offline", False):    # 失联打盹：原地睡着不动，等命令/用户操作
             self.update()
             return
         # A 路线增强：视线/边缘姿态/抛掷物理（物理接管时跳过普通移动）
@@ -8303,7 +8405,11 @@ class PetWindow(QWidget):
         force = getattr(self, "_whale_force", None)
         # 睡着被戳：先醒过来（act:sleep / 失联打盹都可能停在 sleep）
         if force == "sleep" and w.cur == "sleep" and w.has("wake"):
-            self._whale_force_play("wake")
+            if getattr(self, "_life_offline", False):
+                self._last_line_at = time.time()
+                self._life_wake()
+            else:
+                self._whale_force_play("wake")
             return True
         # 偷吃被抓包：sneak 播到一半被点 → 打断成 caught（STATE-MAP §5）
         if force == "sneak" and w.cur == "sneak" and w.has("caught"):
@@ -11010,6 +11116,10 @@ def main():
         if not line:
             return "legacy"
         now = time.time()
+        try:
+            w._last_line_at = now       # task-77：任意管道命令都算"有人在线"
+        except Exception:
+            pass
         if line.startswith("mute:"):
             try:
                 ms = max(0, min(86400000, int(line[5:].strip())))
@@ -11443,6 +11553,40 @@ def main():
                 print("联动桥 cmd 失败:", name, repr(exc))
                 return "cmderr:" + name
 
+        if line.startswith("life:"):
+            # life:status|offline|wake|after:<ms> —— 失联休眠查询/测试（task-77；只在本机管道）
+            body = line[5:].strip().lower()
+            try:
+                if body.startswith("after:"):
+                    try:
+                        ms = max(1000, min(3600000, int(float(body[6:].strip()))))
+                    except Exception:
+                        return "badlife"
+                    w.lifecycle["offlineAfterMs"] = ms
+                    return "life:after:" + str(ms)
+                if body == "offline":
+                    # 立刻睡：把"最近一次命令时间"拨到阈值之外，下一 tick 进入打盹
+                    w._last_line_at = time.time() - w.lifecycle["offlineAfterMs"] / 1000.0 - 1.0
+                    return "life:offline"
+                if body == "wake":
+                    w._last_line_at = time.time()
+                    w._life_wake()
+                    return "life:wake"
+                if body == "status":
+                    _w = getattr(w, "_whale", None)
+                    return "life:" + json.dumps({
+                        "offline": bool(getattr(w, "_life_offline", False)),
+                        "silentMs": int(getattr(w, "_life_silent_ms", 0)),
+                        "offlineAfterMs": int(w.lifecycle.get("offlineAfterMs", 120000)),
+                        "exitWithDsh": bool(w.lifecycle.get("exitWithDsh", False)),
+                        "exitAfterMs": int(w.lifecycle.get("exitAfterMs", 600000)),
+                        "clip": str(getattr(_w, "cur", "") if _w is not None else ""),
+                        "force": str(getattr(w, "_whale_force", "") or ""),
+                    }, ensure_ascii=False, separators=(",", ":"))
+                return "badlife"
+            except Exception:
+                return "lifeerr"
+
         if line == "ping":
             return "pong"
 
@@ -11468,21 +11612,25 @@ def main():
                 except Exception:
                     text = ""
                 line = text.split("\n", 1)[0].rstrip("\r")
-                if line.strip() == "ping":
-                    try:
-                        sock.write(b"pong\n")
+                try:
+                    _res = _bridge_dispatch(line)
+                except Exception as exc:
+                    _res = None
+                    print("联动桥处理失败:", repr(exc))
+                if _res is not None:
+                    print("联动桥:", _res)
+                _raw = line.strip()
+                if _res == "pong" or _raw.startswith("life:"):
+                    try:                    # ping 回 pong；life: 回一行文本（供 --read-reply 断言）
+                        sock.write(((_res or "") + "\n").encode("utf-8"))
                         sock.flush()
-                        sock.waitForBytesWritten(100)
+                        sock.waitForBytesWritten(150)
                     except Exception:
                         pass
                 try:
                     sock.disconnectFromServer()
                 except Exception:
                     pass
-                try:
-                    print("联动桥:", _bridge_dispatch(line))
-                except Exception as exc:
-                    print("联动桥处理失败:", repr(exc))
 
             def _read():
                 if state["done"]:

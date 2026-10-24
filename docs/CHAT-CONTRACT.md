@@ -55,7 +55,7 @@
 7. `chat.send` 的 act/fx 仅白名单；非白名单→剔除或 400（按实现），text/parts 越界→400。
 
 
-## act/fx 白名单（v1.2：代码生成，唯一真源 docs/generated/act-fx-whitelist.json）
+## act/fx 白名单（v1.2：代码生成，唯一真源 docs/generated/act-fx-whitelist.json；已切仓库内真源 assets/whale-girl/manifest.json）
 > 由 `scripts/gen-act-fx-whitelist.mjs` 从 manifest 17 clips + 11 composites + 29 §7 的 14 表情生成；`--check` 防漂移。以下为生成器说明，实际清单以 JSON 为准。
 - `FX_WHITELIST`（29 §7 的 14 表情名，见生成 JSON）：`blink, love, shy, zzz, sweat, dizzy, spin, heart, tear, anger, surprise, sleepy, happy, sad`
 - `ACT_WHITELIST`（manifest actions+composites ∪ 28 状态动作名，见生成 JSON）：`peek, jump, spin, shake, stretch, nod, walk, freeze, walk:center, walk:nearby, sit, cry, fall`
