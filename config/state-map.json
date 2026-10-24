@@ -3,7 +3,10 @@
   "version": 2.1,
   "doc": "STATE-SEMANTICS.md v1.1 / PERFORMANCE-CONTRACT.md v1.1",
   "docVersion": "1.1",
-  "fixturesVersion": "1.1",
+  "fixturesVersion": "1.2",
+  "fixtureSchemaVersion": 2,
+  "fixturesClarification": "docs/FIXTURE-CLARIFICATION-v1.md（intent/oneShot/presentation/counters 权威口径）",
+  "fixturesCount": 54,
   "vocabulary": "docs/vocabulary.draft.json@1.2（ACT/FX/EXPRESSION/BUBBLE 唯一词表真源；本文件禁止另立同名表）",
   "vocabularyCompat": {
     "version": "1.2",
@@ -86,72 +89,72 @@
     },
     "approval": {
       "priority": 90, "minDwellMs": 0, "ttlMs": 300000, "stateClass": "waiting", "perform": true, "petBehavior": "render",
-      "presentation": { "composite": "waitPeek", "expression": "surprised", "bubbleKind": "remind", "level": "S0", "fx": [] },
+      "presentation": { "composite": "waitPeek", "expression": "surprised", "bubbleKind": "remind", "bubbleLevel": "S0", "fx": [] },
       "walkToCenter": true, "reminderAfterMs": 25000,
       "subkindFrom": "toolTypeOf(approval/asked.toolName)"
     },
     "waiting_input": {
       "priority": 90, "minDwellMs": 0, "ttlMs": 300000, "stateClass": "waiting", "perform": true, "petBehavior": "render",
       "subkinds": {
-        "choice": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "level": "S0" },
-        "plan_review": { "composite": "think", "expression": "thinking", "bubbleKind": "remind", "level": "S0" },
-        "freeform": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "level": "S0" },
-        "multi": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "level": "S0" }
+        "choice": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "bubbleLevel": "S0" },
+        "plan_review": { "composite": "think", "expression": "thinking", "bubbleKind": "remind", "bubbleLevel": "S0" },
+        "freeform": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "bubbleLevel": "S0" },
+        "multi": { "composite": "waitPeek", "expression": "idleSmile", "bubbleKind": "remind", "bubbleLevel": "S0" }
       },
       "approvalPrecedence": true
     },
     "error": {
       "priority": 90, "minDwellMs": 6000, "ttlMs": 6000, "stateClass": "error", "perform": true, "petBehavior": "render",
-      "presentation": { "composite": "errorSequence", "expression": "sad", "bubbleKind": "normal", "level": "S1", "fx": ["sweat"], "fxChance": 0.5 },
+      "presentation": { "composite": "errorSequence", "expression": "sad", "bubbleKind": "normal", "bubbleLevel": "S1", "fx": ["sweat"], "fxChance": 0.5 },
       "subkinds": ["rate_limit", "auth", "timeout", "context", "max_tokens", "unknown"],
       "cooldownMs": 600000
     },
     "done": {
       "priority": 60, "minDwellMs": 3000, "ttlMs": 3000, "stateClass": "ready", "perform": true, "petBehavior": "render",
       "subkinds": {
-        "completed": { "composite": "cheer", "expression": "happy", "bubbleKind": "normal", "level": "S1", "fx": ["love"], "fxChance": 0.1 },
-        "report": { "composite": "report", "expression": "proud", "bubbleKind": "report", "level": "S1" },
-        "milestone": { "composite": "cheer", "expression": "happy", "bubbleKind": "report", "level": "S1", "fx": ["love"], "fxChance": 0.2 },
-        "aborted": { "clip": "turnStop", "expression": "pout", "bubbleKind": null, "level": "S2" },
-        "blocked": { "clip": "turnStop", "expression": "pout", "bubbleKind": null, "level": "S2", "bubbleChance": 0, "petBehavior": "panelOnly" },
-        "incomplete": { "clip": "turnStop", "expression": "sleepy", "bubbleKind": null, "level": "S3", "bubbleChance": 0, "petBehavior": "panelOnly",
+        "completed": { "composite": "cheer", "expression": "happy", "bubbleKind": "normal", "bubbleLevel": "S1", "fx": ["love"], "fxChance": 0.1 },
+        "report": { "composite": "report", "expression": "proud", "bubbleKind": "report", "bubbleLevel": "S1" },
+        "milestone": { "composite": "cheer", "expression": "happy", "bubbleKind": "report", "bubbleLevel": "S1", "fx": ["love"], "fxChance": 0.2 },
+        "aborted": { "clip": "turnStop", "expression": "pout", "bubbleKind": null, "bubbleLevel": "S2" },
+        "blocked": { "clip": "turnStop", "expression": "pout", "bubbleKind": null, "bubbleLevel": "S2", "bubbleChance": 0, "petBehavior": "panelOnly" },
+        "incomplete": { "clip": "turnStop", "expression": "sleepy", "bubbleKind": null, "bubbleLevel": "S3", "bubbleChance": 0, "petBehavior": "panelOnly",
           "covers": ["interrupted", "forked", "legacy"] }
       }
     },
     "cost": {
       "priority": 60, "minDwellMs": 0, "ttlMs": 8000, "stateClass": "idle", "perform": true, "petBehavior": "render",
-      "presentation": { "clip": null, "expression": "pout", "bubbleKind": "report", "level": "S1", "fx": [] },
+      "presentation": { "clip": null, "expression": "pout", "bubbleKind": "report", "bubbleLevel": "S1", "fx": [] },
       "bubbles": { "maxPerDay": 1, "respectQuietHours": true }
     },
     "session_focus": {
       "priority": 60, "minDwellMs": 0, "ttlMs": 2000, "stateClass": "idle", "perform": true, "petBehavior": "render",
-      "presentation": { "clip": "turnStop", "expression": "surprised", "bubbleKind": "inner", "level": "S3", "fx": [] },
+      "presentation": { "clip": "turnStop", "expression": "surprised", "bubbleKind": "inner", "bubbleLevel": "S3", "fx": [] },
       "cooldownMs": 5000
     },
     "job": {
       "priority": 70, "minDwellMs": 0, "ttlMs": null, "stateClass": "running", "perform": true, "petBehavior": "panelOnly",
-      "presentation": { "clip": "walk", "clipRate": 1.6, "expression": "idleSmile", "bubbleKind": "inner", "level": "S3", "factor": 0.6 },
+      "presentation": { "clip": "walk", "clipRate": 1.6, "expression": "idleSmile", "bubbleKind": "inner", "bubbleLevel": "S3", "factor": 0.6 },
       "bubbles": { "cooldownMs": 180000 }, "deriveFromCounters": "jobs.active",
       "backgroundOnly": { "perform": false, "note": "非当前会话作业只计数，不表演" }
     },
     "compaction": {
       "priority": 70, "minDwellMs": 0, "ttlMs": 600000, "stateClass": "running", "perform": true, "petBehavior": "render",
-      "presentation": { "composite": "think", "expression": "thinking", "bubbleKind": "inner", "level": "S2", "fx": ["sweat"], "fxAfterMs": 20000 },
+      "presentation": { "composite": "think", "expression": "thinking", "bubbleKind": "inner", "bubbleLevel": "S2", "fx": ["sweat"], "fxAfterMs": 20000 },
       "cooldownMs": 0
     },
     "model_switch": {
       "priority": 60, "minDwellMs": 0, "ttlMs": 4000, "stateClass": "idle", "perform": true, "petBehavior": "render",
-      "presentation": { "clip": "turnStop", "expression": "surprised", "bubbleKind": "normal", "level": "S3", "fx": [] },
+      "presentation": { "clip": "turnStop", "expression": "surprised", "bubbleKind": "normal", "bubbleLevel": "S3", "fx": [] },
       "cooldownMs": 60000
     },
     "sleep": {
       "priority": 30, "minDwellMs": 0, "ttlMs": null, "stateClass": "idle", "perform": true, "petBehavior": "render",
-      "presentation": { "clip": "sleep", "holdLast": true, "expression": "sleepy", "bubbleKind": null, "level": null, "fx": ["zzz"] },
+      "presentation": { "clip": "sleep", "holdLast": true, "expression": "sleepy", "bubbleKind": null, "bubbleLevel": null, "fx": ["zzz"] },
       "suppresses": ["idle", "proactive", "random"]
     },
     "offline": {
       "priority": 120, "minDwellMs": 0, "ttlMs": null, "stateClass": "disconnected", "perform": true, "petBehavior": "render",
-      "presentation": { "clip": null, "expression": "sleepy", "bubbleKind": null, "level": null, "fx": [] },
+      "presentation": { "clip": null, "expression": "sleepy", "bubbleKind": null, "bubbleLevel": null, "fx": [] },
       "suppresses": ["all"],
       "doc": "状态层 offline = 插件 30s 心跳断（pluginOfflineAfterMs）；pet 本地 120s 无联动打盹属表现层（lifecycleNap，default 120000ms），互不覆盖"
     },
@@ -171,7 +174,21 @@
     "tool/result": { "target": "thinking", "subkind": "step", "when": "all calls settled", "tier": "E1" },
     "approval/asked": { "target": "approval", "subkindFrom": "toolTypeOf(toolName)", "tier": "E0", "cooldownMs": 15000 },
     "approval/decided": { "target": "thinking", "subkind": "step", "tier": "E1", "cooldownMs": 15000, "oneShot": "approval_return" },
-    "user-questions/request": { "target": "waiting_input", "subkindFrom": "intent", "tier": "E0", "approvalPrecedence": true, "observeOnly": true },
+    "user-questions/request": {
+      "target": "waiting_input", "tier": "E0", "approvalPrecedence": true, "observeOnly": true,
+      "subkindRule": {
+        "precedence": [
+          "event.data.intent?.kind",
+          "event.data.questionKind",
+          "questions.find(q=>q.intent?.kind)?.intent.kind",
+          "questions.some(q=>q.multiSelect===true) ? 'multi' : 'choice'",
+          "questions.length===0 ? 'choice'"
+        ],
+        "map": { "plan-review": "plan_review", "freeform": "freeform", "choice": "choice", "multi": "multi" },
+        "unknown": "choice",
+        "unknownCounter": "unknownIntentKind"
+      }
+    },
     "userQuestions.settled": { "target": "thinking", "subkind": "step", "tier": "E1", "debounceMs": 500 },
     "agent/request-error": {
       "target": "error", "tier": "E0", "cooldownMs": 600000, "subkindFrom": "failure.code",
@@ -187,12 +204,12 @@
     "turn/end": {
       "target": "done|error", "subkindFrom": "reason.kind", "tier": "E0|E2",
       "reasonMap": {
-        "completed": { "state": "done", "subkind": "completed", "level": "S1", "perform": true },
-        "error": { "state": "error", "subkind": "unknown", "level": "S1", "perform": true },
-        "aborted": { "state": "done", "subkind": "aborted", "level": "S2", "perform": "bubble:false" },
-        "max-tokens": { "state": "error", "subkind": "max_tokens", "level": "S1", "perform": true },
-        "blocked": { "state": "done", "subkind": "blocked", "level": "S2", "perform": "panelOnly" },
-        "incomplete": { "state": "done", "subkind": "incomplete", "level": "S3", "perform": "panelOnly", "covers": ["interrupted", "forked", "legacy"] }
+        "completed": { "state": "done", "subkind": "completed", "bubbleLevel": "S1", "perform": true },
+        "error": { "state": "error", "subkind": "unknown", "bubbleLevel": "S1", "perform": true },
+        "aborted": { "state": "done", "subkind": "aborted", "bubbleLevel": "S2", "perform": "bubble:false" },
+        "max-tokens": { "state": "error", "subkind": "max_tokens", "bubbleLevel": "S1", "perform": true },
+        "blocked": { "state": "done", "subkind": "blocked", "bubbleLevel": "S2", "perform": "panelOnly" },
+        "incomplete": { "state": "done", "subkind": "incomplete", "bubbleLevel": "S3", "perform": "panelOnly", "covers": ["interrupted", "forked", "legacy"] }
       }
     },
     "compaction/start": { "target": "compaction", "subkind": "start", "tier": "E1" },
@@ -225,18 +242,50 @@
     "fxChancePer": "每次 state 进入独立掷骰",
     "compositePlayable": "仅 manifest 11 playable（note 为元数据空数组，presentation 忽略）",
     "unknownKey": "log + 回退 idleBase/idleSmile",
-    "multipleDelays": "取 max，不累加"
+    "multipleDelays": "取 max，不累加",
+    "canonicalKeys": ["clip", "composite", "expression", "fx", "bubbleKind", "bubbleLevel", "gaze", "move"],
+    "allowedExtensions": ["clipRate", "holdLast", "fxChance", "fxAfterMs", "bubbleChance", "slow"],
+    "deprecatedAliases": { "level": "bubbleLevel", "surface": "presentation.bubbleLevel", "bubble:'none'": "bubbleKind:null,bubbleLevel:null" },
+    "validation": {
+      "against": "vocabulary * _ALL（ACT_ALL/EXPRESSION_ALL/FX_ALL/BUBBLE_ALL/BUBBLE_LEVEL_ALL）",
+      "clip": "∈ ACT_ALL 且必须是 clip（17）",
+      "composite": "∈ ACT_ALL 且必须是 playable composite（11；note 排除）",
+      "expression": "∈ EXPRESSION_ALL（14；v1 renderer no-op）",
+      "fx": "string[]，每项 ∈ FX_ALL（7）",
+      "bubblePair": "bubbleKind 与 bubbleLevel 必须成对（同为 null 或同为非 null）",
+      "gaze": ["user", "user-cursor", "user-window", "screen-center", "feet", "edge-left", "edge-right", "edge-top", "edge-bottom", "none"],
+      "move": ["none", "walk", "back", "to-center", "to-edge", "off"],
+      "presentationNull": "允许显式 null（panelOnly/不参与基线比较）；缺省 ≠ null",
+      "unknownKey": "FAIL（fixture presentation invalid: unknown key）"
+    }
+  },
+  "fixtureCounters": {
+    "canonicalKeys": ["turn", "step", "toolCalls", "toolResults", "approvalsAsked", "approvalsDecided", "retry", "jobs.active", "jobs.completedToday", "jobs.failedToday", "backgroundCount", "unknownEventCount", "unknownIntentKind", "dispatchCount", "costLedgerUpdated"],
+    "rule": "绝对期望（回放后累计），只列被影响 key；tool/approval 按 id 去重；turn/step 为事件次数，与 data.turn 数值无关",
+    "dedupe": { "toolCalls": "callId", "toolResults": "callId", "approvalsAsked": "id", "approvalsDecided": "id", "jobs.active": "jobId", "backgroundCount": "session" }
+  },
+  "fixtureSchema": {
+    "version": 2,
+    "count": 54,
+    "files": ["docs/state-fixtures.draft.jsonl"],
+    "requiredExpect": ["state"],
+    "oneShotRule": {
+      "stateExit": ["approval/decided", "userQuestions.settled"],
+      "pureOneShot": ["goal/change", "plan/mode", "team/task", "team/member", "working-directory/change"],
+      "rule": "state-exit 改 state（stateUnchanged:false）；pure oneShot state 不变（state 回显当前值，stateUnchanged:true）；每条 fixture 必须有 expect.state"
+    },
+    "clarification": "docs/FIXTURE-CLARIFICATION-v1.md"
   },
   "oneShots": {
-    "approval_return": { "on": "approval/decided", "clip": "turnStop", "expression": "idleSmile", "level": "S3", "move": "back", "cooldownMs": 15000 },
+    "approval_return": { "on": "approval/decided", "clip": "turnStop", "expression": "idleSmile", "bubbleLevel": "S3", "move": "back", "cooldownMs": 15000 },
     "goal/change": {
-      "complete": { "composite": "cheer", "level": "S1" },
-      "block": { "expression": "sad", "level": "S1" },
-      "pause": { "expression": "pout", "level": "S3" },
-      "resume": { "expression": "idleSmile", "level": "S3" }
+      "complete": { "composite": "cheer", "bubbleLevel": "S1" },
+      "block": { "expression": "sad", "bubbleLevel": "S1" },
+      "pause": { "expression": "pout", "bubbleLevel": "S3" },
+      "resume": { "expression": "idleSmile", "bubbleLevel": "S3" }
     },
-    "plan/mode": { "pending": { "level": "S3" }, "active": { "level": "S3" } },
-    "team/task": { "allCompleted": { "composite": "cheer", "level": "S1" }, "newBlocked": { "level": "S2" }, "memberFailed": { "level": "S2" } }
+    "plan/mode": { "pending": { "bubbleLevel": "S3" }, "active": { "bubbleLevel": "S3" } },
+    "team/task": { "allCompleted": { "composite": "cheer", "bubbleLevel": "S1" }, "newBlocked": { "bubbleLevel": "S2" }, "memberFailed": { "bubbleLevel": "S2" } }
   },
   "priority": {
     "offline": 120, "user": 100, "E0": 90, "E1": 70, "E2": 60, "I": 50, "A": 30, "R": 10,
@@ -293,3 +342,4 @@
     "privacyWiden": "major", "unknownFallback": "idle", "scriptVersion": 2, "mapVersion": 2
   }
 }
+
