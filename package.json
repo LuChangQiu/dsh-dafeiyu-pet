@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "DSH 大肥鱼桌宠联动（单仓产品：pet/ + plugin/server + plugin/client）",
-  "scripts": {
+  "scripts": {`r`n    "verify:detached": "node scripts/harness/plugin-harness.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "prettier --write \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "nodecheck": "node scripts/lint.mjs"

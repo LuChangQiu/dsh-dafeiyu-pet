@@ -65,7 +65,7 @@ Invoke-Step "unit: pricing" { & node scripts/test-pricing.mjs }
 Invoke-Step "unit: mode" { & node scripts/test-mode.mjs }
 Invoke-Step "unit: privacy" { & node scripts/test-privacy.mjs }
 Invoke-Step "unit: team-view" { & node scripts/test-team-view.mjs }
-Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }
+Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }`r`nInvoke-Step "unit: detached harness" { & node scripts/harness/plugin-harness.mjs }
 
 # 7) git 状态（信息项，不判失败）
 Write-Host ""

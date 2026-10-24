@@ -42,7 +42,8 @@ export function createMockCtx(services = {}) {
     _dispose() {
       for (const fn of effects.splice(0)) {
         try {
-          fn()
+          const ret = fn()
+          if (typeof ret === 'function') ret()
         } catch (e) {
           throw new Error('dispose threw: ' + String((e && e.message) || e))
         }
