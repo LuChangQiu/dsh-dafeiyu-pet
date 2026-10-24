@@ -45,6 +45,7 @@ import {
   cycleKind,
   modeAllowsBubble,
   modeAllowsLlm,
+  modeAllowsAct,
   modeAllowsAction,
   modeAllowsStatusPush,
   modeAllowsAmbient,
