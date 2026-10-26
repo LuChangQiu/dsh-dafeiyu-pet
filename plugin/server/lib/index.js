@@ -131,8 +131,8 @@ const DEFAULTS = {
       nightEndMin: 8 * 60,
       interactiveUseLlm: true,
       statsLogEvery: 10,
-      // task-133：用户主动交互/点击类不按 6/h 卡死；总量由预算+总 cap 控制
-      interactivePerHour: 60
+      // task-133：交互/点击类**取消小时 kinds cap**（0=不限）；只有每日 ¥10 预算/真实失败才兜底
+      interactivePerHour: 0
     },
     enabled: true,
     provider: 'deepseek-official',
@@ -732,13 +732,22 @@ export function apply(ctx, rawConfig) {
       kindHourKey = hk
       kindCalls.clear()
     }
-    const cap =
-      kind === 'report'
-        ? linesCfg.reportPerHour || 3
-        : kind === 'spike'
-          ? linesCfg.spikePerHour || 2
-          : linesCfg.perKindPerHour || 6
-    if ((kindCalls.get(kind) || 0) >= cap) return fallback('kind-cap')
+    // 交互/点击类不受 per-kind 小时上限（用户要求"每句话都 LLM"）；预算/成本/真实失败才兜底
+    const interactiveKind =
+      INTERACTIVE_KINDS.has(kind) || kind === 'clickLine' || kind === 'doubleClickLine' || kind === 'sneakLine'
+    let cap
+    if (interactiveKind) {
+      const lim = Number(linesCfg.interactivePerHour)
+      cap = Number.isFinite(lim) && lim > 0 ? lim : Infinity
+    } else {
+      cap =
+        kind === 'report'
+          ? linesCfg.reportPerHour || 3
+          : kind === 'spike'
+            ? linesCfg.spikePerHour || 2
+            : linesCfg.perKindPerHour || 6
+    }
+    if (Number.isFinite(cap) && (kindCalls.get(kind) || 0) >= cap) return fallback('kind-cap')
     let llmAvailable = false
     try {
       const l = typeof ctx.get === 'function' ? ctx.get('llm') : null

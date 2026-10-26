@@ -44,6 +44,14 @@ const makeLlm = (mode = 'ok') => {
         await new Promise((r) => setTimeout(r, 800))
         throw Object.assign(new Error('aborted'), { code: 'ABORT_ERR' })
       }
+      if (mode === 'unique') {
+        const chars = '甲乙丙丁戊己庚辛壬癸'
+        const text = '测台词' + chars[i % 10] + chars[Math.floor(i / 10) % 10]
+        i++
+        yield { type: 'text-delta', text }
+        yield { type: 'finish' }
+        return
+      }
       if (mode === 'garbage') {
         yield { type: 'text-delta', text: '这不是 JSON，只是一句普通台词' }
         yield { type: 'finish' }
@@ -321,6 +329,39 @@ await run('V5 regression: 5 consecutive same LLM line → dedupe/norepeat', asyn
     assert.ok(sameTextTimes <= 1, 'same LLM line logged ' + sameTextTimes + ' times')
     assert.ok(/llm duplicate retry/.test(log), 'expected llm duplicate retry')
     assert.ok(st.byKind.turnEnd.llm <= 1, JSON.stringify(st.byKind))
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await run('clickLine kind-cap removed: 10 unique clicks all source:llm', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-nocap-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('unique') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    const cfg = baseConfig(dir, 'unique', { actions: { enabled: false } })
+    cfg.llm.lines.perKindPerHour = 1
+    cfg.llm.lines.interactivePerHour = 0 // 0 = 不限
+    mod.apply(ctx, cfg)
+    const items = Array.from({ length: 10 }, (_, i) => ({ id: 'nc-' + i, kind: 'click', context: {} }))
+    fs.writeFileSync(queueFile, JSON.stringify(items), 'utf8')
+    const ok = await waitFor(() => {
+      const st = readStats(dir)
+      return !!(st && st.byKind && st.byKind.clickLine && st.byKind.clickLine.llm >= 10)
+    }, 12000)
+    const st = readStats(dir)
+    assert.ok(ok, 'expected 10 clickLine llm (no kind-cap); stats=' + JSON.stringify(st))
+    assert.equal(st.byKind.clickLine.pool || 0, 0, 'no pool fallback for interactive clicks: ' + JSON.stringify(st))
+    assert.equal(
+      (st.fallbackReasons && st.fallbackReasons['kind-cap']) || 0,
+      0,
+      'kind-cap must not trigger: ' + JSON.stringify(st)
+    )
+    console.log(
+      'CLICK-NOCAP stats:',
+      JSON.stringify({ clickLine: st.byKind.clickLine, fallbackReasons: st.fallbackReasons })
+    )
     ctx._dispose()
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
