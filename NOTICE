@@ -23,3 +23,9 @@
 ## 4. 旧 A（已退役）
 
 - `assets/whale-girl`、`pet/sprites`、`pet/whale_skin.py` 及相关旧授权链已于 task-138 删除；本 NOTICE 不再包含其条款。
+
+## 5. pet 运行时素材
+
+- 图标：Lucide（ISC），许可见 pet/assets/icons/LICENSE-lucide.txt。
+- 音效/图标/small-whale.png：随桌宠源码提供，来源以上游项目/原有声明为准；仅内部使用，再分发前请自行核对第三方条款。
+

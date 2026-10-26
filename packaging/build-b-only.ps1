@@ -1,4 +1,4 @@
-﻿# B-only 桌宠发行打包（PyInstaller onedir）
+# B-only 桌宠发行打包（PyInstaller onedir）
 # 默认 dry-run；-Build 才真正打包（等 B PASS 后由 Lead 批准）。
 param(
   [switch]$Build,
@@ -33,7 +33,7 @@ $TP = Join-Path $PSScriptRoot 'third-party-b'
 $Placeholder = Join-Path (Split-Path -Parent $BWeb) 'placeholder.png'
 if (-not (Test-Path $Placeholder)) { $Placeholder = Join-Path $TP 'placeholder.png' }
 if (-not (Test-Path $Placeholder)) { $Placeholder = Join-Path $RepoRoot 'pet\assets\body-b\placeholder.png' }
-$SpecSrc = Join-Path $PSScriptRoot '桌宠-b-only.spec'
+$SpecSrc = Join-Path $PSScriptRoot 'pet-b-only.spec'
 if (-not (Test-Path (Join-Path $BWeb 'index.html'))) { throw "B 预览素材缺失: $BWeb" }
 if (-not (Test-Path $SpecSrc)) { throw "spec 缺失: $SpecSrc" }
 $webmCount = @(Get-ChildItem $BWebm -Filter '*.webm' -File).Count
@@ -67,7 +67,7 @@ $NoticeSrc = Join-Path $BWeb 'NOTICE.md'
 if (-not (Test-Path $NoticeSrc)) { $NoticeSrc = Join-Path $TP 'NOTICE-B.md' }
 Copy-Item $NoticeSrc (Join-Path $PetStage 'NOTICE-B.md') -Force
 Copy-Item (Join-Path $PSScriptRoot 'PROVENANCE-B.md') (Join-Path $PetStage 'PROVENANCE-B.md') -Force
-Copy-Item $SpecSrc (Join-Path $PetStage '桌宠-b-only.spec') -Force
+Copy-Item $SpecSrc (Join-Path $PetStage 'pet-b-only.spec') -Force
 
 # 5) 体积估算
 $petMB = [math]::Round((Get-ChildItem $PetStage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
@@ -87,7 +87,7 @@ $work = Join-Path $OutRoot 'build'
 New-Item -ItemType Directory -Force -Path $dist, $work | Out-Null
 Push-Location $PetStage
 try {
-  & $PythonExe -m PyInstaller --noconfirm --clean --distpath $dist --workpath $work '桌宠-b-only.spec'
+  & $PythonExe -m PyInstaller --noconfirm --clean --distpath $dist --workpath $work 'pet-b-only.spec'
   if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 } finally { Pop-Location }
 
@@ -104,3 +104,4 @@ $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
 "$hash  $(Split-Path -Leaf $zip)" | Set-Content ($zip + '.sha256') -Encoding ASCII
 Write-Output "[b-only] zip=$zip"
 Write-Output "[b-only] sha256=$hash"
+

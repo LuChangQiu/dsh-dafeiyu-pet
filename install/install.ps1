@@ -50,6 +50,14 @@ if (Test-Path $petRoot) {
   if (-not (Test-Path $dstPet)) { New-Item -ItemType Directory -Force -Path $dstPet | Out-Null }
   Copy-Item (Join-Path $petRoot '*') $dstPet -Recurse -Force
   Write-Info ("pet source released: " + $dstPet)
+# 3b) 释放运行时工具链到 pet-work\tools（start-pet/bootstrap/pet-cmd/selfcheck 等）
+$srcTools = Join-Path $RepoRoot 'scripts'
+if (Test-Path $srcTools) {
+  $dstTools = Join-Path $PetWork 'tools'
+  New-Item -ItemType Directory -Force -Path $dstTools | Out-Null
+  Copy-Item (Join-Path $srcTools '*') $dstTools -Recurse -Force
+  Write-Info ("runtime tools released: " + $dstTools)
+}
   $boot = Join-Path $RepoRoot 'scripts\bootstrap-pet.ps1'
   if (Test-Path $boot) {
     try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $boot -PetWork $PetWork -RepoRoot $RepoRoot | Out-Host } catch { Write-Info ("bootstrap warn: " + $_.Exception.Message) }
@@ -105,4 +113,5 @@ try {
   $top = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
   if ($top) { & git -C $top config core.hooksPath .githooks | Out-Null; Write-Info 'git hooksPath = .githooks' }
 } catch { Write-Info ('WARN: git hooks 配置失败: ' + $_.Exception.Message) }
+
 

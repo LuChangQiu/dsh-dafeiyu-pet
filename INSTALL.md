@@ -158,3 +158,6 @@ node pet-work\tools\pet-cmd.mjs ping
 - [ ] DSH 联动（可选）：重启 `dsh web` 后设置页出现管理面板；
 - [ ] 回滚：停进程后删除解压目录即可；已装插件按源码方式卸载；
 - [ ] 不包含：state/ui-config/memory/logs、LOCAL ONLY 素材、个人绝对路径配置。
+
+> 源码模式：若缺 B 素材，先执行 powershell -File scripts\\fetch-b-assets.ps1（从 npm/Release/本地 pet-work 注入 50 段 WebM）。
+

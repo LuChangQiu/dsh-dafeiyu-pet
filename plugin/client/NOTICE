@@ -8,7 +8,7 @@
 
 ## 1. 上游桌宠与 B 素材
 
-- 运行时依赖的桌宠程序 `桌宠.py` / `ui_console.py` 来自上游 fork（MIT）；本 fork 只保留 B 身体。
+- 桌宠程序为 B-only 独立版本（部分 UI 基础代码源自上游 MIT，已大幅改造；不包含旧 A）。
 - B 鲸鱼娘 WebM 素材来自 `dsh-whale-girl-pet`（作者 yanzwzz，MIT）；旧 A 素材/皮肤已退役。
 
 ## 2. PySide6 / Qt（LGPL）
@@ -25,7 +25,7 @@
 
 ## 4. 字体 / 图标 / 音效等素材
 
-- B 素材署名/许可见根 `NOTICE`、`packaging/third-party-b/`；旧 A 的 `assets/whale-girl`/`sprites` 已删除。
+- B 素材署名/许可见根 `NOTICE`、`packaging/third-party-b/`；源码类许可见根 `LICENSE`。
 - 用户自行添加的皮肤、音效、台词库不进入本仓库（见 `.gitignore` 的 `backup/`、`evidence/` 等）。
 
 ## 5. 其它
@@ -36,3 +36,4 @@
 
 ---
 维护：DSH 大肥鱼联动项目 · 最后更新：2026-10-23
+

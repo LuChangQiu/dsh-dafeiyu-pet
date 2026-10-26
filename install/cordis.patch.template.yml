@@ -8,13 +8,13 @@
         logFile: '{{PET_WORK}}\evidence\pet-bridge-main.log'
         logMaxBytes: 5242880
         stateFile: '{{PET_WORK}}\state.json'
-        stateV2File: '{{PET_WORK}}\bridge-state-v2.json'
+        stateFileV2: '{{PET_WORK}}\bridge-state-v2.json'
         uiConfigFile: '{{PET_WORK}}\ui-config.json'
         balancePush: { enabled: true, everyNTurns: 5, startup: true }
         uiActionFile: '{{PET_WORK}}\ui-action.json'
         lifecycle: { autoStart: true, startScript: '{{PET_WORK}}\tools\start-pet.ps1', bootstrapScript: '{{PET_WORK}}\tools\bootstrap-pet.ps1', releaseZipUrl: '', bootstrapStateFile: '{{PET_WORK}}\bootstrap-status.json' }
-        petSettings: { size: 0.36, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false }
-        poolsDir: '{{DSH_HOME}}\im\deliverables\pet-integration\implement\lines\pools'
+        petSettings: { size: 0.20, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false }
+        poolsDir: '{{PET_WORK}}\pools'
         receiptFile: '{{PET_WORK}}\pet\daily_receipt.txt'
         historyFile: '{{PET_WORK}}\pet\pet-lines-history.json'
         testHookFile: ''
@@ -70,6 +70,7 @@
         defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
+
 
 
 

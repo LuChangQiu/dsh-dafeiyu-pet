@@ -45,7 +45,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 > 给 AI Agent / DSH 的安装说明见 [`AGENTS.md`](AGENTS.md)。
 
 ## 发行包（B-only，免 Python）
-- 打包：`scripts\pet-build-release.ps1` → `dafeiyu-b-...-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入，不入 git）。
+- 打包：`scripts\pet-build-release.ps1` → `dafeiyu-b-...-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入，不入 git；源码模式先跑 `scripts\fetch-b-assets.ps1`）。
 - 分发：**内部小范围**，直接发 zip（解压即用）；不公开 Release（见 `PROVENANCE.md`）。
 - 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`，**276,704,799B / SHA256 `63D39B4C0430BE88DAB0E5B4826F75C61E4B484DD7F11041C4EA91789D64ECF7`**（解压即用；根级 INSTALL/selfcheck/许可齐全）。
 
@@ -59,6 +59,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 
 ## License
 MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`；**授权链与内部分发口径见 `PROVENANCE.md`（仅内部/同事使用，暂无公开 Release 计划）**。
+
 
 
 

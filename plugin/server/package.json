@@ -2,9 +2,11 @@
   "name": "dsh-pet-bridge-v49",
   "version": "0.49.0",
   "private": true,
+  "license": "MIT",
   "description": "P3: DSH session events -> dafeiyu pet protocol v2. v49: team/goal/plan/userQuestions v2 fields incl attribution bootstrap, TEST HOOK (usage/state/report, default off), itemized token pricing, control modes, privacy redaction, low-footprint host safety.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": { ".": "./lib/index.js", "./package.json": "./package.json" },
   "engines": { "node": ">=22.19" }
 }
+

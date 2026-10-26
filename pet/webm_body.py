@@ -38,6 +38,7 @@ def _resolve_assets_dir() -> Path:
     cands += [
         work / "tools" / "body-b" / "webm_pet",
         here / "assets" / "webm_body",
+        here / "assets" / "body-b",
         work / "third-party" / "dsh-whale-girl-pet" / "package",
     ]
     for c in cands:
@@ -646,3 +647,5 @@ if __name__ == "__main__":
     b.start()
     _QT.singleShot(8000, app.quit)
     raise SystemExit(app.exec())
+
+
