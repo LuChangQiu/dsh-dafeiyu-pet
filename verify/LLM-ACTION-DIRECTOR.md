@@ -152,3 +152,27 @@ LLM 生成 0.7–1.5s，**不能让点击干等**：
 - `actionDirector.enabled=false`：退回纯台词 LLM。
 - `actionDirector.channel='act'`：兼容旧 pet（无 perf 执行器时用）。
 - pet 侧关闭 perf：插件保持 act 通道即可。
+---
+
+## 11. v2.1 补充（2026-10-26 Lead 决定：B 身体为主词表）
+
+**词表优先级**：用户选定 **B 身体**（MIT 50 段 WebM）→ **B clip 名为主词表**；A（28 acts）仅作 fallback（B 缺资产/身体不支持时）。LLM prompt 顺序已改为 `[B 主词表（优先使用，精确复制）]` → `[A 回退词表（B 不可用时才用）]`，并加选择规则；非法仍降级单动作。
+
+**B clip 中文名 → 文件名映射**：`docs/generated/action-clips.json` v2 的 `files` 字段：`{"开始工作":"assets/thumb/开始工作.webm", ...}`（50 条；pet 执行器直接按名取文件，无需再映射表）。
+
+**操作矩阵（消费 ux `verify/OP-ACTION-MATRIX.md`）**：
+- turnStart=`开始工作`（A fallback walk/wave/land）
+- tool=`认真工作 / 工作思考 / 工作摸鱼`（A: think/hum；read→认真工作；command→认真工作/原地敲击桌面互动）
+- approval=`工作被打扰 / 举牌不是大肥鱼`（A: waitPeek/turnStop）
+- done=`工作结束 / 女仆屈膝礼仪`（A: cheer/report/idleSettle）
+- error=`被吓一跳（炸毛）/ 工作被打扰`（A: errorSequence/caught）
+- longTask=`长时间工作看表 / 看表叹气`（A: think/hum）
+- idle=`待机呼吸休闲 / 东张西望 / 悠闲哼歌 / 看天气 / 哈欠连天 / 打喷嚏 / 翻钱包 / 吃小鱼干`（A: idleBase/idleShift/idleSettle/idleStretch/hum）
+- click=`点击回应 - 开心跃动 / 害羞惊讶 / 傲娇生气（侧身展示）`（A: pat/tsundere/waitPeek）
+- 其它：plan/工作思考、team/认真工作、cost/翻钱包、reminder/举牌不是大肥鱼、multiSession/东张西望（均带 A fallback）。
+
+**优先级/立即**：沿用 OP-ACTION-MATRIX 的 P0（审批/等待/错误/掉线/会话恢复）≤250ms；**点击类先立即规则 B clip，LLM 台词/后续拍异步补**；同帧只 1 主动作；A/B 二选一；拖拽/物理/S0 可打断。
+
+**与 ux 矩阵的关系（重要）**：ux 写"LLM 不选动作"；本任务 action-director 是 **Lead 明确要求的例外**：LLM 只能在 A∪B 白名单内选/组合 2–4 拍，不得自造/改时机；非法立即降级单动作。已在 prompt 与解析层双重限制。
+
+**回退热切**：`ui-config.actionDirector = {enabled:boolean, channel:'perf'|'act', minGapMs}` 热应用（无需 reload）；B/pet 未就绪时设 `channel:'act'`，动作仍走 A，不丢；pet perf 执行器上线后切回 `perf`。

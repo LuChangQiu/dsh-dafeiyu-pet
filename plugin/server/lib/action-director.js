@@ -81,15 +81,30 @@ export const DIRECTOR_LIMITS = Object.freeze({
   intensityMax: 1.5
 })
 
-// DSH 操作 → 动作/clip 映射（写进 prompt 的语义提示；LLM 也可自由组合）
+// DSH 操作 → 动作/clip 映射（B 为主词表，A 为 fallback；消费 ux OP-ACTION-MATRIX v1）
 export const OP_ACTION_HINTS = Object.freeze({
-  turnStart: '开始工作（A: walk/wave/land；B: 开始工作）',
-  tool: '认真工作/思考/摸鱼（A: think/hum；B: 认真工作/工作思考/工作摸鱼）',
-  approval: '工作被打扰/等确认（A: waitPeek/turnStop；B: 工作被打扰）',
-  done: '工作结束（A: cheer/jump/land；B: 工作结束）',
-  error: '被吓一跳（A: caught/errorSequence；B: 被吓一跳（炸毛））',
-  longTask: '看表叹气（B: 看表叹气/长时间工作看表）',
-  idle: '随机 idle 池（A: idleBase/idleShift/idleSettle/idleStretch/hum；B: 待机呼吸休闲/东张西望/悠闲哼歌/看天气/哈欠连天）'
+  turnStart: 'B: 开始工作 / 原地漂浮踏步；A fallback: walk/wave/land',
+  tool: 'B: 认真工作 / 工作思考 / 工作摸鱼；A fallback: think/hum',
+  toolRead: 'B: 认真工作；A fallback: think/turnStop',
+  toolCommand: 'B: 认真工作 / 原地敲击桌面互动；A fallback: walk/turnStop',
+  approval: 'B: 工作被打扰 / 举牌不是大肥鱼；A fallback: waitPeek/turnStop',
+  waitingInput: 'B: 空白举牌；A fallback: waitPeek',
+  done: 'B: 工作结束 / 女仆屈膝礼仪；A fallback: cheer/report/idleSettle',
+  error: 'B: 被吓一跳（炸毛）/ 工作被打扰；A fallback: errorSequence/caught',
+  longTask: 'B: 长时间工作看表 / 看表叹气；A fallback: think/hum',
+  cost: 'B: 翻钱包；A fallback: report',
+  plan: 'B: 工作思考；A fallback: report/think',
+  team: 'B: 认真工作；A fallback: report/walk',
+  reminder: 'B: 举牌不是大肥鱼；A fallback: wave/jump',
+  multiSession: 'B: 东张西望；A fallback: turnStop',
+  idle: 'B: 待机呼吸休闲 / 东张西望 / 悠闲哼歌 / 看天气 / 哈欠连天 / 打喷嚏 / 翻钱包 / 吃小鱼干；A fallback: idleBase/idleShift/idleSettle/idleStretch/hum',
+  click:
+    'B: 点击回应 - 开心跃动 / 点击回应 - 害羞惊讶 / 点击回应 - 傲娇生气（侧身展示）；A fallback: pat/tsundere/waitPeek',
+  pat: 'B: 点击回应 - 害羞惊讶 / 女仆屈膝礼仪；A fallback: pat',
+  feed: 'B: 吃小鱼干 / 吃盒饭；A fallback: eat/eatSatisfied',
+  come: 'B: 东张西望；A fallback: waitPeek/walk',
+  sneakCaught: 'B: 偷吃零食被抓住 / 偷吃Token；A fallback: caught',
+  celebrate: 'B: 工作结束；A fallback: cheer/jump/land'
 })
 
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u
@@ -106,13 +121,14 @@ export const buildDirectorSuffix = ({ acts = [], clips = CLIP_NAMES, maxBeats = 
     '[导演任务] 在台词之外，给 2–4 拍动作计划，帮助表达这句话。',
     '[输出格式] 只输出 JSON（不要 Markdown/解释/引号包裹），形如：',
     '{"text":"台词（≤40字，≤2句，无emoji/数字）","beats":[{"act":"think","ms":800,"intensity":1,"transitionMs":120},{"act":"hum","ms":600}],"interrupt":false}',
-    `[A 动作白名单] 只能使用：${actList.join(', ')}`,
-    `[B clip 白名单] 也可使用以下 clip 名（精确复制）：${clipList.join('、')}`,
+    `[B 主词表（优先使用，精确复制）] ${clipList.join('、')}`,
+    `[A 回退词表（B 不可用时才用）] ${actList.join(', ')}`,
     `[限制] beats ${DIRECTOR_LIMITS.minBeats}–${maxBeats} 个；ms ${DIRECTOR_LIMITS.beatMsMin}–${DIRECTOR_LIMITS.beatMsMax}；intensity ${DIRECTOR_LIMITS.intensityMin}–${DIRECTOR_LIMITS.intensityMax}（可选）；transitionMs ${DIRECTOR_LIMITS.transitionMsMin}–${DIRECTOR_LIMITS.transitionMsMax}（可选）；text 必须是一句完整台词。`,
     `[语义提示] ${Object.entries(OP_ACTION_HINTS)
       .map(([k, v]) => `${k}=${v}`)
       .join('；')}。`,
-    '[禁忌] 不生成清单/解释/多个 JSON；不重复上一句；不做危险/剧烈动作；A/B 都不要自造名字。'
+    '[选择规则] 优先 B clip；仅当 B 在当前身体不可用/缺资产时才用 A act；A/B 都不要自造名字。',
+    '[禁忌] 不生成清单/解释/多个 JSON；不重复上一句；不做危险/剧烈动作。'
   ].join('\n')
 }
 

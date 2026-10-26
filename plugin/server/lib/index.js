@@ -2091,6 +2091,20 @@ export function apply(ctx, rawConfig) {
         cfg.llm.budgetPerDayYuan = Number(j.llm.budgetPerDayYuan)
         applied.budgetPerDayYuan = cfg.llm.budgetPerDayYuan
       }
+      // task-133：动作导演热切（B/pet 未就绪时 channel='act' 回退，不丢动作）
+      if (j.actionDirector && typeof j.actionDirector === 'object') {
+        const ad = cfg.actionDirector || {}
+        if (typeof j.actionDirector.enabled === 'boolean') ad.enabled = j.actionDirector.enabled
+        if (j.actionDirector.channel === 'perf' || j.actionDirector.channel === 'act')
+          ad.channel = j.actionDirector.channel
+        if (Number.isFinite(Number(j.actionDirector.minGapMs))) ad.minGapMs = Number(j.actionDirector.minGapMs)
+        cfg.actionDirector = ad
+        applied.actionDirector = { enabled: ad.enabled !== false, channel: ad.channel === 'perf' ? 'perf' : 'act' }
+      }
+      if (j.speechRequests && typeof j.speechRequests.enabled === 'boolean') {
+        cfg.speechRequests = { ...(cfg.speechRequests || {}), enabled: j.speechRequests.enabled }
+        applied.speechRequests = { enabled: j.speechRequests.enabled }
+      }
       if (j.pet && typeof j.pet === 'object') {
         applyPetSettings(j.pet)
         applied.pet = Object.keys(j.pet)
@@ -3263,7 +3277,26 @@ export function apply(ctx, rawConfig) {
     while (speechProcessedOrder.length > 200) speechProcessed.delete(speechProcessedOrder.shift())
   }
   // task-133：点击/交互类延迟 <250ms —— 收到请求先立即播放规则动作（不等待 LLM），LLM 台词/后续拍异步补
-  const QUICK_ACTION_BY_KIND = {
+  // B 身体（主）：点击类直接用 MIT clip 名；A 回退（旧 2D 身体 / channel='act'）
+  const QUICK_CLIP_BY_KIND = {
+    click: '点击回应 - 开心跃动',
+    doubleClick: '点击回应 - 害羞惊讶',
+    praise: '点击回应 - 傲娇生气（侧身展示）',
+    pat: '点击回应 - 害羞惊讶',
+    head: '点击回应 - 害羞惊讶',
+    feed: '吃小鱼干',
+    come: '东张西望',
+    sneakCaught: '偷吃零食被抓住',
+    stealCaught: '偷吃Token',
+    celebrate: '工作结束',
+    report: '看表叹气',
+    approvalWait: '举牌不是大肥鱼',
+    waitingInput: '空白举牌',
+    greet: '睡眼惺忪',
+    sleep: '睡觉第一段',
+    error: '被吓一跳（炸毛）'
+  }
+  const QUICK_ACT_BY_KIND = {
     click: 'pat',
     doubleClick: 'waitPeek',
     praise: 'tsundere',
@@ -3273,15 +3306,21 @@ export function apply(ctx, rawConfig) {
     come: 'waitPeek',
     sneakCaught: 'caught',
     stealCaught: 'caught',
-    celebrate: 'cheer'
+    celebrate: 'cheer',
+    report: 'report',
+    approvalWait: 'waitPeek',
+    waitingInput: 'waitPeek',
+    greet: 'wake',
+    sleep: 'sleep',
+    error: 'caught'
   }
   const quickInteractionAction = (petKind) => {
     try {
       if (cfg.actions?.enabled === false) return false
-      const act = QUICK_ACTION_BY_KIND[petKind]
+      const channel = cfg.actionDirector?.channel === 'act' ? 'act' : 'perf'
+      const act = channel === 'perf' ? QUICK_CLIP_BY_KIND[petKind] : QUICK_ACT_BY_KIND[petKind]
       if (!act) return false
       const plan = { text: '', beats: [{ act, ms: 600, transitionMs: 120 }], intensity: 1, interrupt: true }
-      const channel = cfg.actionDirector?.channel === 'act' ? 'act' : 'perf'
       if (channel === 'perf') send('perf:' + perfPayload(plan, { kind: petKind, priority: 'high' }), { force: true })
       else send('act:' + act, { force: true })
       log('info', 'perf immediate', { kind: String(petKind).slice(0, 40), act, channel, latencyMs: 0 })
