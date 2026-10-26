@@ -29,3 +29,7 @@ plugin/client/test/harness/fixture.js
 
 dist-b/
 release-build/
+
+# B 素材（不入库；构建时从 third-party 注入）
+tools/body-b/
+*.webm

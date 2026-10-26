@@ -4,11 +4,16 @@ param(
   [switch]$Build,
   [string]$Version = '1.1.5-dsh.2-whalegirl',
   [string]$PythonExe = 'python',
-  [string]$BWeb = ''
+  [string]$BWeb = '',
+  [string]$OutDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$OutRoot = Join-Path $RepoRoot 'dist-b'
+if (-not $OutDir) { $OutDir = Join-Path $RepoRoot 'release-build\b-only' }
+$OutRoot = $OutDir
+$GitSha = ''
+try { $GitSha = (git -C $RepoRoot rev-parse --short HEAD 2>$null) } catch {}
+if (-not $GitSha) { $GitSha = 'nogit' }
 $Stage = Join-Path $OutRoot 'stage'
 $PetStage = Join-Path $Stage 'pet'
 Write-Output "[b-only] repo=$RepoRoot version=$Version build=$Build"
@@ -24,7 +29,9 @@ if (-not $BWeb) {
 }
 if (-not $BWeb) { throw 'B 素材目录未指定：用 -BWeb 或 DSH_PET_B_WEB 指向 webm_pet' }
 $BWebm = Join-Path $BWeb 'assets'
+$TP = Join-Path $PSScriptRoot 'third-party-b'
 $Placeholder = Join-Path (Split-Path -Parent $BWeb) 'placeholder.png'
+if (-not (Test-Path $Placeholder)) { $Placeholder = Join-Path $TP 'placeholder.png' }
 if (-not (Test-Path $Placeholder)) { $Placeholder = Join-Path $RepoRoot 'pet\assets\body-b\placeholder.png' }
 $SpecSrc = Join-Path $PSScriptRoot '桌宠-b-only.spec'
 if (-not (Test-Path (Join-Path $BWeb 'index.html'))) { throw "B 预览素材缺失: $BWeb" }
@@ -38,7 +45,8 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PetStage 'assets\icons'), 
   (Join-Path $PetStage 'assets\webm_body\assets'), (Join-Path $PetStage 'assets\body-b') | Out-Null
 
 # 2) pet 代码（不含 A assets/sprites/custom_skins）
-Copy-Item (Join-Path $RepoRoot 'pet\*.py') $PetStage -Force
+Get-ChildItem (Join-Path $RepoRoot 'pet\*.py') | Where-Object { $_.Name -ne 'whale_skin.py' } | Copy-Item -Destination $PetStage -Force
+Write-Output '[b-only] exclude A code: pet/whale_skin.py'
 Copy-Item (Join-Path $RepoRoot 'pet\icon.ico') $PetStage -Force
 if (Test-Path (Join-Path $RepoRoot 'pet\requirements.txt')) {
   Copy-Item (Join-Path $RepoRoot 'pet\requirements.txt') $PetStage -Force
@@ -52,8 +60,12 @@ Copy-Item (Join-Path $BWebm '*.webm') (Join-Path $PetStage 'assets\webm_body\ass
 Copy-Item $Placeholder (Join-Path $PetStage 'assets\body-b\placeholder.png') -Force
 
 # 4) 许可 / NOTICE / PROVENANCE
-Copy-Item (Join-Path $BWeb 'LICENSE') (Join-Path $PetStage 'LICENSE-B.txt') -Force
-Copy-Item (Join-Path $BWeb 'NOTICE.md') (Join-Path $PetStage 'NOTICE-B.md') -Force
+$LicSrc = Join-Path $BWeb 'LICENSE'
+if (-not (Test-Path $LicSrc)) { $LicSrc = Join-Path $TP 'LICENSE-B.txt' }
+Copy-Item $LicSrc (Join-Path $PetStage 'LICENSE-B.txt') -Force
+$NoticeSrc = Join-Path $BWeb 'NOTICE.md'
+if (-not (Test-Path $NoticeSrc)) { $NoticeSrc = Join-Path $TP 'NOTICE-B.md' }
+Copy-Item $NoticeSrc (Join-Path $PetStage 'NOTICE-B.md') -Force
 Copy-Item (Join-Path $PSScriptRoot 'PROVENANCE-B.md') (Join-Path $PetStage 'PROVENANCE-B.md') -Force
 Copy-Item $SpecSrc (Join-Path $PetStage '桌宠-b-only.spec') -Force
 
@@ -81,11 +93,11 @@ try {
 
 $appDir = Get-ChildItem $dist -Directory | Where-Object { $_.Name -match '桌宠' } | Select-Object -First 1
 if (-not $appDir) { throw '未找到构建输出目录' }
-$target = Join-Path (Join-Path $OutRoot $Version) ("dafeiyu-pet-win64-$Version")
-New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+$name = "dafeiyu-pet-win64-$Version-$GitSha"
+$target = Join-Path $OutRoot $name
 if (Test-Path $target) { Remove-Item -Recurse -Force $target }
 Move-Item $appDir.FullName $target
-$zip = Join-Path $OutRoot ("dafeiyu-pet-win64-$Version.zip")
+$zip = Join-Path $OutRoot ($name + '.zip')
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $target '*') -DestinationPath $zip -CompressionLevel Optimal
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash

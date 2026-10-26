@@ -37,3 +37,9 @@ powershell -File packaging\build-b-only.ps1 -Build -Version 1.1.5-dsh.2-whalegir
 - `LICENSE-B.txt`：dsh-whale-girl-pet MIT（yanzwzz）
 - `NOTICE-B.md`：署名 + AI/Vidu 来源 + 重编码说明
 - `PROVENANCE-B.md`：素材 commit/路径/处理链
+
+## 审计修正（P1/P2）
+
+- **P1**：stage/build 显式排除 `pet/whale_skin.py`（A 皮肤代码），spec `excludes=['whale_skin', ...]`；打包后 stage 无 A 代码/素材。
+- **P2**：`LICENSE-B.txt` / `NOTICE-B.md` / `placeholder.png` 已存入 git 内 `packaging/third-party-b/`（可复现）；50 段 WebM 仍不入 git（`.gitignore` 排除 `tools/body-b/`、`*.webm`），构建时从 `tools/body-b`/third-party 注入。
+- 静帧重生成：`python packaging/make-b-placeholder.py --webm <待机呼吸休闲.webm> -o packaging/third-party-b/placeholder.png`。

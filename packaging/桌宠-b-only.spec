@@ -57,7 +57,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PySide6.QtQuick3D', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender',
+    excludes=['whale_skin', 'PySide6.QtQuick3D', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender',
               'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtMultimediaWidgets'],
     noarchive=False,
     optimize=0,
