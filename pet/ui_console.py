@@ -3,7 +3,7 @@
 
 为什么要单独一个文件：这是全新的界面子系统（主题 / 图标 / 控件 / 十几个页面），
 塞进 6800 行的 `pet_app.py` 里以后没地方改。PyInstaller 会跟着 `import ui_console`
-自动收进去，打包只多一步：把 `assets/icons` 加进 `桌宠.spec` 的 datas。
+自动收进去，打包只多一步：把 `assets/icons` 加进 `pet-b-only.spec` 的 datas。
 
 两条硬规矩（2026-09-14 定的）：
   1. 图标一律单色，颜色走 currentColor，随亮/暗主题换色；
@@ -4069,3 +4069,4 @@ class ConsoleWindow(QWidget):
             self.search_edit.selectAll()
             return
         super().keyPressEvent(ev)
+
