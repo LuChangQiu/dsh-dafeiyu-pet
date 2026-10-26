@@ -246,6 +246,11 @@ try:
     import speech_requests as _speech_requests
 except Exception:      # LLM 台词队列缺失 → 固定台词降级（不阻塞启动）
     _speech_requests = None
+try:
+    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-low-end-device-mode")
+    import webm_body as _webm_body
+except Exception:      # B 身体模块缺失 → 回退 png/占位
+    _webm_body = None
 
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
@@ -3932,6 +3937,35 @@ def load_json(path, default):
         return default
 
 
+class StaticBodyWindow(QWidget):
+    """B 静帧/占位窗口：低内存或 B 加载失败时显示 MIT 鲸鱼娘静态帧，不回 A 外观。"""
+
+    def __init__(self, pix_path=''):
+        super().__init__()
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+                            Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setWindowTitle("whale-girl static body")
+        self._pix = QPixmap(pix_path) if pix_path else QPixmap()
+        self.resize(168, 198)
+
+    def set_pix(self, pix_path):
+        pm = QPixmap(pix_path) if pix_path else QPixmap()
+        if not pm.isNull():
+            self._pix = pm
+            self.update()
+
+    def paintEvent(self, _e):  # noqa: N802
+        if self._pix.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        x = (self.width() - self._pix.width()) // 2
+        y = self.height() - self._pix.height()
+        p.drawPixmap(x, y, self._pix)
+
+
 class PetWindow(QWidget):
     # ---------- 城市（联网添加） ----------
     def auto_locate_city(self):
@@ -4093,6 +4127,7 @@ class PetWindow(QWidget):
             # 鲸鱼娘 2D 帧动画皮肤（素材：codex-deepseek-pet；资产缺失自动回退 classic）
             "whale": {
                 "on": True,
+                "body": "webm",         # 用户 2026-10-26：只保留 B（MIT 鲸鱼娘 50 WebM），A 不再展示
                 "maxSize": 0.35,        # 用户偏好：最大显示尺寸（0.35 ≈ 生产上限；硬上限仍 1.35）
             },
             # LLM 台词请求（task-133）：正常走插件 LLM，固定台词仅故障兜底
@@ -4274,6 +4309,13 @@ class PetWindow(QWidget):
         self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
         self._anim_fast = False           # 过渡期 16ms 提频标记
         # ---- LLM 台词请求队列（task-133）：正常抑制固定台词，插件 say: 回来即取消兜底 ----
+        # ---- B 身体（WebM QWebEngineView，默认；失败回退占位/旧渲染）----
+        self._body = "png"
+        self._webm = None
+        self._webm_ready = False
+        self._webm_h = 105
+        self._webm_main_click_through = False
+        self._static_body = None
         self._speech = None
         self._speech_enabled = bool((self.cfg.get("speech") or {}).get("llmRequests", True))
         self._speech_log_path = ""
@@ -4283,6 +4325,27 @@ class PetWindow(QWidget):
                 self._speech_log_path = os.path.join(APP_DIR, "speech-debug.log")
         except Exception:
             pass
+        try:
+            _want_body = str((self.cfg.get("whale") or {}).get("body") or "webm")
+        except Exception:
+            _want_body = "webm"
+        if _want_body == "placeholder":
+            try:
+                if not self._show_static_body():
+                    self._body = "png"
+            except Exception:
+                self._body = "png"
+        elif _want_body == "webm":
+            try:
+                self._init_webm_body()
+            except Exception as _wexc:
+                print("WebM 身体初始化失败，回退 B 静帧:", repr(_wexc))
+                try:
+                    self._anim_log("webm init FAILED: %r" % (_wexc,))
+                except Exception:
+                    pass
+                self._show_static_body()
+                self._body = "placeholder"
         try:
             if _speech_requests is not None and self._speech_enabled:
                 _sp = self.cfg.get("speech") or {}
@@ -7450,6 +7513,311 @@ class PetWindow(QWidget):
                 pass
             self._speech_local(text)
 
+    # ---------- B 身体（WebM QWebEngineView）----------
+    def _static_pix_path(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        cands = [os.path.join(os.path.dirname(here), 'tools', 'body-b', 'placeholder.png'),
+                 os.path.join(here, 'assets', 'body-b', 'placeholder.png'),
+                 os.path.join(here, 'assets', 'webm_body', 'placeholder.png')]
+        for p in cands:
+            if os.path.isfile(p):
+                return p
+        return ''
+
+    def _show_static_body(self):
+        path = self._static_pix_path()
+        if not path:
+            return False
+        try:
+            if self._static_body is None:
+                self._static_body = StaticBodyWindow(path)
+            else:
+                self._static_body.set_pix(path)
+            pos = None
+            try:
+                if self._webm is not None and self._webm._view is not None:
+                    pos = self._webm._view.pos()
+            except Exception:
+                pos = None
+            if pos is None:
+                pos = self.pos()
+            self._static_body.move(pos)
+            self._static_body.show()
+            self._static_body.raise_()
+            self._body = "placeholder"
+            self.hide()
+            return True
+        except Exception:
+            return False
+
+    def _hide_static_body(self):
+        try:
+            if self._static_body is not None:
+                self._static_body.hide()
+        except Exception:
+            pass
+
+    def _webm_height(self):
+        try:
+            sz = float(self.cfg.get("size", 0.2) or 0.2)
+        except (TypeError, ValueError):
+            sz = 0.2
+        # 验收：B 人物显示身高 184±10px（窗口固定 168×198）
+        return max(174, min(194, int(round(184 * max(0.85, min(1.0, sz / 0.2))))))
+
+    def _init_webm_body(self):
+        if _webm_body is None:
+            raise RuntimeError('webm_body module missing')
+        try:
+            self._anim_log("webm init: assets=%s" % getattr(_webm_body, 'ASSETS_DIR', '?'))
+        except Exception:
+            pass
+        b = _webm_body.WebmBody(auto_click_clip=False)
+        try:
+            self._anim_log("webm init: view=%s assets=%s clips=%d" % (
+                b._view is not None, b.assets_dir, len(b.listClips())))
+        except Exception:
+            pass
+        b.error.connect(self._webm_on_error)
+        b.clicked.connect(self._webm_on_clicked)
+        b.positionChanged.connect(self._webm_on_pos)
+        b.dragFinished.connect(self._webm_on_drag_finished)
+        b.firstFrame.connect(self._webm_on_first_frame)
+        try:
+            b.clipChanged.connect(lambda n: self._anim_log("webm clip=%s" % n))
+        except Exception:
+            pass
+        b.start(show=False)
+        b.setSize(168, 198, self._webm_height())
+        # 初始位置：屏幕右下角（宠物区），主窗（168×198，气泡层）同位置
+        try:
+            _scr = QApplication.primaryScreen().availableGeometry()
+            _bx = int(_scr.right() - 168 - 24)
+            _by = int(_scr.bottom() - 198 - 8)
+            b.setPosition(_bx, _by)
+            self.move(_bx, _by)
+        except Exception:
+            pass
+        b.start(show=True)
+        self._webm = b
+        self._body = "webm"
+        self._whale = None            # A 外观不再展示
+        self.mode = "still"           # B 原型：静息为主，不做 A 的散步位移
+        self._apply_main_click_through(True)
+        self._webm_sync_main()
+        try:
+            self.hide()          # B 模式：旧 A QWidget 窗口不显示
+        except Exception:
+            pass
+        try:
+            v = b._view
+            self._anim_log("webm init done: visible=%s geom=%s,%s,%sx%s" % (
+                bool(v.isVisible()) if v else '?', v.x() if v else -1, v.y() if v else -1,
+                v.width() if v else -1, v.height() if v else -1))
+        except Exception:
+            pass
+        try:
+            self._anim_log("body=webm size=%d" % self._webm_h)
+        except Exception:
+            pass
+
+    def show(self):
+        if getattr(self, "_body", "png") == "placeholder":
+            try:
+                self._static_body.show()
+                self._static_body.raise_()
+            except Exception:
+                pass
+            return
+        if getattr(self, "_body", "png") == "webm" and getattr(self, "_webm", None) is not None:
+            try:
+                self._webm._view.show()
+                self._webm._view.raise_()
+            except Exception:
+                pass
+            return
+        super().show()
+
+    def _apply_main_click_through(self, on):
+        try:
+            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, bool(on))
+            self._webm_main_click_through = bool(on)
+            if self.isVisible():
+                self.show()
+        except Exception:
+            pass
+
+    def _webm_sync_main(self):
+        try:
+            b = self._webm
+            if b is None or b._view is None:
+                return
+            vp = b.position()
+            self.move(int(vp.x()), int(vp.y()))
+        except Exception:
+            pass
+
+    def _webm_on_first_frame(self, name, ms):
+        _first = not self._webm_ready
+        self._webm_ready = True
+        if _first:
+            try:
+                self._anim_log("webm firstFrame clip=%s ms=%.0f" % (name, ms))
+            except Exception:
+                pass
+        # B 规范：clip 切换 120ms（覆盖包内首次 180ms）；只覆盖一次，避免 firstFrame 回环重载
+        if not getattr(self, "_webm_idle_fade_fixed", False):
+            self._webm_idle_fade_fixed = True
+            try:
+                self._webm.playClip("待机呼吸休闲", 120, True)
+            except Exception:
+                pass
+
+    def _webm_on_error(self, msg):
+        print("[webm] error:", msg, flush=True)
+        try:
+            self._anim_log("webm error %s" % msg)
+        except Exception:
+            pass
+
+    def _webm_on_clicked(self, pos=None):
+        try:
+            self._anim_log("webm clicked pos=%s -> speech_request(click)" % (pos,))
+        except Exception:
+            pass
+        try:
+            self._speech_request("click", {"phase": "click"})
+        except Exception:
+            pass
+        try:
+            self._webm.playClip("点击回应 - 开心跃动", 120, False)
+        except Exception:
+            pass
+
+    def _webm_on_pos(self, _pos=None):
+        self._webm_sync_main()
+
+    def _webm_on_drag_finished(self, pos=None):
+        try:
+            self._anim_log("webm dragFinished pos=%s" % (pos,))
+        except Exception:
+            pass
+        try:
+            self.cfg["x"] = int(pos.x())
+            self.cfg["y"] = int(pos.y())
+        except Exception:
+            pass
+        self._webm_sync_main()
+
+    def _webm_play(self, act, loop=None):
+        b = getattr(self, "_webm", None)
+        if b is None:
+            return False
+        name = str(act or "")
+        mapped = None
+        try:
+            mapped = self._webm_map_act(name)
+        except Exception:
+            mapped = None
+        try:
+            self._anim_log("webm act=%s -> %s" % (name, mapped))
+        except Exception:
+            pass
+        if loop is None:
+            loop = (mapped or name) in ("待机呼吸休闲", "认真工作", "工作思考", "工作摸鱼",
+                                        "working", "thinking", "tool")
+        return b.playClip(mapped or name, 120, bool(loop))
+
+    def _webm_map_act(self, name):
+        n = str(name or "")
+        m = {
+            "idleBase": "待机呼吸休闲", "idle": "待机呼吸休闲", "background": "待机呼吸休闲",
+            "walk": "待机呼吸休闲", "turnStop": "东张西望", "idleShift": "工作摸鱼",
+            "idleSettle": "东张西望", "idleStretch": "超大伸懒腰", "hum": "悠闲哼歌",
+            "think": "工作思考", "thinking": "工作思考", "tool": "认真工作",
+            "waitPeek": "东张西望", "waiting": "东张西望", "waiting_input": "工作被打扰",
+            "waiting_approval": "东张西望", "approvalWait": "东张西望", "waitingInput": "工作被打扰",
+            "disconnected": "待机呼吸休闲", "unavailable": "待机呼吸休闲",
+            "approval": "东张西望", "done": "工作结束", "success": "工作结束",
+            "cheer": "女仆屈膝礼仪", "error": "工作被打扰", "errorSequence": "工作被打扰",
+            "cry": "被吓一跳（炸毛）", "caught": "摸鱼被抓", "pat": "点击回应 - 害羞惊讶",
+            "poke": "点击回应 - 开心跃动", "tsundere": "点击回应 - 傲娇生气（侧身展示）",
+            "tail": "用鲸鱼尾巴拍打地面", "eat": "吃小鱼干", "eatSatisfied": "吃盒饭",
+            "sleep": "睡觉第一段", "wake": "睡眼惺忪", "drag": "被鼠标拖拽悬空反馈",
+            "fall": "被吓一跳（炸毛）", "land": "工作结束", "dance": "小幅度原地 360 度旋转展示",
+            "wave": "点击回应 - 开心跃动", "report": "翻钱包", "note": "东张西望",
+            "lonelySit": "原地小憩沉眠", "sneak": "摸鱼被抓", "jump": "原地跳跃抓碎头顶物品",
+        }
+        if n in m:
+            return m[n]
+        # OP-MATRIX/原生 B clip 名直通
+        return n
+
+    def _webm_apply_state(self, name, st=None):
+        b = getattr(self, "_webm", None)
+        if b is None:
+            return False
+        n = str(name or "")
+        try:
+            _tt = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
+            self._anim_log("webm state=%s toolType=%s" % (n, _tt))
+        except Exception:
+            pass
+        if n == "tool":
+            tool = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
+            clip = "working_command" if any(k in tool for k in ("bash", "command", "shell", "terminal")) else (
+                "working_search" if any(k in tool for k in ("search", "grep", "find")) else "认真工作")
+            return b.playClip(clip, 120, True)
+        clip = self._webm_map_act(n)
+        loop = clip in ("待机呼吸休闲", "认真工作", "工作思考", "工作摸鱼")
+        return b.playClip(clip, 120, loop)
+
+    def set_body(self, kind):
+        """同进程切换身体：webm（B）/ png（旧渲染 / 低内存回退）。"""
+        kind = str(kind or "").lower()
+        if kind == "webm":
+            self._hide_static_body()
+            if getattr(self, "_body", "") == "webm":
+                return True
+            try:
+                self._init_webm_body()
+                self.cfg.setdefault("whale", {})["body"] = "webm"
+                return True
+            except Exception as exc:
+                print("切 B 失败:", repr(exc))
+                return False
+        if kind in ("png", "placeholder"):
+            b = getattr(self, "_webm", None)
+            if b is not None:
+                try:
+                    b.close()
+                except Exception:
+                    pass
+            self._webm = None
+            self._whale = None
+            self._apply_main_click_through(False)
+            ok = self._show_static_body()
+            self.cfg.setdefault("whale", {})["body"] = "placeholder" if ok else "png"
+            try:
+                self._anim_log("body=placeholder static ok=%s" % ok)
+            except Exception:
+                pass
+            return ok
+        return False
+
+    def closeEvent(self, event):
+        try:
+            b = getattr(self, "_webm", None)
+            if b is not None:
+                b.close()
+                self._webm = None
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
+        except Exception:
+            pass
+
     def _smooth_tick_rate(self):
         """walk/过渡期 60Hz tick（亚像素位移更顺）；静止恢复标准 tick。"""
         try:
@@ -8615,6 +8983,17 @@ class PetWindow(QWidget):
                 self._pending_bubbles.append((when, text, inner))
                 del self._pending_bubbles[:-6]        # 排太长了就丢掉最早的
                 return
+        if getattr(self, "_body", "png") == "webm" and getattr(self, "_webm", None) is not None:
+            try:
+                _txt = ("（" + text + "）") if inner else text
+                self._webm.showBubble(_txt, seconds)
+                self.last_line = text
+                self.bubble_inner = inner
+                self.bubble_text = _txt
+                self.bubble_until = self._secs() + seconds
+                return
+            except Exception:
+                pass
         self.last_line = text
         self.bubble_inner = inner
         self.bubble_text = f"（{text}）" if inner else text
@@ -11261,6 +11640,12 @@ class PetWindow(QWidget):
         old_x, old_y = self.x(), self.y()
         old_w, old_h = self.width(), self.height()
         self.cur_h = int(340 * mult)
+        if getattr(self, "_webm", None) is not None:
+            try:
+                self._webm.setSize(self._webm_height())
+                self._webm_sync_main()
+            except Exception:
+                pass
         self._prune_sprites(self.cur_h)
         self._ensure_sprites(self.cur_h)
         self._apply_window_size()
@@ -11402,6 +11787,7 @@ SINGLE_INSTANCE_KEY = "dafeiyu-pet-whale-single-instance"
 
 
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     install_qt_translator(app)      # Qt 自带按钮（OK / Cancel…）显示中文
@@ -11579,6 +11965,10 @@ def main():
             text = " ".join(line[4:].split())[:PIPE_TEXT_MAX]
             if text:
                 w._speech_on_reply()       # 插件 LLM 回复到达 → 取消本地兜底
+                try:
+                    w._anim_log("speech say len=%d" % len(text))
+                except Exception:
+                    pass
                 # 保留当前 bubble kind：既用于情绪色调，也允许 say: 触发对应节拍动作（cmd:style + say）
                 w.say(text, seconds=4.0, queue=True)
             return "said"
@@ -11639,10 +12029,94 @@ def main():
                 w.say(text, inner=True, seconds=4.0, queue=True)
             return "inner"
 
+        if line.startswith("dev:"):
+            # 开发/取证通道（不出现在正式协议文档；B 身体联调用）
+            try:
+                _dev = line[4:].strip()
+                if _dev.startswith("shotstatic:"):
+                    _path = _dev[11:].strip()
+                    _sb = getattr(w, "_static_body", None)
+                    if _sb is None:
+                        return "noStatic"
+                    _pm = _sb.grab()
+                    _pm.save(_path)
+                    return "shotstatic:" + _path
+                if _dev.startswith("shotb:"):
+                    _path = _dev[6:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None or _b._view is None:
+                        return "noB"
+                    _pm = _b._view.grab()
+                    _pm.save(_path)
+                    return "shotb:" + _path
+                if _dev == "info":
+                    import json as _json
+                    _b = getattr(w, "_webm", None)
+                    return _json.dumps({
+                        "body": getattr(w, "_body", ""),
+                        "webm": _b is not None,
+                        "clips": (len(_b.listClips()) if _b else 0),
+                        "current": (_b.currentClip() if _b else ""),
+                        "view": (([_b._view.x(), _b._view.y(), _b._view.width(), _b._view.height()]) if (_b and _b._view) else None),
+                        "main_visible": bool(w.isVisible()),
+                    }, ensure_ascii=False)
+                if _dev.startswith("bubble:"):
+                    _txt = _dev[7:].strip() or "测试气泡"
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _r = _b.showBubble(_txt, 4.0)
+                    try:
+                        w._anim_log("dev bubble ret=%s len=%d" % (_r, len(_txt)))
+                    except Exception:
+                        pass
+                    return "bubbleB:%s" % _r
+                if _dev.startswith("jseval:"):
+                    _code = _dev[7:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _b._page.runJavaScript(
+                        _code,
+                        lambda _r: w._anim_log("jseval=%s" % (_r,)))
+                    return "jsevalB"
+                if _dev.startswith("js:"):
+                    _code = _dev[3:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _b._page.runJavaScript(_code)
+                    return "jsB"
+                if _dev.startswith("play:"):
+                    _name = _dev[5:].strip()
+                    return "playB:" + str(w._webm_play(_name, loop=False))
+                if _dev == "click":
+                    w._webm_on_clicked(None)
+                    return "devclick"
+                if _dev.startswith("peek:"):
+                    _edge = _dev[5:].strip()
+                    if getattr(w, "_webm", None) is not None:
+                        w._webm.setPeek(_edge)
+                        return "peekB:" + _edge
+                    return "noB"
+                return "unknownDev:" + _dev[:40]
+            except Exception as _dexc:
+                return "devErr:" + repr(_dexc)[:80]
+
         if line.startswith("act:"):
             if muted:
                 return "muted"
             act = line[4:].strip().lower()
+            if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                raw = line[4:].strip()
+                if raw.lower() == "peek":
+                    try:
+                        w._webm.setPeek("left")
+                    except Exception:
+                        pass
+                    return "actedB:peek"
+                if w._webm_play(raw, loop=False):
+                    return "actedB:" + raw
             if act in ("jump", "hop"):
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.6)
             elif act == "sway":
@@ -11707,6 +12181,14 @@ def main():
             if muted:
                 return "muted"
             edge = line[5:].strip().lower()
+            if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                if edge in ("left", "l"):
+                    w._webm.setPeek("left")
+                elif edge in ("right", "r"):
+                    w._webm.setPeek("right")
+                else:
+                    w._webm.setPeek(None)
+                return "peekB:" + edge
             geo = _bridge_screen_geo()
             if geo is None:
                 return "nogeo"
@@ -11796,6 +12278,12 @@ def main():
                 _st = json.loads(line[6:])
                 w._bridge_state = _st
                 _name = str(_st.get("state") or "")
+                # B 身体：状态 → B clip（主路径）；A 映射保留给 png 回退
+                if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                    try:
+                        w._webm_apply_state(_name, _st)
+                    except Exception:
+                        pass
                 # 鲸鱼娘 2D 帧动画：DSH 状态 → 动作（thinking/tool/waiting/done/error 等）
                 _whale_map = {
                     "thinking": "think",
@@ -11895,6 +12383,8 @@ def main():
             try:
                 if name == "mode" and val in ("wander", "follow", "still"):
                     w.set_mode(val)
+                elif name == "body" and val in ("webm", "png"):
+                    return ("body:" + val + ":" + str(w.set_body(val)))
                 elif name == "size":
                     w.set_size(_bridge_num(val, 0.7))
                 elif name == "opacity":
