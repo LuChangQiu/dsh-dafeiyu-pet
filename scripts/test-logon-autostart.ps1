@@ -37,7 +37,7 @@ function Remove-TestTask {
 
 function Get-PetProcessCount {
   $py = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue | Where-Object {
-      $_.CommandLine -and $_.CommandLine -like '*桌宠.py*' }).Count
+      $_.CommandLine -and $_.CommandLine -like '*pet_app.py*' }).Count
   $exe = @(Get-Process -Name '大肥鱼桌宠' -ErrorAction SilentlyContinue).Count
   return ($py + $exe)
 }

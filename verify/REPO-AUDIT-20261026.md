@@ -21,7 +21,7 @@
 ## 2. 检查结果（全仓）
 
 - tracked：约 200 files / 2.5MB；无单文件 >1MB；`preflight 14/14` 保持通过。
-- 最大文件：`pet/桌宠.py` 573KB（主程序）、`pet/ui_console.py` 179KB、`pet/icon.ico` 157KB、`plugin/server/lib/index.js` 149KB、`plugin/client/lib/*.js` 100–111KB。
+- 最大文件：`pet/pet_app.py` 573KB（主程序）、`pet/ui_console.py` 179KB、`pet/icon.ico` 157KB、`plugin/server/lib/index.js` 149KB、`plugin/client/lib/*.js` 100–111KB。
 - 无 webm/mp4/模型/构建产物入库；50 段 B WebM 构建时注入。
 - 资源引用检查：保留的 `small-whale.png`/`icon.ico`/wav/svg 均有代码引用；删掉的 4 个 mp3 无引用。
 - 旧 A 历史记录仅保留在根 NOTICE/PROVENANCE/README 的“已退役”一句，不再有可执行路径。
@@ -29,16 +29,16 @@
 ## 3. 命名准确性
 
 **不准确/不一致（建议下一批改）**：
-- `pet/桌宠.py`（中文文件名）与 `packaging/桌宠-b-only.spec` 不符合英文命名规范；
-- 代码里仍引用 `桌宠.py` 的启动/打包/测试脚本约 30 处。
+- `pet/pet_app.py`（中文文件名）与 `packaging/桌宠-b-only.spec` 不符合英文命名规范；
+- 代码里仍引用 `pet_app.py` 的启动/打包/测试脚本约 30 处。
 
 改名方案（需要同步改启动脚本、PyInstaller spec、测试与生产 pet-work，并重打交付包）：
-`pet/桌宠.py → pet/pet_app.py`；`packaging/桌宠-b-only.spec → packaging/pet-b-only.spec`。
+`pet/pet_app.py → pet/pet_app.py`；`packaging/桌宠-b-only.spec → packaging/pet-b-only.spec`。
 本次未执行：会改变正在运行的桌宠入口与已交付包结构，风险高于收益；确认要做时按“分支改→全量测试→重打包→替换生产→归档旧名”执行。
 
 ## 4. 大文件/拆分/参数配置
 
-- 无超大文件；`pet/桌宠.py` 573KB 属单文件偏大（UI + 管道 + 动画 + 配置），建议后续拆 `app_core`/`pipe_protocol`/`animation`/`config` 四块；不是当前交付阻塞。
+- 无超大文件；`pet/pet_app.py` 573KB 属单文件偏大（UI + 管道 + 动画 + 配置），建议后续拆 `app_core`/`pipe_protocol`/`animation`/`config` 四块；不是当前交付阻塞。
 - 参数已有两层配置：`pet/config.json`（运行时外观/行为）+ `ui-config.json`（面板写入）；无硬编码绝对路径。
 - 仍有少量魔法数字（窗口尺寸/动画时长/气泡时长）散在代码；建议后续抽到 `pet/config_defaults.py`，本次不改以保稳定。
 

@@ -7,6 +7,7 @@
 """
 import argparse
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -14,7 +15,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
-FF = os.environ.get('FFMPEG', r'D:\Users\xiqi\ffmpeg-master-latest-win64-gpl-shared\bin\ffmpeg.exe')
+# FFmpeg 由 env / PATH 决定（不再硬编码开发机路径）
+FF = os.environ.get('FFMPEG') or shutil.which('ffmpeg') or 'ffmpeg'
 
 
 def main():

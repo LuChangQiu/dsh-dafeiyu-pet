@@ -14,16 +14,18 @@
 import math
 import random
 
+import pet_defaults
+
 DEFAULTS = {
     'enabled': True,
-    'crossfadeMs': 120,
-    'actionFadeMs': 120,
+    'crossfadeMs': pet_defaults.CLIP_FADE_MS,
+    'actionFadeMs': pet_defaults.CLIP_FADE_MS,
     'breathAmpPct': 0.5,      # ±0.5%（验收 0.3–0.6）
     'breathPeriodSec': 5.0,   # 验收 4–6s
     'swayDeg': 0.35,          # 轻微摇摆（验收 ≤0.6°）
     'floatPx': 1.2,           # 上下浮动
-    'microMinSec': 8.0,       # 待机微动作间隔（用户口径 8–15s）
-    'microMaxSec': 13.0,
+    'microMinSec': pet_defaults.MICRO_MIN_SEC,   # 待机微动作间隔（用户口径 8–15s；pet_defaults 集中）
+    'microMaxSec': pet_defaults.MICRO_MAX_SEC,
     'microCooldownSec': 1.5,
 }
 

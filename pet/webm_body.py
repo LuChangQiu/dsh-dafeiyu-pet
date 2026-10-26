@@ -17,6 +17,7 @@ import re
 import sys
 from pathlib import Path
 
+import pet_defaults
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QCursor
 from PySide6.QtWebChannel import QWebChannel
@@ -233,9 +234,11 @@ class WebmBody(QObject):
         self._ready = False
         self._first_frame = None
         self._current = ""
-        self._size = 184
-        self._box_w = 168
-        self._box_h = 198
+        self._size = pet_defaults.DISPLAY_H
+        self._box_w = pet_defaults.WINDOW_W
+        self._box_h = pet_defaults.WINDOW_H
+        self._fade_ms = pet_defaults.CLIP_FADE_MS
+        self._foot_anchor = pet_defaults.FOOT_ANCHOR
         self._bubble_extra = 0
         self._base_pos = None
         self._bubble_timer = QTimer(self)
@@ -344,7 +347,9 @@ class WebmBody(QObject):
         self.closed.emit()
 
     # ------------------------------------------------------------- API
-    def playClip(self, name: str, fadeMs: int = 120, loop: bool = True) -> bool:
+    def playClip(self, name: str, fadeMs: int | None = None, loop: bool = True) -> bool:
+        if fadeMs is None:
+            fadeMs = self._fade_ms
         if not name:
             return False
         name = CLIP_ALIAS.get(str(name), str(name))
@@ -375,14 +380,14 @@ class WebmBody(QObject):
         return True
 
     def setSize(self, *args) -> None:
-        """setSize(184) 或 setSize(168,198,184)（窗口宽,窗口高,人物显示高）。"""
-        box_w, box_h, h = 168, 198, 184
+        """setSize(184) 或 setSize(168,198,184)（窗口宽,窗口高,人物显示高；默认值来自 pet_defaults）。"""
+        box_w, box_h, h = pet_defaults.WINDOW_W, pet_defaults.WINDOW_H, pet_defaults.DISPLAY_H
         if len(args) >= 3:
             box_w, box_h, h = int(args[0]), int(args[1]), int(args[2])
         elif len(args) == 1:
             h = int(args[0])
-            box_w = max(120, int(round(h * 168 / 184)))
-            box_h = max(140, int(round(h * 198 / 184)))
+            box_w = max(120, int(round(h * pet_defaults.WINDOW_W / pet_defaults.DISPLAY_H)))
+            box_h = max(140, int(round(h * pet_defaults.WINDOW_H / pet_defaults.DISPLAY_H)))
         h = max(120, min(220, int(h)))
         self._size = h
         self._box_w = box_w
@@ -391,12 +396,20 @@ class WebmBody(QObject):
             anchor = self.footAnchor()
             self._view.resize(box_w, box_h)
             if anchor is not None:
-                self.setPosition(anchor.x() - box_w // 2, anchor.y() - round(box_h * 0.965))
+                self.setPosition(anchor.x() - box_w // 2, anchor.y() - round(box_h * self._foot_anchor))
             self._page.runJavaScript(
                 f"window.petApi && window.petApi.layout({h},{box_w},{box_h});")
 
     def size(self) -> int:
         return self._size
+
+    def setFadeMs(self, ms: int) -> None:
+        """设置 clip 切换淡入淡出时长（config.whale.fadeMs 覆盖默认 120ms）。"""
+        self._fade_ms = max(0, int(ms))
+
+    def setFootAnchor(self, ratio: float) -> None:
+        """设置脚底锚点比例（默认 0.965）。"""
+        self._foot_anchor = max(0.0, min(1.0, float(ratio)))
 
     def setPosition(self, x: int, y: int) -> None:
         if self._view is not None:
@@ -410,7 +423,7 @@ class WebmBody(QObject):
         """窗口内脚底锚点的全局坐标：横向中心、纵向 96.5% 窗高（168×198 裁布局）。"""
         if self._view is None:
             return QPoint()
-        return self._view.pos() + QPoint(self._view.width() // 2, round(self._view.height() * 0.965))
+        return self._view.pos() + QPoint(self._view.width() // 2, round(self._view.height() * self._foot_anchor))
 
     def setPeek(self, edge: str | None) -> None:
         """显示/取消静态 peek-edge；peek 期间 state→clip 不抢镜，直到显式取消。"""
@@ -499,7 +512,9 @@ class WebmBody(QObject):
     def actionMap(self) -> dict:
         return dict(self._action_map)
 
-    def applyAction(self, action_id: str, fadeMs: int = 120) -> bool:
+    def applyAction(self, action_id: str, fadeMs: int | None = None) -> bool:
+        if fadeMs is None:
+            fadeMs = self._fade_ms
         """执行 OP-ACTION-MATRIX §1.7 的 B 主选（如 T3/A1/U1）。"""
         meta = ACTION_META.get(str(action_id))
         if not meta:
@@ -507,7 +522,9 @@ class WebmBody(QObject):
         name, loop, _weight = meta
         return self.playClip(name, fadeMs, loop)
 
-    def applyState(self, state: str, fadeMs: int = 120) -> bool:
+    def applyState(self, state: str, fadeMs: int | None = None) -> bool:
+        if fadeMs is None:
+            fadeMs = self._fade_ms
         state = str(state)
         if state in ACTION_META:
             return self.applyAction(state, fadeMs)
@@ -579,7 +596,7 @@ class WebmBody(QObject):
         if self._pending_clip:
             self.playClip(self._pending_clip, self._pending_fade, self._pending_loop)
         elif "idle" in self._action_map:
-            self.playClip(self._action_map["idle"], 120, True)
+            self.playClip(self._action_map["idle"], self._fade_ms, True)
         if self._click_through:
             QTimer.singleShot(0, lambda: self.setClickThrough(True))
         if self._peek:

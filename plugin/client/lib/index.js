@@ -34,7 +34,8 @@ const PLUGIN_VERSION = '0.4.0'
 
 export const name = 'dsh-pet-bridge-ui'
 
-const PET_ROOT = 'E:\\project\\AI提效\\tool\\pet-integration-src\\pet-work'
+// pet-work 根：显式 env > 用户 home 下的默认布局；不再硬编码开发机绝对路径。
+const PET_ROOT = process.env.DSH_PET_WORK || process.env.PET_WORK || path.join(os.homedir(), 'pet-work')
 
 /** task-36：快捷查看按钮 → 桌宠协议命令（余额待桌宠补丁支持）。 */
 const PET_ACTION_CMDS = {

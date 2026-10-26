@@ -25,7 +25,7 @@ datas = [
     ('PROVENANCE-B.md', 'PROVENANCE-B.md'),
 ]
 binaries = []
-hiddenimports = []
+hiddenimports = ['pet_window', 'pet_defaults']
 
 # requests（余额/HTTP）与 winsdk（媒体会话歌词）与现有 spec 一致
 for _pkg in ('requests', 'winsdk'):
@@ -49,7 +49,7 @@ for _pkg in (PySide6, shiboken6):
                 binaries.append((_src, _dest))
 
 a = Analysis(
-    ['桌宠.py'],
+    ['pet_app.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

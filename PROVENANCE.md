@@ -11,7 +11,7 @@
 | 许可 | MIT（全文 `packaging/third-party-b/LICENSE-B.txt`） |
 | 素材 | 50 段 VP9-alpha WebM（约 25.8MB），`tools/body-b/webm_pet/assets/*.webm`（不入 git） |
 | 生成/处理 | AI/Vidu 生成；重编码为 50 段 WebM；静帧 `placeholder.png` 由 `待机呼吸休闲.webm` alpha 首帧合成 |
-| 运行集成 | `pet/webm_body.py` + `pet/桌宠.py` B shim；单窗 168×198、120ms clip 切换、peek 优先级、B 静帧回退 |
+| 运行集成 | `pet/webm_body.py` + `pet/pet_app.py` B shim；单窗 168×198、120ms clip 切换、peek 优先级、B 静帧回退 |
 
 ## 2. 分发口径
 

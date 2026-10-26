@@ -51,7 +51,7 @@ check('all CLIP_ALIAS targets are valid clips',
       all(v in clips for v in wb.CLIP_ALIAS.values()))
 
 wb_src = open(os.path.join(ROOT, 'pet', 'webm_body.py'), encoding='utf-8').read()
-pet_src = open(os.path.join(ROOT, 'pet', '\u684c\u5ba0.py'), encoding='utf-8').read()
+pet_src = open(os.path.join(ROOT, 'pet', 'pet_window.py'), encoding='utf-8').read()
 check('webm_body peek priority implementation exists',
       '_pending_clip' in wb_src and 'self._peek' in wb_src)
 # ACTION_META（perf/director 可达）也不得指向禁用 clip

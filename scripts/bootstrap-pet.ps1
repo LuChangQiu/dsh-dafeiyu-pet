@@ -16,7 +16,7 @@ $statusFile = Join-Path $PetWork 'bootstrap-status.json'
 $logDir = Join-Path $PetWork 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $repoPet = Join-Path $RepoRoot 'pet'
-$petSrc = Join-Path $PetWork 'pet\桌宠.py'
+$petSrc = Join-Path $PetWork 'pet\pet_app.py'
 $pythonw = Join-Path $PetWork '.venv\Scripts\pythonw.exe'
 
 function Status($state, $step, $msg) {
@@ -42,7 +42,7 @@ function FindPython {
 if (-not $Force -and (Test-Path $pipeName)) { Status 'ready' 'already-running' 'pipe present'; exit 0 }
 
 # 释放仓库内 pet/ 源码（缺失才复制，不覆盖用户 config/小票）
-if (-not (Test-Path $petSrc) -and (Test-Path (Join-Path $repoPet '桌宠.py'))) {
+if (-not (Test-Path $petSrc) -and (Test-Path (Join-Path $repoPet 'pet_app.py'))) {
   New-Item -ItemType Directory -Force -Path (Join-Path $PetWork 'pet') | Out-Null
   Copy-Item (Join-Path $repoPet '*') (Join-Path $PetWork 'pet') -Recurse -Force
   Status 'installing' 'source-release' 'copied repo pet/ source'
@@ -69,7 +69,7 @@ if ((Test-Path $petSrc) -and -not (Test-Path $pythonw)) {
 # ② 启动源码版
 if ((Test-Path $petSrc) -and (Test-Path $pythonw)) {
   Status 'starting' 'source-venv' 'starting pet from source'
-  Start-Process -FilePath $pythonw -ArgumentList @("$PetWork\pet\桌宠.py") -WorkingDirectory (Join-Path $PetWork 'pet') -WindowStyle Hidden | Out-Null
+  Start-Process -FilePath $pythonw -ArgumentList @("$PetWork\pet\pet_app.py") -WorkingDirectory (Join-Path $PetWork 'pet') -WindowStyle Hidden | Out-Null
   Start-Sleep -Seconds 4
   if (Test-Path $pipeName) { Status 'ready' 'source-venv' 'started'; exit 0 }
   Status 'failed' 'source-venv' 'started but pipe missing'; exit 1

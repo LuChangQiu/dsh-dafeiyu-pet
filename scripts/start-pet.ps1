@@ -28,7 +28,7 @@ function Write-Log([string]$msg) {
 
 function Get-PatchedPet {
   Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
-    Where-Object { $_.CommandLine -like '*桌宠.py*' -and $_.CommandLine -like '*pet-work*' }
+    Where-Object { $_.CommandLine -like '*pet_app.py*' -and $_.CommandLine -like '*pet-work*' }
 }
 
 function Test-Pet {
@@ -54,7 +54,7 @@ function Ensure-Pet {
   if (-not (Test-Path $pyw)) { Write-Log "FAILED: missing pythonw: $pyw"; return $false }
   if (-not (Test-Path $petDir)) { Write-Log "FAILED: missing pet dir: $petDir"; return $false }
   try {
-    Start-Process -FilePath $pyw -ArgumentList '"桌宠.py"' -WorkingDirectory $petDir -ErrorAction Stop | Out-Null
+    Start-Process -FilePath $pyw -ArgumentList '"pet_app.py"' -WorkingDirectory $petDir -ErrorAction Stop | Out-Null
   } catch {
     Write-Log ("FAILED: Start-Process: " + $_.Exception.Message)
     return $false

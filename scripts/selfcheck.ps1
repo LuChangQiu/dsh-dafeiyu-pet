@@ -275,7 +275,7 @@ function Test-Pipe {
   $r = [ordered]@{ ok = $false; pipe = $script:PipeName; pipeExists = $false; petProcess = @(); ping = $null }
   $r.pipeExists = Test-Path -LiteralPath $script:PipeName
   $petProcs = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object {
-      $_.CommandLine -and $_.CommandLine -like '*桌宠.py*'
+      $_.CommandLine -and $_.CommandLine -like '*pet_app.py*'
     } | ForEach-Object { $_.ProcessId })
   $exeProcs = @(Get-Process -Name '大肥鱼桌宠' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
   $r.petProcess = @($petProcs + $exeProcs)
@@ -375,8 +375,8 @@ function Test-Versions {
 
   # 生产 pet 源码 vs repo pet 源码（drift 检测；pet-work 不存在则跳过）
   if ($script:PetWork -and (Test-Path -LiteralPath $script:PetWork)) {
-    $prodPet = Join-Path $script:PetWork 'pet\桌宠.py'
-    $repoPet = Join-Path $script:RepoRoot 'pet\桌宠.py'
+    $prodPet = Join-Path $script:PetWork 'pet\pet_app.py'
+    $repoPet = Join-Path $script:RepoRoot 'pet\pet_app.py'
     if ((Test-Path -LiteralPath $prodPet) -and (Test-Path -LiteralPath $repoPet)) {
       $h1 = (Get-FileHash -LiteralPath $prodPet -Algorithm SHA256).Hash
       $h2 = (Get-FileHash -LiteralPath $repoPet -Algorithm SHA256).Hash

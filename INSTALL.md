@@ -113,7 +113,7 @@ node pet-work\tools\pet-cmd.mjs ping    # 期望 {"ok":true,...,"reply":"pong"}
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | Windows 提示「已保护你的电脑」/SmartScreen | 未签名内部发行包 | 「更多信息 → 仍要运行」；正式外发前可考虑代码签名 |
-| 杀软报毒/拦截 exe | PyInstaller 引导器误报 | 加信任/白名单；源码模式可 `python pet\桌宠.py` |
+| 杀软报毒/拦截 exe | PyInstaller 引导器误报 | 加信任/白名单；源码模式可 `python pet\pet_app.py` |
 | 双击 exe 没反应/一闪而过 | 缺少 VC 运行库或被拦截 | 在解压目录运行 `.\selfcheck.ps1` 看 `pipe-down`；命令行启动 exe 看报错；安装 VC++ Redistributable |
 | `selfcheck` 报 `pipe-down` | 桌宠未启动 / 单实例管道被占 | 先启动 `大肥鱼桌宠.exe`；或 `.\selfcheck.ps1 -Repair -Yes` 拉起；结束残留 exe 后重试 |
 | 看不到 B 角色 | B 素材缺失（历史 P0，已修复） | 用 B-only zip（`_internal/assets/webm_body/assets` 应有 50 个 webm） |
@@ -130,7 +130,7 @@ node pet-work\tools\pet-cmd.mjs ping    # 期望 {"ok":true,...,"reply":"pong"}
   1. 停桌宠：
      ```powershell
      Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
-       Where-Object { $_.CommandLine -like '*桌宠.py*' } | ForEach-Object { taskkill /PID $_.ProcessId /T /F }
+       Where-Object { $_.CommandLine -like '*pet_app.py*' } | ForEach-Object { taskkill /PID $_.ProcessId /T /F }
      Get-Process -Name '大肥鱼桌宠' -ErrorAction SilentlyContinue | Stop-Process -Force
      ```
   2. 停止联动/卸载插件：DSH profile `node_modules` 删除 `dsh-pet-bridge-*`，按 `docs/MOUNT-PROTOCOL.md` 用 `scripts/unmount-pet-blocks.mjs` 恢复 patch 备份（不要手改 patch）；

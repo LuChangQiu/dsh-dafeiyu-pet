@@ -54,7 +54,7 @@ print(json.dumps(rows, ensure_ascii=False))
 }
 
 # 1) 停生产（仅 -Force）
-$old = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object { $_.CommandLine -like '*桌宠.py*' })
+$old = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object { $_.CommandLine -like '*pet_app.py*' })
 foreach ($p in $old) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue; Write-Output "[smoke] stopped old pet pid=$($p.ProcessId)" }
 Start-Sleep -Seconds 2
 

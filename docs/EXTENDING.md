@@ -24,7 +24,7 @@ DSH 会持续加功能（新事件/新工具/新 bundle/新 UI 槽位），本�
 | `plugin/client/lib/home.js` | 大肥鱼主页（卡片/时间线/会话/互动） |
 | `plugin/client/lib/client.js` | 设置页「大肥鱼联动」面板 |
 | `plugin/client/lib/index.js` | host 路由 `/pet-bridge-ui/*`、`state.get`、鉴权 |
-| `pet/桌宠.py` | 桌宠本体 + 管道协议（`say:`/`act:`/`fx:`/`cmd:`/`state:`） |
+| `pet/pet_app.py` / `pet/pet_window.py` | 薄入口 / PetWindow 主体 + 管道协议（`say:`/`act:`/`fx:`/`cmd:`/`state:`） |
 | `docs/DATA-CONTRACT.md` | 状态文件/事件/字段的权威契约 |
 | `docs/STATE-CHANNEL.md` | 状态通道协议与多会话规则 |
 
@@ -49,7 +49,7 @@ DSH 会持续加功能（新事件/新工具/新 bundle/新 UI 槽位），本�
 
 ## 4. 加一个新桌宠动作 / FX
 
-1. 在 `pet/桌宠.py` 的管道协议分发里新增命令（如 `fx:<name>`），实现绘制/动画（QPainter 叠加层，无需美术素材时用代码绘制）。
+1. 在 `pet/pet_window.py` 的管道协议分发里新增命令（如 `fx:<name>`），实现绘制/动画（QPainter 叠加层，无需美术素材时用代码绘制）。
 2. 在 `docs/DATA-CONTRACT.md` 的协议段登记命令名/参数/默认时长。
 3. 插件侧用 `sendBubble`/`sendPetCommand` 调用；动作走现有节流（`guards.maxActionsPerHour`、状态不变不演出）。
 4. 多帧截图验证（3–5 帧）并放 `evidence/`；回归 `node scripts/test-*.mjs`。

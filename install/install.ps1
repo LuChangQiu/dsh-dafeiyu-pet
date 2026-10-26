@@ -19,7 +19,7 @@ $required = @(
   @{ path = $Profile; kind = 'profile' },
   @{ path = (Join-Path $RepoRoot 'plugin\server'); kind = 'plugin server' },
   @{ path = (Join-Path $RepoRoot 'plugin\client'); kind = 'plugin client' },
-  @{ path = (Join-Path $RepoRoot 'pet\桌宠.py'); kind = 'pet source' },
+  @{ path = (Join-Path $RepoRoot 'pet\pet_app.py'); kind = 'pet source' },
   @{ path = (Join-Path $RepoRoot 'scripts\start-pet.ps1'); kind = 'start-pet.ps1' },
   @{ path = (Join-Path $RepoRoot 'scripts\bootstrap-pet.ps1'); kind = 'bootstrap-pet.ps1' },
   @{ path = (Join-Path $RepoRoot 'scripts\pet-cmd.mjs'); kind = 'pet-cmd.mjs' },

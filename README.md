@@ -6,7 +6,9 @@
 ## 结构
 ```
 pet/                     # 改好的桌宠源码（干净快照，无 git 历史，约 2.2MB）
-  ├─ 桌宠.py             # 主程序（含 DSH 联动补丁：管道协议/动作/微动画/配置）
+  ├─ pet_app.py          # 薄入口（启动/退出生命周期）
+  ├─ pet_window.py       # PetWindow 主体（管道协议/动作/微动画/配置，机械搬迁自原 桌宠.py）
+  ├─ pet_defaults.py     # B 身体/气泡/微动作集中默认值（config 可覆盖）
   ├─ ui_console.py       # 原生对话框配色（设置窗口已移除，仍用于余额/天气/小票弹窗样式）
   ├─ assets/body-b/      # B 静帧 placeholder.png（tracked）
   ├─ assets/webm_body/   # B HTML/JS + 50 WebM（由 fetch-b-assets 注入，不入 git）
@@ -54,7 +56,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 - 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`（r2），**276,706,744B / SHA256 `D550CAE684F30AB25CAD9B6E0E5B7EDBF5A3E1DBF69F6B9989629E8E681D5A44`**（解压即用；根级 LICENSE/NOTICE/INSTALL/README/selfcheck 齐全）。
 
 ## 上游更新
-不 fork、不建上游 git 历史：手动 diff 上游 `桌宠.py` 与 `pet/桌宠.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
+不 fork、不建上游 git 历史：手动 diff 上游 `pet_app.py` 与 `pet/pet_app.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
 
 ## 形象与素材署名
 - 默认形象：**MIT 鲸鱼娘 B 身体**（项目 `dsh-whale-girl-pet`，作者 yanzwzz）——50 段 WebM 动作；许可全文/署名见 `packaging/third-party-b/LICENSE-B.txt`、`NOTICE-B.md`、`packaging/PROVENANCE-B.md`。

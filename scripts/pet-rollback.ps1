@@ -6,19 +6,24 @@
 # pet-rollback.ps1 — stop patched pet, optionally revert source patch / start official pet.
 # Compatible with Windows PowerShell 5.1 and PowerShell 7 (UTF-8 with BOM).
 #   -DryRun       -> print the plan only, write nothing
-#   -RevertPatch  -> restore 桌宠.py from 桌宠.py.bak-p1 and verify hash
+#   -RevertPatch  -> restore pet_app.py from pet_app.py.bak-p1 and verify hash
 #   -StartOfficial -> launch the official installed pet
 $ErrorActionPreference = 'Stop'
 $petWork = Split-Path -Parent $PSScriptRoot
-$petFile = Join-Path $petWork 'pet\桌宠.py'
-$petBackup = Join-Path $petWork 'pet\桌宠.py.bak-p1'
+$petFile = Join-Path $petWork 'pet\pet_app.py'
+$petBackup = Join-Path $petWork 'pet\pet_app.py.bak-p1'
+# 兼容旧命名备份（重命名前生产留存的 桌宠.py.bak-p1）
+if (-not (Test-Path -LiteralPath $petBackup)) {
+  $legacyBackup = Join-Path $petWork 'pet\桌宠.py.bak-p1'
+  if (Test-Path -LiteralPath $legacyBackup) { $petBackup = $legacyBackup }
+}
 $applyPy = Join-Path (Split-Path -Parent (Split-Path -Parent $petWork)) 'pet-integration-src\tech-scout\plugin-skeleton\pet-patch\apply_p1.py'
 $officialExe = Join-Path $env:LOCALAPPDATA 'Programs\大肥鱼桌宠\大肥鱼桌宠.exe'
 
 function Fail([string]$msg) { Write-Output "FAILED: $msg"; exit 1 }
 
 $patched = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
-  Where-Object { $_.CommandLine -like '*桌宠.py*' -and $_.CommandLine -like '*pet-work*' })
+  Where-Object { $_.CommandLine -like '*pet_app.py*' -and $_.CommandLine -like '*pet-work*' })
 
 if ($DryRun) {
   Write-Output '--- DRY RUN (no writes) ---'
@@ -43,7 +48,7 @@ if ($patched.Count -eq 0) {
   }
   Start-Sleep -Milliseconds 500
   $left = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
-    Where-Object { $_.CommandLine -like '*桌宠.py*' -and $_.CommandLine -like '*pet-work*' })
+    Where-Object { $_.CommandLine -like '*pet_app.py*' -and $_.CommandLine -like '*pet-work*' })
   if ($left.Count -gt 0) { Fail ('patched pet still running: ' + (($left | ForEach-Object { $_.ProcessId }) -join ',')) }
 }
 

@@ -2,7 +2,7 @@
 """桌宠控制台 —— v1.1.0 起的新设置界面（左侧分类 + 右侧内容）。
 
 为什么要单独一个文件：这是全新的界面子系统（主题 / 图标 / 控件 / 十几个页面），
-塞进 6800 行的 `桌宠.py` 里以后没地方改。PyInstaller 会跟着 `import ui_console`
+塞进 6800 行的 `pet_app.py` 里以后没地方改。PyInstaller 会跟着 `import ui_console`
 自动收进去，打包只多一步：把 `assets/icons` 加进 `桌宠.spec` 的 datas。
 
 两条硬规矩（2026-09-14 定的）：
@@ -10,7 +10,7 @@
   2. 主题分「跟随系统 / 亮色 / 暗色」三档，默认跟随系统；
      Qt 说不清系统是亮是暗时退回读注册表 AppsUseLightTheme。
 
-外面的 桌宠.py 只做三件事：菜单里开这个窗口、把常量表（ctx）递进来、退出时关掉。
+外面的 pet_app.py 只做三件事：菜单里开这个窗口、把常量表（ctx）递进来、退出时关掉。
 界面逻辑全在本文件里。
 """
 
@@ -366,7 +366,7 @@ _ICON_CACHE = {}
 
 
 def set_asset_dir(asset_dir):
-    """由 桌宠.py 把 ASSET_DIR 递进来，省得自己猜打包后的路径。"""
+    """由 pet_app.py 把 ASSET_DIR 递进来，省得自己猜打包后的路径。"""
     global _ICON_DIR
     if asset_dir:
         _ICON_DIR = os.path.join(asset_dir, "icons")
@@ -1558,7 +1558,7 @@ class ShellFrame(QFrame):
 # 控制台窗口
 # --------------------------------------------------------------------------- #
 class ConsoleWindow(QWidget):
-    """设置窗口本体。pet 是桌宠（PetWindow），ctx 是 桌宠.py 递进来的常量/函数表。
+    """设置窗口本体。pet 是桌宠（PetWindow），ctx 是 pet_app.py 递进来的常量/函数表。
 
     分类只放**设置**。「看一眼余额 / 看一看天气 / 在放什么」这类是桌宠自己的活儿，
     菜单和桌宠本体上都有，不往设置里塞（v1.1.0 第一版塞过，太重复，撤了）。
@@ -2510,7 +2510,7 @@ class ConsoleWindow(QWidget):
         """外面（桌宠）改了配置之后叫一声：把当前这一页"会变的"重读一遍。
 
         城市是**后台联网**加进来的 —— 加完那一刻窗口还开着，靠这个立刻反映
-        （见 桌宠.py 的 `_notify_console`）。
+        （见 pet_app.py 的 `_notify_console`）。
         """
         self._refresh_current_page()
 

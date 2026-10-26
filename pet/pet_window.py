@@ -24,6 +24,8 @@ import wave
 from array import array
 from datetime import datetime
 
+import pet_defaults
+
 
 def load_config():
     try:
@@ -297,7 +299,7 @@ def install_qt_translator(app):
         except Exception:
             pass
 
-BUBBLE_H = 112         # 气泡区高度（要放得下四行余额气泡：余额 / 金额 / 今日已用 / 峰谷）
+BUBBLE_H = pet_defaults.BUBBLE_H  # 气泡区高度（集中默认值在 pet_defaults；config.bubble_height 可覆盖）
 MARGIN = 4
 # 五档。**滑块上的百分比以「大」为 100%**（2026-09-14 定的：选「大」时滑块就停在 100%），
 # 所以这几档特意按"乘出来是整百分数"排：30% / 40% / 60% / 80% / 100%。
@@ -499,7 +501,7 @@ MUSIC_APPS = {
 }
 MUSIC_POLL_MS = 1500          # 多久看一眼在放什么歌
 # 暂停之后气泡还留着多久（留着才有地方点"继续放"；太久就收起来，别一直挂在那儿）
-PAUSED_BUBBLE_SEC = 180
+PAUSED_BUBBLE_SEC = pet_defaults.PAUSED_BUBBLE_SEC
 LYRIC_BTN_SIZE = 20            # 歌词气泡右上角那几颗按钮（⏮ ⏸▶ ⏭）的直径
 LYRIC_BTN_GAP = 3              # 这几颗按钮之间的间隔
 # 顶行「♪ 应用 · 歌名」右边要留出来的宽度：这几颗按钮就住在这一条里，
@@ -527,7 +529,7 @@ LYRIC_OFFSET_LEVELS = [
 LYRIC_OFFSET_DEFAULT = 0.2      # 默认让文字稍微等一下（实测文字容易抢在声音前头）
 LYRIC_ANIM_SEC = 0.15           # 歌词换句时的过渡动画时长（秒）
 LYRIC_ANIM_MS = 10              # 过渡期间用 100 帧/秒重绘（主时钟在休闲模式只有 25 帧，不够顺）
-BUBBLE_ANIM_SEC = 0.15          # 气泡自己变大/变小也用同样长的过渡（跟着 100 帧/秒的计时器走）
+BUBBLE_ANIM_SEC = pet_defaults.BUBBLE_ANIM_SEC  # 集中默认值；config.bubble_anim_sec 可覆盖
 LYRIC_KARAOKE_ON = False        # 逐字高亮（"唱到哪变蓝到哪"）：主人说不要，先关掉（网易云多数歌也没逐字数据）
 LYRIC_KARAOKE_COLOR = (72, 104, 240)   # 已唱到的那部分的颜色（DeepSeek 蓝）
 
@@ -4124,7 +4126,16 @@ class PetWindow(QWidget):
                 "on": True,
                 "body": "webm",         # 用户 2026-10-26：只保留 B（MIT 鲸鱼娘 50 WebM），A 不再展示
                 "maxSize": 0.35,        # 用户偏好：最大显示尺寸（0.35 ≈ 生产上限；硬上限仍 1.35）
+                "windowW": pet_defaults.WINDOW_W,
+                "windowH": pet_defaults.WINDOW_H,
+                "displayHeight": pet_defaults.DISPLAY_H,
+                "fadeMs": pet_defaults.CLIP_FADE_MS,
+                "footAnchor": pet_defaults.FOOT_ANCHOR,
             },
+            # 气泡/待机参数（pet_defaults 集中默认值，面板/config 可覆盖）
+            "bubble_height": pet_defaults.BUBBLE_H,
+            "bubble_anim_sec": pet_defaults.BUBBLE_ANIM_SEC,
+            "paused_bubble_sec": pet_defaults.PAUSED_BUBBLE_SEC,
             # LLM 台词请求（task-133）：正常走插件 LLM，固定台词仅故障兜底
             "speech": {
                 "llmRequests": True,
@@ -4186,6 +4197,10 @@ class PetWindow(QWidget):
         self.cfg = load_json(CONFIG_PATH, dict(cfg_defaults))
         for cfg_key, cfg_value in cfg_defaults.items():
             self.cfg.setdefault(cfg_key, cfg_value)
+        _bubble = pet_defaults.bubble_defaults(self.cfg)
+        self.bubble_h = _bubble["height"]
+        self.bubble_anim_sec = _bubble["animSec"]
+        self.paused_bubble_sec = _bubble["pausedSec"]
         # 界面配色一上来就按配置定下来：气泡风格选「跟随界面」时要看这个亮暗，
         # 老对话框取主题色也走同一套 —— 以前是等设置窗口建出来才 set_mode，
         # 那样"刚启动、还没开过设置"的时候气泡会按系统的亮暗走，不是主人选的那档。
@@ -4777,14 +4792,14 @@ class PetWindow(QWidget):
     def _music_paused(self):
         """放着一首歌、但现在是暂停。
 
-        暂停之后**气泡先不撤**（`PAUSED_BUBBLE_SEC` 之内都留着），这样右上角那颗 ▶
+        暂停之后**气泡先不撤**（`self.paused_bubble_sec` 之内都留着），这样右上角那颗 ▶
         还有地方点；超过这个时间就照旧收起来，免得屏幕上一直挂着一块歌词。
         """
         info = self.now_playing
         if not (self.music_on and info and info.get("title") and not info.get("playing")):
             return False
         at = getattr(self, "_music_paused_at", 0.0)
-        return bool(at) and (time.time() - at) < PAUSED_BUBBLE_SEC
+        return bool(at) and (time.time() - at) < self.paused_bubble_sec
 
     def music_command(self, kind):
         """气泡右上角那三颗按钮：⏮ 上一首 / ⏸▶ 播放暂停 / ⏭ 下一首。
@@ -6730,7 +6745,7 @@ class PetWindow(QWidget):
             self._paint_lyric_bubble(p)
 
         cx = self.width() / 2
-        bottom = BUBBLE_H + MARGIN + self.cur_h
+        bottom = self.bubble_h + MARGIN + self.cur_h
         p.restore()          # 气泡层视差结束
         # A 路线增强：贴地软阴影（身体之前画，作为"地面"）
         self._enh_paint_shadow(p, cx, bottom, st)
@@ -6775,7 +6790,7 @@ class PetWindow(QWidget):
             if key is None:
                 return
             name, h, facing = key
-            bottom = BUBBLE_H + MARGIN + self.cur_h
+            bottom = self.bubble_h + MARGIN + self.cur_h
             # 鲸鱼娘帧动画：帧画布带脚底留白，按 foot_ratio 对齐落地点；挂件形象 / 回退时走原逻辑
             whale = getattr(self, "_whale", None)
             if whale is not None and name != "挂件" and self._whale_active():
@@ -6831,7 +6846,7 @@ class PetWindow(QWidget):
         else:
             draw_one(cur_key, 1.0)
         try:
-            self._bridge_paint_fx(p, cx, BUBBLE_H + MARGIN + self.cur_h)
+            self._bridge_paint_fx(p, cx, self.bubble_h + MARGIN + self.cur_h)
         except Exception as _fx_paint_exc:
             print("联动桥 FX 绘制失败:", repr(_fx_paint_exc))
 
@@ -6957,7 +6972,7 @@ class PetWindow(QWidget):
 
     def _bubble_top(self, bh):
         """气泡贴着鱼头顶：尾巴尖落在精灵上沿附近。"""
-        return max(2.0, BUBBLE_H + MARGIN - 10 - bh)
+        return max(2.0, self.bubble_h + MARGIN - 10 - bh)
 
     def _secs(self):
         """内部时钟（秒）。按当前每帧时长换算，两种流畅度下动作速度一致。"""
@@ -7176,7 +7191,7 @@ class PetWindow(QWidget):
         if abs(bw - self._bub_w) < 0.6 and abs(height - self._bub_h) < 0.6:
             self._bub_w, self._bub_h = bw, height
         else:
-            k = min(1.0, dt / max(0.05, BUBBLE_ANIM_SEC))
+            k = min(1.0, dt / max(0.05, self.bubble_anim_sec))
             self._bub_w += (bw - self._bub_w) * k
             self._bub_h += (height - self._bub_h) * k
         bw, height = self._bub_w, self._bub_h
@@ -7554,8 +7569,9 @@ class PetWindow(QWidget):
             sz = float(self.cfg.get("size", 0.2) or 0.2)
         except (TypeError, ValueError):
             sz = 0.2
+        _base = float(pet_defaults.config_get(self.cfg, "whale", "displayHeight", default=pet_defaults.DISPLAY_H))
         # 验收：B 人物显示身高 184±10px（窗口固定 168×198）
-        return max(174, min(194, int(round(184 * max(0.85, min(1.0, sz / 0.2))))))
+        return max(174, min(194, int(round(_base * max(0.85, min(1.0, sz / 0.2))))))
 
     def _init_webm_body(self):
         if _webm_body is None:
@@ -7580,12 +7596,15 @@ class PetWindow(QWidget):
         except Exception:
             pass
         b.start(show=False)
-        b.setSize(168, 198, self._webm_height())
+        _w = pet_defaults.whale_defaults(self.cfg)
+        b.setSize(_w["windowW"], _w["windowH"], self._webm_height())
+        b.setFadeMs(_w["fadeMs"])
+        b.setFootAnchor(_w["footAnchor"])
         # 初始位置：屏幕右下角（宠物区），主窗（168×198，气泡层）同位置
         try:
             _scr = QApplication.primaryScreen().availableGeometry()
-            _bx = int(_scr.right() - 168 - 24)
-            _by = int(_scr.bottom() - 198 - 8)
+            _bx = int(_scr.right() - _w["windowW"] - 24)
+            _by = int(_scr.bottom() - _w["windowH"] - 8)
             b.setPosition(_bx, _by)
             self.move(_bx, _by)
         except Exception:
@@ -9173,7 +9192,7 @@ class PetWindow(QWidget):
             if gp is None:
                 return False
             lp = self.mapFromGlobal(gp)
-            body_top = BUBBLE_H + MARGIN
+            body_top = self.bubble_h + MARGIN
             rel = lp.y() - body_top
             pet_h = max(1, self.cur_h)
             if rel < pet_h * 0.40:
@@ -9237,7 +9256,7 @@ class PetWindow(QWidget):
         try:                         # 头（上半）/ 身体：头摸头，身体偶尔嘴硬
             gp = getattr(self, "last_press_pos", None)
             lp = self.mapFromGlobal(gp) if gp is not None else None
-            rel = (lp.y() - (BUBBLE_H + MARGIN)) if lp is not None else 0
+            rel = (lp.y() - (self.bubble_h + MARGIN)) if lp is not None else 0
             head = rel < max(1, self.cur_h) * 0.40
         except Exception:
             head = True
@@ -11667,7 +11686,7 @@ class PetWindow(QWidget):
             spec_w = 0
         self.win_mx = int(self.cur_h * 0.062) + 6
         self.win_w = max(spec_w + self.win_mx * 2, MIN_WIN_W)
-        self.setFixedSize(self.win_w, self.cur_h + BUBBLE_H + MARGIN * 2 + 10)
+        self.setFixedSize(self.win_w, self.cur_h + self.bubble_h + MARGIN * 2 + 10)
 
     def snap_into_screen(self):
         geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
@@ -11748,7 +11767,7 @@ class PetWindow(QWidget):
                 ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');"
                       "$s.TargetPath='{}';$s.Arguments='\"{}\"';$s.WorkingDirectory='{}';$s.Save()"
                       .format(lnk, PYTHONW,
-                              "" if getattr(sys, "frozen", False) else os.path.join(APP_DIR, "桌宠.py"),
+                              "" if getattr(sys, "frozen", False) else os.path.join(APP_DIR, "pet_app.py"),
                               APP_DIR))
                 subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True)
