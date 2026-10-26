@@ -21,7 +21,7 @@ FOOT_ANCHOR_Y = 295.0       # 脚底锚点 y（画布 320）
 DEFAULT_CANVAS = 320
 # 渲染平滑（窗口期 task-131）：帧间/动作切换交叉淡化 + 亚像素整帧变换（由桌宠.py 叠加）
 CROSSFADE_MS = 100          # 帧间淡化（验收 80–150ms）
-ACTION_FADE_MS = 90         # play() 切换动作时的短淡化
+ACTION_FADE_MS = 120        # play() 切换动作时的短淡化（验收 80–150ms）
 
 
 class WhaleGirlSkin:
@@ -41,6 +41,8 @@ class WhaleGirlSkin:
         self.idx = 0
         self.acc = 0.0
         self.finished = False
+        self._quick_fade_ms = 80.0        # 快速事件（点击反应等）
+        self._dir_fade_ms = 150.0         # 方向/镜像变化（drag/fall）
         # 渲染平滑：动画时钟、上一显示帧、淡化进度、缩放帧缓存
         self.clock_ms = 0.0
         self.prev_path = None
@@ -165,11 +167,20 @@ class WhaleGirlSkin:
         if name == self.cur and not restart:
             return True
         old_path = self.frame_path()
+        old_clip = self.cur
         self.cur = name
         self.idx = 0
         self.acc = 0.0
         self.finished = False
-        self._start_fade(old_path, self.action_fade_ms)
+        # 淡化只发生在 **clip 切换**（同 clip 重播/换帧不淡化）；分档 80–150ms
+        if old_path and old_clip != name:
+            if name in ("drag", "fall"):
+                _fade = self._dir_fade_ms
+            elif name in ("pat", "tsundere"):
+                _fade = self._quick_fade_ms
+            else:
+                _fade = self.action_fade_ms
+            self._start_fade(old_path, _fade)
         return True
 
     def tick(self, ms):
@@ -177,7 +188,6 @@ class WhaleGirlSkin:
         seq = self._seq.get(self.cur)
         if not seq or self.finished:
             return
-        old_path = self.frame_path()
         self.clock_ms += float(ms)
         self.acc += float(ms)
         guard = 0
@@ -193,14 +203,8 @@ class WhaleGirlSkin:
                 if self._hold.get(self.cur):
                     self.idx = len(seq) - 1
                 break
-        new_path = self.frame_path()
-        if new_path and old_path and new_path != old_path:
-            # 帧时长很短（如走路 45ms/帧）时按当前帧时长收短淡化，避免前后帧一直重叠发虚
-            try:
-                _dur = float(seq[self.idx][1])
-            except Exception:
-                _dur = float(self.fade_ms)
-            self._start_fade(old_path, min(self.fade_ms, max(30.0, _dur * 0.55)))
+        # 帧间不做淡化（每帧混合会与方向 crossfade 叠加成双层 → 透明边缘闪烁）；
+        # 淡化只在 play() 动作切换时发生，见 _start_fade。
 
     def frame_path(self):
         seq = self._seq.get(self.cur)
@@ -238,8 +242,19 @@ class WhaleGirlSkin:
         self._pix[key] = pix
         return pix
 
+    def pixmap_raw(self, display_h):
+        """原始当前帧（不做任何淡化混合）：方向/镜像 crossfade 外层使用，避免双层混合。"""
+        path = self.frame_path()
+        if not path:
+            return None
+        try:
+            h = max(48, int(display_h))
+        except (TypeError, ValueError):
+            h = 184
+        return self._scaled_pix(path, h)
+
     def pixmap(self, display_h):
-        """取当前帧（淡化中返回前后帧 alpha 混合），按“显示内容身高 display_h”缩放。"""
+        """取当前帧；仅在动作切换淡化期返回 prev+cur 的 dissolve 合成（单层 alpha）。"""
         path = self.frame_path()
         if not path:
             return None
@@ -261,13 +276,11 @@ class WhaleGirlSkin:
         out = self._fade_cache.get(ckey)
         if out is not None:
             return out
-        out = QPixmap(cur.size())
-        out.fill(Qt.GlobalColor.transparent)
+        # dissolve：prev 满不透明打底，cur 以 alpha 叠上（不对两层各设 opacity 后 SourceOver）
+        out = prev.copy()
         p = QPainter(out)
         try:
-            p.setOpacity(1.0 - alpha)
-            p.drawPixmap(0, 0, prev)
-            p.setOpacity(alpha)
+            p.setOpacity(max(0.0, min(1.0, alpha)))
             p.drawPixmap(0, 0, cur)
         finally:
             p.end()

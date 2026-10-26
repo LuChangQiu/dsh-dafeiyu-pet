@@ -102,6 +102,26 @@ class SmoothConfig:
         self.micro_cooldown_s = _num(raw.get('microCooldownSec'), DEFAULTS['microCooldownSec'], 0.0, 10.0)
 
 
+def frame_change_fades(prev_clip, next_clip):
+    """帧间是否淡化：**同一 clip 内换帧永不淡化**（闪烁根因修复）；仅 clip 变化时淡化。"""
+    return bool(prev_clip) and bool(next_clip) and str(prev_clip) != str(next_clip)
+
+
+def action_fade_layers(alpha):
+    """动作切换淡化合成层：先 prev 满不透明，再 cur 以 alpha 叠上（dissolve，单层 alpha）。
+
+    返回 [(layer, opacity), ...]；调用方必须按顺序绘制，不能对两层都 setOpacity 后 SourceOver
+    （那会让重叠透明边缘的 alpha 忽大忽小 → 闪烁）。
+    """
+    a = clamp(float(alpha), 0.0, 1.0)
+    return [('prev', 1.0), ('cur', a)]
+
+
+def direction_crossfade_uses_raw(whale_active=True):
+    """方向/镜像 crossfade 使用原始帧（pixmap_raw），避免与动作淡化叠加成双层混合。"""
+    return bool(whale_active)
+
+
 def ease_in_out(t):
     t = clamp(float(t), 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)

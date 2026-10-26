@@ -20,10 +20,13 @@ from smooth_anim import (  # noqa: E402
     IDLE_LOOP_ACTIONS,
     IdleMicroScheduler,
     SmoothConfig,
+    action_fade_layers,
     breath_scale,
     celebration_stages,
     dialog_action,
+    direction_crossfade_uses_raw,
     fade_alpha,
+    frame_change_fades,
     secondary_motion,
 )
 
@@ -109,6 +112,15 @@ check('thinking→think', DSH_MAP['thinking'] == 'think')
 check('waiting→waitPeek', DSH_MAP['waiting_approval'] == 'waitPeek' and DSH_MAP['waiting_input'] == 'waitPeek')
 check('error→errorSequence', DSH_MAP['error'] == 'errorSequence')
 check('done→celebrate', DSH_MAP['done'] == 'celebrate')
+
+# ---------- 闪烁修复：同 clip 不淡化 / 动作切换单层 dissolve / 方向 crossfade 用原始帧 ----------
+check('同 clip 换帧不淡化', frame_change_fades('idleBase', 'idleBase') is False)
+check('不同 clip 切换才淡化', frame_change_fades('idleBase', 'wave') is True)
+check('首次播放不淡化', frame_change_fades('', 'idleBase') is False)
+layers = action_fade_layers(0.5)
+check('动作切换合成是单层 alpha（prev 满不透明）', len(layers) == 2 and layers[0] == ('prev', 1.0) and layers[1] == ('cur', 0.5))
+check('合成 alpha 夹取', action_fade_layers(2.0)[1] == ('cur', 1.0) and action_fade_layers(-1)[1] == ('cur', 0.0))
+check('方向 crossfade 使用原始帧', direction_crossfade_uses_raw(True) is True)
 
 print('\n%s smooth-anim: %d passed, %d failed' % ('PASS' if fail == 0 else 'FAIL', ok, fail))
 sys.exit(0 if fail == 0 else 1)

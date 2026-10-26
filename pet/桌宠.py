@@ -4249,6 +4249,14 @@ class PetWindow(QWidget):
         self._dialog_force = None         # 对话动作占用的 force（到时清）
         self._dialog_until = 0.0
         self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
+        self._anim_fast = False           # 过渡期 16ms 提频标记
+        self._anim_log_path = str(os.environ.get("PET_ANIM_LOG") or "")
+        if not self._anim_log_path:
+            try:
+                if os.path.exists(os.path.join(APP_DIR, "anim-log.on")):
+                    self._anim_log_path = os.path.join(APP_DIR, "anim-log.txt")
+            except Exception:
+                pass
 
         # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
         _lc = self.cfg.get("lifecycle")
@@ -6658,7 +6666,7 @@ class PetWindow(QWidget):
         press_sx = 1 + 0.13 * self.press_t
         press_sy = 1 - 0.13 * self.press_t
 
-        def draw_one(key, opacity):
+        def draw_one(key, opacity, raw=False):
             if key is None:
                 return
             name, h, facing = key
@@ -6666,7 +6674,8 @@ class PetWindow(QWidget):
             # 鲸鱼娘帧动画：帧画布带脚底留白，按 foot_ratio 对齐落地点；挂件形象 / 回退时走原逻辑
             whale = getattr(self, "_whale", None)
             if whale is not None and name != "挂件" and self._whale_active():
-                pix = whale.pixmap(h)
+                # 方向 crossfade 期间用原始帧（避免与动作淡化叠加成双层）
+                pix = whale.pixmap_raw(h) if raw else whale.pixmap(h)
                 if pix is None or pix.isNull():
                     return
                 ph = pix.height() * scale * (1 + act_sy) * press_sy
@@ -6708,8 +6717,9 @@ class PetWindow(QWidget):
 
         cur_key = self._sprite_key()
         if self.cross_t > 0:
-            draw_one(self.prev_key, self.cross_t)
-            draw_one(cur_key, 1.0 - self.cross_t)
+            # 方向切换：两层都用原始帧（raw），淡化只由外层 cross_t 负责
+            draw_one(self.prev_key, self.cross_t, raw=True)
+            draw_one(cur_key, 1.0 - self.cross_t, raw=True)
         else:
             draw_one(cur_key, 1.0)
         try:
@@ -7303,6 +7313,16 @@ class PetWindow(QWidget):
             QTimer.singleShot(1000, _greet_after_wake)
         print("失联休眠：醒来")
 
+    def _anim_log(self, msg):
+        _p = getattr(self, "_anim_log_path", "")
+        if not _p:
+            return
+        try:
+            with open(_p, "a", encoding="utf-8") as f:
+                f.write("%.3f [anim] %s\n" % (time.time(), msg))
+        except Exception:
+            pass
+
     # ---------- 事件动画编排（task-131）：庆祝 3 阶段 / 对话微动作 ----------
     def _anim_celebrate(self):
         """done/完成：跳起→落地→举双手/转圈 3 阶段 + 爱心 FX + 气泡（1.5–3s）。"""
@@ -7318,6 +7338,8 @@ class PetWindow(QWidget):
         if not stages:
             return False
         self._celebration = {"stage": 0, "t0": self._secs()}
+        self._anim_log("celebrate start stages=%d totalMs=%s" % (
+            len(stages), self._smooth.celebration_total_ms() if self._smooth else "?"))
         self._whale_force_play(stages[0]["action"])
         try:
             self._bridge_fx_play("love")
@@ -7343,6 +7365,7 @@ class PetWindow(QWidget):
         if force in ("think", "waitPeek", "errorSequence", "sleep", "cry"):
             return False
         if self._whale_force_play(act):
+            self._anim_log("dialog kind=%s action=%s" % (kind, act))
             self._dialog_force = act
             try:
                 _st = w.action_stats(act)
@@ -7382,6 +7405,7 @@ class PetWindow(QWidget):
                             self._whale_clear_force()
                         else:
                             self._celebration["stage"] = _si
+                            self._anim_log("celebrate stage=%s" % _stages[_si]["name"])
                             self._whale_force_play(_stages[_si]["action"])
                             if _stages[_si]["name"] == "cheer":
                                 try:
@@ -7434,6 +7458,7 @@ class PetWindow(QWidget):
                     if self._whale_gag_ok():        # 深夜/免打扰只留呼吸，不做 idle 微动作（D3）
                         n = self._idle_micro.pick(now)
                         if n and w.has(n):
+                            self._anim_log("micro action=%s" % n)
                             w.play(n, restart=True)
                             try:
                                 _timed = self._smooth.IDLE_TIMED_MS.get(n) if self._smooth else None
