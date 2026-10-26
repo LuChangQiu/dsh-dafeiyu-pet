@@ -57,6 +57,20 @@ node pet-work\tools\pet-cmd.mjs ping    # 期望 {"ok":true,...,"reply":"pong"}
 - 自检 `pipe` 项 ok（zip 用户）；源码模式 `pet-cmd ping` 返回 `pong`；
 - DSH 联动（可选）：重启 `dsh web` 后设置页出现管理面板（需先安装插件；zip 自检只做只读检查，插件安装见发布说明）。
 
+## 1.1 登录后自动启动（Windows 计划任务）
+
+- 安装脚本（源码布局）注册计划任务 `DafeiyuPetStart`：**当前用户登录后延迟 30s 自动拉起桌宠**（LIMITED 权限）；
+  packaged 布局由自检修复注册为指向 `大肥鱼桌宠.exe` 的同款 AtLogOn 任务。
+- 自检会校验触发器必须为 **Logon**：不符会显示 `task-trigger-not-logon`（重启后不会自启）；
+  可用 `.\selfcheck.ps1 -Repair -Yes` 重新注册（AtLogOn / 30s / LIMITED）。
+- 不需要自动启动时可自行关闭/删除（不影响桌宠本体与手动启动）：
+  ```powershell
+  schtasks /Change /TN DafeiyuPetStart /DISABLE   # 临时关闭（登录不再自动启动）
+  schtasks /Delete /TN DafeiyuPetStart /F         # 彻底删除
+  ```
+- 手动兜底：双击 `大肥鱼桌宠.exe`；源码模式 `pet-work\tools\start-pet.ps1`。
+  按需启动（不依赖登录）：`schtasks /Run /TN DafeiyuPetStart`。
+
 ## 2. 自检脚本用法
 
 | 场景 | 命令 |
@@ -140,6 +154,7 @@ node pet-work\tools\pet-cmd.mjs ping
 - [ ] 首次流程：**先启动桌宠 → 再运行 `.\selfcheck.ps1 -Human` → `healthy=true`**（未启动时 `pipe-down` 属预期）；
 - [ ] 解压目录运行 `.\selfcheck.ps1 -Human` → `healthy=true`、`pipe` ok（或仅 DSH 联动项 warn）；
 - [ ] 可选：`.\selfcheck.ps1 -Repair -Yes` 注册开机自启（packaged 模式下任务指向 exe）；
+- [ ] 登录自启：`DafeiyuPetStart` 触发器为 AtLogOn（延迟 30s、LIMITED）；不需要时可关闭/删除（命令见 §1.1）；
 - [ ] DSH 联动（可选）：重启 `dsh web` 后设置页出现管理面板；
 - [ ] 回滚：停进程后删除解压目录即可；已装插件按源码方式卸载；
 - [ ] 不包含：state/ui-config/memory/logs、LOCAL ONLY 素材、个人绝对路径配置。
