@@ -1,6 +1,6 @@
 # NOTICE — 大肥鱼桌宠（DSH 联动源码版）
 
-本目录（`pet/`）是「大肥鱼桌宠 × DSH 联动」的桌宠源码。完整第三方声明见仓库根 `NOTICE` 与素材目录 `assets/whale-girl/ATTRIBUTION.md`；本文件只摘录与桌宠分发直接相关的署名，**不替代完整许可文本**。
+本目录（`pet/`）是「大肥鱼桌宠 × DSH 联动」的桌宠源码。完整第三方声明见仓库根 `NOTICE` 与素材目录 `assets/whale-girl/ATTRIBUTION.md`；本文件只摘录与桌宠分发直接相关的署名，**不替代完整许可文本**。**授权链与分发口径**见仓库根 `PROVENANCE.md`：仅内部/同事小范围使用，暂不做公开 Release；内部包 = MIT 代码 + 2D 帧（附署名）；LOCAL ONLY 资产由用户本机自备导入、不随包。
 
 ## 1. 上游桌宠
 

@@ -57,8 +57,9 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 - 该许可条文允许使用/修改/分享及商用，**但上游未授予底层第三方参考作品与角色设计的权利**；公开分发/商用前请自行确认授权。本项目按个人/内部使用处理。
 - 本形象为社区二创，**非 DeepSeek 官方形象**，不代表深度求索官方授权。
 - 许可全文、第三方排除与来源：`assets/whale-girl/ATTRIBUTION.md` 与 `NOTICE`。
+- 授权链（溟月 → ZipZipPipe → BlueFatFish → codex 2D 帧 → DeepSeek 商标）与分发口径：见仓库根 **`PROVENANCE.md`**。**本项目仅内部/同事小范围使用，暂不做公开 Release**；内部包 = MIT 代码 + 2D 帧（附 NOTICE/ATTRIBUTION，非商业）；3D v1 的 BlueFatFish VRM 由用户自备导入（LOCAL ONLY，不随包、不再分发）。
 
 ## License
-MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`。
+MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`；**授权链与内部分发口径见 `PROVENANCE.md`（仅内部/同事使用，暂无公开 Release 计划）**。
 
 
