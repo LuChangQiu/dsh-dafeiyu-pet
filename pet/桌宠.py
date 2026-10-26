@@ -11579,7 +11579,7 @@ def main():
             text = " ".join(line[4:].split())[:PIPE_TEXT_MAX]
             if text:
                 w._speech_on_reply()       # 插件 LLM 回复到达 → 取消本地兜底
-                w._bridge_bubble_kind = ""
+                # 保留当前 bubble kind：既用于情绪色调，也允许 say: 触发对应节拍动作（cmd:style + say）
                 w.say(text, seconds=4.0, queue=True)
             return "said"
 
