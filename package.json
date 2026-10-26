@@ -10,7 +10,9 @@
     "test:whale-pipe": "node --test plugin/server/test/cf1-pipe.test.mjs",
     "lint": "node scripts/lint.mjs && prettier --check \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "prettier --write \"plugin/**/*.js\" \"scripts/**/*.mjs\"",
-    "nodecheck": "node scripts/lint.mjs"
+    "nodecheck": "node scripts/lint.mjs",
+    "test:smooth-anim": "python scripts/test-smooth-anim.py",
+    "test:speech-requests": "python scripts/test-speech-requests.py"
   },
   "devDependencies": {
     "eslint": "^9.14.0",

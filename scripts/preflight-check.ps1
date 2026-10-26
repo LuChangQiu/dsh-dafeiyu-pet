@@ -1,4 +1,4 @@
-# 提交前门禁：preflight-check.ps1
+﻿# 提交前门禁：preflight-check.ps1
 # 用法:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\preflight-check.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\preflight-check.ps1 -Patch "C:\...\cordis.patch.yml" -PetWorkDir "E:\...\pet-work"
@@ -69,6 +69,14 @@ Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }
 Invoke-Step "unit: detached harness" { & node scripts/harness/plugin-harness.mjs }
 
 
+# 6a) B pet 侧纯逻辑单测（Python；未安装 python 时 SKIP 不判失败）
+if ($py) {
+  Invoke-Step "unit: smooth-anim" { & python scripts/test-smooth-anim.py }
+  Invoke-Step "unit: speech-requests" { & python scripts/test-speech-requests.py }
+} else {
+  Write-Host ""
+  Write-Host "=== unit: smooth-anim / speech-requests === SKIP (python 未安装)"
+}
 # 6b) CF1：鲸鱼娘 act 接线（插件导入 + 白名单双文件 + 纯函数 fixtures；失败给可读原因，不静默跳过）
 Invoke-Step "unit: whale-wiring" {
   & node scripts/test-plugin-imports.mjs
