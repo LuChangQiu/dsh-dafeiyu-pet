@@ -53,7 +53,8 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 - 打包：`packaging\build-b-only.ps1 -Build` → `dafeiyu-pet-win64-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入；根级 LICENSE/NOTICE/README/INSTALL/selfcheck + UTF-8 zip）。
 - 源码模式先跑 `scripts\fetch-b-assets.ps1` 注入 B 素材；`-DryRun` 可零写入检查。
 - 分发：**内部小范围**，直接发 zip（解压即用）；不公开 Release（见 `PROVENANCE.md`）。
-- 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`（r2），**276,706,744B / SHA256 `D550CAE684F30AB25CAD9B6E0E5B7EDBF5A3E1DBF69F6B9989629E8E681D5A44`**（解压即用；根级 LICENSE/NOTICE/INSTALL/README/selfcheck 齐全）。
+- 当前 r3 内部构建（本版本重构）：`release-build\b-only-r3\dafeiyu-pet-win64-1.1.5-dsh.3-whalegirl-<git短sha>.zip`；sha 以同名 `.sha256` 为准（repo build 产出，根级 LICENSE/NOTICE/INSTALL/README/selfcheck 齐全）。
+- 回滚保留 r2：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`，**276,706,744B / SHA256 `D550CAE684F30AB25CAD9B6E0E5B7EDBF5A3E1DBF69F6B9989629E8E681D5A44`**。
 
 ## 上游更新
 不 fork、不建上游 git 历史：手动 diff 上游 `pet_app.py` 与 `pet/pet_app.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
