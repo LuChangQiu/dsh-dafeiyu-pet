@@ -72,12 +72,15 @@ CLIP_ALIAS = {
     "clickHappy": "点击回应 - 开心跃动", "praise": "点击回应 - 害羞惊讶",
 }
 # 语义名 → 默认 clip（供 pet 侧快速接线；完整 OP-MATRIX 用 applyAction(id)）
+# 用户口径：以下素材保留在 50 clip 中，但**不得接任何 DSH state/自动映射**
+BANNED_DSH_CLIPS = ("举牌不是大肥鱼", "空白举牌")
+
 DEFAULT_ACTION_MAP = {
     "idle": "待机呼吸休闲",
     "turnStart": "开始工作",
     "tool": "认真工作",
-    "approval": "举牌不是大肥鱼",
-    "waiting_input": "空白举牌",
+    "approval": "东张西望",
+    "waiting_input": "工作被打扰",
     "done": "工作结束",
     "complete": "工作结束",
     "error": "工作被打扰",

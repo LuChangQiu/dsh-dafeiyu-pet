@@ -7753,22 +7753,29 @@ class PetWindow(QWidget):
         # OP-MATRIX/原生 B clip 名直通
         return n
 
+    def _webm_state_clip(self, name, st=None):
+        """纯函数：DSH state/上下文 → B clip 名（不播放；单测/证据用）。"""
+        n = str(name or "")
+        if n == "tool":
+            tool = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
+            if any(k in tool for k in ("bash", "command", "shell", "terminal")):
+                return "原地敲击桌面互动"
+            if any(k in tool for k in ("search", "grep", "find")):
+                return "东张西望"
+            return "认真工作"
+        return self._webm_map_act(n)
+
     def _webm_apply_state(self, name, st=None):
         b = getattr(self, "_webm", None)
         if b is None:
             return False
         n = str(name or "")
+        clip = self._webm_state_clip(n, st)
         try:
             _tt = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
-            self._anim_log("webm state=%s toolType=%s" % (n, _tt))
+            self._anim_log("webm state=%s toolType=%s -> %s" % (n, _tt, clip))
         except Exception:
             pass
-        if n == "tool":
-            tool = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
-            clip = "working_command" if any(k in tool for k in ("bash", "command", "shell", "terminal")) else (
-                "working_search" if any(k in tool for k in ("search", "grep", "find")) else "认真工作")
-            return b.playClip(clip, 120, True)
-        clip = self._webm_map_act(n)
         loop = clip in ("待机呼吸休闲", "认真工作", "工作思考", "工作摸鱼")
         return b.playClip(clip, 120, loop)
 
@@ -12087,6 +12094,20 @@ def main():
                         return "noB"
                     _b._page.runJavaScript(_code)
                     return "jsB"
+                if _dev.startswith("stateclip:"):
+                    _payload = _dev[10:].strip()
+                    try:
+                        _o = json.loads(_payload)
+                    except Exception:
+                        _o = {"state": _payload}
+                    _name = _o.get("state") or ""
+                    _clip = w._webm_state_clip(_name, _o)
+                    try:
+                        w._anim_log("stateclip=%s toolType=%s -> %s" % (
+                            _name, _o.get("toolType", ""), _clip))
+                    except Exception:
+                        pass
+                    return "stateclip:" + _clip
                 if _dev.startswith("play:"):
                     _name = _dev[5:].strip()
                     return "playB:" + str(w._webm_play(_name, loop=False))
