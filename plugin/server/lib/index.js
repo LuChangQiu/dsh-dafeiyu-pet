@@ -55,6 +55,7 @@ import {
 import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
 import { buildTeamV2, emptyTeamV2 } from './team-view.js'
 import { composeReunion } from './text-fmt.js'
+import { KIND_POOL, S0_KINDS, INTERACTIVE_KINDS, isNightTime, createLlmStats } from './llm-lines.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -108,7 +109,13 @@ const DEFAULTS = {
       spikePerHour: 2,
       dedupeWindow: 20,
       similarityMax: 0.8,
-      retryOnDup: true
+      retryOnDup: true,
+      // task-133：全事件 LLM 化；深夜不生成（S0/用户手动互动除外），失败/超预算/超 cap → 池兜底
+      nightGenerate: false,
+      nightStartMin: 23 * 60 + 30,
+      nightEndMin: 8 * 60,
+      interactiveUseLlm: true,
+      statsLogEvery: 10
     },
     enabled: true,
     provider: 'deepseek-official',
@@ -122,7 +129,7 @@ const DEFAULTS = {
     maxChars: 40,
     pregen: true,
     pregenTtlMs: 600000,
-    approvalUseLlm: false,
+    // approvalUseLlm 已废弃（task-133：approval 永远 LLM-first，池仅兜底）
     includeRecentText: false // privacy: never send raw user text
   },
   historyFile: '', // line de-dupe store (7 days / 300 lines)
@@ -281,6 +288,7 @@ export const name = 'dsh-pet-bridge-v49'
 export function apply(ctx, rawConfig) {
   const cfg = merge(DEFAULTS, rawConfig)
   cfg.whaleActs = normalizeWhaleActConfig(cfg.whaleActs)
+  const llmStats = createLlmStats()
   const log = (level, msg, extra) => {
     if (cfg.logLevel !== 'debug' && level === 'debug') return
     const raw = `[${new Date().toISOString()}] [${level}] ${msg}${extra === undefined ? '' : ' ' + safe(extra)}`
@@ -428,7 +436,13 @@ export function apply(ctx, rawConfig) {
     approval: '任务停下来等他点确认，你想说一句让他安心、顺便提醒点一下的话',
     morning: '早上第一轮，跟他打个招呼',
     sleep: '晚上 23:30 了，跟他说一句清醒的温柔',
-    selfTalk: '没人理你，你在过自己的日子，心里嘀咕一句（心声体，短，像被偷听到的）'
+    selfTalk: '没人理你，你在过自己的日子，心里嘀咕一句（心声体，短，像被偷听到的）',
+    inner: '刚说完一句话，你心里又冒出一个小念头（心声体，括号或不带引号，短，别重复上句）',
+    interactHead: '用户刚摸了摸你的头，你短促地开心一下，不索取更多',
+    interactFeed: '用户刚喂了你一口，你满足地回一句，不夸张',
+    interactCome: '用户叫你了/让你过去，你答应了，短，别演过头',
+    praise: '用户夸了你，你有点害羞又开心，不油腻、不索要更多夸奖',
+    sneakLine: '你偷偷多吃了两口被发现的低声一句，心虚但不卖惨'
   }
 
   const hist = []
@@ -566,6 +580,13 @@ export function apply(ctx, rawConfig) {
     )
     if (kind === 'sleep') lines.push('[禁忌] 不劝睡、不说教、不评价花费；可以只说"我在"。')
     if (kind === 'report') lines.push('[禁忌] 不卖惨、不评价金额高低；数字必须原样使用。')
+    if (kind === 'inner') lines.push('[要求] 心声体：可以用（），不超过一句，≤24 字；不要重复上句、不要提问。')
+    if (kind === 'approval' || kind === 'waitingInput') lines.push('[要求] 等确认/等选择：≤28 字，不催第二次、不施压。')
+    if (kind === 'interactHead') lines.push('[要求] 被摸头的短反应：开心但不黏人，≤20 字；不复述用户身份、不索取。')
+    if (kind === 'interactFeed') lines.push('[要求] 被喂食的短反应：12–20 字，满足但不夸张；深夜已拦截。')
+    if (kind === 'interactCome') lines.push('[要求] 被叫过来的短回应：12–24 字，答应、就位；不评价用户。')
+    if (kind === 'praise') lines.push('[要求] 被夸的短反应：害羞/开心但不油腻，≤20 字；不索要更多夸奖。')
+    if (kind === 'sneakLine') lines.push('[要求] 偷吃被发现的低声一句：≤24 字，心虚俏皮但不卖惨；深夜不生成。')
     return lines.join('\n')
   }
 
@@ -650,35 +671,26 @@ export function apply(ctx, rawConfig) {
 
   let kindHourKey = ''
   const kindCalls = new Map()
+  const logLlmStatsIfDue = () => {
+    const every = Number(cfg.llm.lines?.statsLogEvery || 10)
+    if (every > 0 && llmStats.snapshot().attempts % every === 0) log('info', 'llm stats', llmStats.snapshot())
+  }
   const generate = async (kind, s, extra = {}) => {
-    const fallback = () => {
-      const poolName =
-        kind === 'turnStart'
-          ? 'kaigong'
-          : kind === 'turnEnd'
-            ? 'shougong'
-            : kind === 'turnEndBad' || kind === 'error' || kind === 'spike'
-              ? 'anwei'
-              : kind === 'approval' || kind === 'waitingInput'
-                ? 'dengdai'
-                : kind === 'morning' || kind === 'reunion'
-                  ? 'kaigong'
-                  : kind === 'sleep'
-                    ? 'shenye'
-                    : kind === 'selfTalk'
-                      ? 'ganhuo'
-                      : 'shougong'
-      return { text: pick(poolName), source: 'pool', latencyMs: 0, tokens: 0 }
+    const linesCfg = cfg.llm.lines || {}
+    const fallback = (reason) => {
+      const poolName = KIND_POOL[kind] || 'shougong'
+      const text = kind === 'inner' && extra.innerKind ? innerFor(extra.innerKind) || pick(poolName) : pick(poolName)
+      llmStats.record({ kind, source: 'pool', fallbackReason: reason })
+      log('info', 'llm fallback', { kind, fallbackReason: reason, source: 'pool' })
+      logLlmStatsIfDue()
+      return { text: text || '', source: 'pool', latencyMs: 0, tokens: 0, fallbackReason: reason }
     }
-    if (!modeAllowsLlm(modeState.kind, kind)) {
-      // v47：模式期间不为非 S0 生成文案（省钱/安静）；S0 仍可用 LLM
-      log('debug', 'llm fallback: mode', { kind, mode: modeState.kind })
-      return fallback()
-    }
-    if (!llmBudgetOk() || cfg.llm.lines?.enabled === false) {
-      log('debug', 'llm fallback: budget/disabled', { kind })
-      return fallback()
-    }
+    const interactive = INTERACTIVE_KINDS.has(kind) || extra.interactive === true
+    if (!interactive && !modeAllowsLlm(modeState.kind, kind)) return fallback('mode')
+    if (linesCfg.nightGenerate === false && !S0_KINDS.has(kind) && !interactive && isNightTime(new Date(), linesCfg))
+      return fallback('night')
+    if (linesCfg.enabled === false) return fallback('disabled')
+    if (!llmBudgetOk()) return fallback(cfg.llm.enabled ? 'budget' : 'disabled')
     const hk = new Date().toDateString() + new Date().getHours()
     if (hk !== kindHourKey) {
       kindHourKey = hk
@@ -686,30 +698,39 @@ export function apply(ctx, rawConfig) {
     }
     const cap =
       kind === 'report'
-        ? cfg.llm.lines?.reportPerHour || 3
+        ? linesCfg.reportPerHour || 3
         : kind === 'spike'
-          ? cfg.llm.lines?.spikePerHour || 2
-          : cfg.llm.lines?.perKindPerHour || 6
-    if ((kindCalls.get(kind) || 0) >= cap) {
-      log('debug', 'llm fallback: kind cap', { kind })
-      return fallback()
-    }
+          ? linesCfg.spikePerHour || 2
+          : linesCfg.perKindPerHour || 6
+    if ((kindCalls.get(kind) || 0) >= cap) return fallback('kind-cap')
+    let llmAvailable = false
+    try {
+      const l = typeof ctx.get === 'function' ? ctx.get('llm') : null
+      llmAvailable = !!(l && typeof l.stream === 'function')
+    } catch {}
+    if (!llmAvailable) return fallback('llm-unavailable')
     kindCalls.set(kind, (kindCalls.get(kind) || 0) + 1)
     const { text: raw, latencyMs, tokens } = await callLlm(buildPrompt(kind, s, extra), kind)
     const line = validateLine(raw, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
     if (!line && raw && kind === 'report')
       log('info', 'report too long/invalid -> fallback', { rawChars: String(raw).length, limit: cfg.llm.maxChars })
     if (!line || isDuplicate(line)) {
-      if (line && cfg.llm.lines?.retryOnDup && !extra.__dupRetry) {
+      if (line && linesCfg.retryOnDup && !extra.__dupRetry) {
         log('info', 'llm duplicate retry', { kind })
         return generate(kind, s, { ...extra, __dupRetry: true })
       }
-      if (line) log('info', 'llm lines fallback', { kind, reason: 'duplicate' })
-      else if (raw) log('info', 'llm rejected: constraint', { kind, rawChars: String(raw).length })
-      else log('info', 'llm lines fallback', { kind, reason: 'invalid' })
-      return fallback()
+      const reason = !raw ? 'empty' : !line ? 'invalid' : 'duplicate'
+      return fallback(reason)
     }
-    log('info', 'llm lines ok', { kind, text: line, latencyMs, tokens })
+    llmStats.record({ kind, source: 'llm', latencyMs, tokens })
+    log('info', 'llm line', {
+      kind,
+      source: 'llm',
+      latencyMs,
+      tokens,
+      costToday: Number(llmDay.cost.toFixed(4))
+    })
+    logLlmStatsIfDue()
     return { text: line, source: 'llm', latencyMs, tokens }
   }
 
@@ -1092,6 +1113,7 @@ export function apply(ctx, rawConfig) {
             message = '深夜不喂食'
           }
         } else if (j.name === 'interact-come') interact('come')
+        else if (j.name === 'praise') interact('praise')
         else if (j.name === 'events-ack') {
           events = events.map((e) => ({ ...e, unread: false }))
           saveEvents()
@@ -1416,12 +1438,31 @@ export function apply(ctx, rawConfig) {
       send('walk:nearby', { force: true })
       setTimeout(() => send('freeze:800', { force: true }), 700)
       companion.mood = Math.min(100, companion.mood + 1)
+    } else if (name === 'praise') {
+      send('cmd:fx:love', { force: true })
+      companion.mood = Math.min(100, companion.mood + 4)
+      companion.affinity = Math.min(100, companion.affinity + 1)
     }
     companion.totals.interactions += 1
     companion.lastSeenAt = new Date().toISOString()
     saveCompanion(true)
     pushEvent('interaction', 'S3', name, false)
     log('info', 'interaction', { name, mood: companion.mood, affinity: companion.affinity })
+    // task-133：手动互动也 LLM-first（用户明确发起 → 允许绕过静音模式；失败走池）
+    const speechKind = { head: 'interactHead', feed: 'interactFeed', come: 'interactCome', praise: 'praise' }[name]
+    if (speechKind) {
+      void generate(speechKind, { tools: 0 }, { interactive: true }).then((g) => {
+        const t = validateLine(g.text, { maxChars: cfg.llm.maxChars })
+        if (!t) return
+        speak(speechKind, t, {
+          force: true,
+          source: g.source,
+          latencyMs: g.latencyMs,
+          tokens: g.tokens,
+          fallbackReason: g.fallbackReason
+        })
+      })
+    }
     return 'ok'
   }
   // v38 偷吃判定 + 久别重逢 v2（隐私：只用 token 数/状态枚举/时间，不读原文）
@@ -1664,6 +1705,7 @@ export function apply(ctx, rawConfig) {
         teamUpdatedAt: teamV2.updatedAt,
         companion: { ...companion, level: levelOf(companion.affinity), words: stateWords() },
         eventsUnread: events.filter((e) => e.unread).length,
+        llmStats: llmStats.snapshot(),
         userActiveCount: sess.filter((x) => x.role === 'user').length,
         backgroundCount: sess.filter((x) => x.role !== 'user').length,
         activeSessionCount: sess.filter((x) => x.role === 'user').length,
@@ -2401,16 +2443,18 @@ export function apply(ctx, rawConfig) {
     if (!ok) return
     const dualChance = (activityState.chance && activityState.chance.dual) ?? cfg.chance.dual ?? 0
     if (cfg.dualLayer && kind !== 'inner' && Math.random() < dualChance) {
-      const inner = innerFor(kind)
-      if (inner) {
+      // task-133：心声也走 LLM-first（失败/超预算/深夜 → 固定 inner 池兜底）
+      void generate('inner', { tools: 0 }, { innerKind: kind }).then((g) => {
+        const t = validateLine(g.text, { maxChars: cfg.llm.maxChars })
+        if (!t) return
         const lo = cfg.bubble?.innerDelayMinMs || 1200
         const hi = Math.max(lo, cfg.bubble?.innerDelayMaxMs || 1800)
         const delay = lo + Math.random() * (hi - lo)
         setTimeout(() => {
-          log('info', 'inner queued', { kind, delayMs: Math.round(delay) })
-          enqueueBubble(inner, 'inner', { source: 'pool' })
+          log('info', 'inner queued', { kind, delayMs: Math.round(delay), source: g.source })
+          enqueueBubble(t, 'inner', { source: g.source, fallbackReason: g.fallbackReason })
         }, delay)
-      }
+      })
     }
   }
 
@@ -3043,7 +3087,16 @@ export function apply(ctx, rawConfig) {
         if (m >= mm && m <= mm + 1) {
           ritualDone.morning = true
           if (!quietNow()) {
-            speak('morning', pick('kaigong'), { urgent: false, style: 'greet' })
+            void generate('morning', { tools: 0 }).then((g) =>
+              speak('morning', g.text, {
+                urgent: false,
+                style: 'greet',
+                source: g.source,
+                latencyMs: g.latencyMs,
+                tokens: g.tokens,
+                fallbackReason: g.fallbackReason
+              })
+            )
             // CF1（Lead 2026-10-24 裁决）：replaceClassicActs=true（默认）= act:wave 替代 classic act:jump；
             // false = 降级"仅 classic"（不双发）；kill switch（enabled=false）同样只发 classic。
             setTimeout(() => {
@@ -3059,7 +3112,20 @@ export function apply(ctx, rawConfig) {
         if (m >= sm && m <= sm + 1) {
           ritualDone.sleep = true
           if (cfg.ritualWalk) send('walk:corner')
-          setTimeout(() => speak('sleep', pick('shenye'), { urgent: true, style: 'night' }), cfg.ritualWalk ? 900 : 0)
+          setTimeout(
+            () =>
+              void generate('sleep', { tools: 0 }).then((g) =>
+                speak('sleep', g.text, {
+                  urgent: true,
+                  style: 'night',
+                  source: g.source,
+                  latencyMs: g.latencyMs,
+                  tokens: g.tokens,
+                  fallbackReason: g.fallbackReason
+                })
+              ),
+            cfg.ritualWalk ? 900 : 0
+          )
           setTimeout(() => send('cmd:fx:zzz'), cfg.ritualWalk ? 1200 : 300)
         }
       }
@@ -3150,7 +3216,21 @@ export function apply(ctx, rawConfig) {
         Date.now() - lastSneakEvalAt >= (cfg.whaleActs.sneak?.checkEveryMs || 300000)
       ) {
         lastSneakEvalAt = Date.now()
-        whaleAct('sneak')
+        if (whaleAct('sneak')) {
+          // task-133：偷吃被发现的低声一句（LLM-first；深夜/静音由 whaleAct/generate 门控）
+          void generate('sneakLine', { tools: 0 }).then((g) => {
+            const t = validateLine(g.text, { maxChars: cfg.llm.maxChars })
+            if (t)
+              speak('inner', t, {
+                force: true,
+                style: 'inner',
+                source: g.source,
+                latencyMs: g.latencyMs,
+                tokens: g.tokens,
+                fallbackReason: g.fallbackReason
+              })
+          })
+        }
       }
     } catch {}
   }, 20000)

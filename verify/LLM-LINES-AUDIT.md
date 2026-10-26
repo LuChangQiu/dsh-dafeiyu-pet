@@ -87,3 +87,36 @@
 
 - 分支：`feat/llm-lines`（窗口后合入；需新挂载窗口部署）
 - 状态：审计完成 → 实现中（本文件随实现更新来源占比与改动）
+
+
+---
+
+## 8. 实现改动（本分支，2026-10-26）
+
+### 8.1 新增/修改
+- 新增 `plugin/server/lib/llm-lines.js`：`KIND_POOL`（kind→兜底池）、`S0_KINDS`、`INTERACTIVE_KINDS`、`isNightTime`、`fallbackReasonFor`、`createLlmStats`（成功率/来源占比/kind 分布/回退原因/p50/p95/tokens）。
+- `generate()` 重写：
+  - **LLM-first** 全 kinds；失败/超预算/超 per-kind cap/`llm.lines.enabled=false`/深夜/模式 → 池兜底并记录 **`fallbackReason`**（`mode|night|budget|disabled|kind-cap|llm-unavailable|timeout|empty|invalid|duplicate`）。
+  - **深夜不生成**（默认 23:30–08:00，`llm.lines.nightGenerate:false`；S0 approval/waitingInput 与用户手动互动不受限）。
+  - 用户手动互动（摸头/喂食/叫她/被夸）默认绕过静音模式（用户明确发起），仍受预算/长度约束。
+  - 每次调用日志 `llm line {kind,source,latencyMs,tokens,costToday}`；每 10 次输出 `llm stats`（成功率/来源/延迟/回退原因）。
+  - v2 `llmStats` 字段（数字/枚举，无文本）写入 `bridge-state-v2.json`，面板/verifier 可读。
+- 接线：
+  - `inner` 心声：`say()` dual-layer 由固定 `innerFor()` 改为 `generate('inner', {innerKind})` LLM-first（失败回退固定 inner 池）。
+  - **morning 早安**：仪式定时器由 `pick('kaigong')` 改 `generate('morning')` + speak（LLM 失败自动池兜底）。
+  - **sleep 晚安**：同上改 `generate('sleep')`。
+  - **点击互动**：`interact(head/feed/come)` 新增 LLM 短句（kinds `interactHead/Feed/Come`，12–24 字），原有 FX/动作不变；ui-action 新增 `praise`（被夸）→ `interact('praise')` LLM 短句。
+  - **偷吃 sneak**：`whaleAct('sneak')` 成功后 `generate('sneakLine')` + inner 气泡（≤24 字，深夜不生成）。
+  - **approval/waitingInput**：保持 `generate('approval'/'waitingInput')` LLM-first，prompt 约束 ≤28 字、不催第二次；删除死配置 `approvalUseLlm`。
+- 风格对齐：参考 ux `verify/LLM-LINES-STYLE.md`（6 事件口吻/长度/结构拍/禁词）；长度约束已写入 prompt：点击 12–24、被夸/被摸 ≤20、偷吃 ≤24、报账 ≤40、等确认 ≤28。
+
+### 8.2 测试与样本
+- `plugin/server/test/llm-lines.test.mjs`：9/9（kind→池覆盖、S0/互动集合、夜间边界、回退原因优先级、统计快照、index 接线契约、prompt 约束）。
+- `plugin/server/test/llm-lines-mock.test.mjs`：3/3（mock ctx.llm；确定性 test-hook report 触发：成功 → v2 `llmStats.ok`；失败 → `fallbackReasons`；点击 interactHead + 被夸 praise 均走 LLM；连续 3 次运行稳定）。
+- 风格：ux `LLM-LINES-STYLE.md`（6 事件口吻/长度/结构拍/禁词）已映射进 prompt 约束（见 §8.1）。
+- 真实 10 条样本仍见 §4（生产日志原文，未改动）。
+- `package.json test:llm-lines`；preflight 新增 `unit: llm-lines`（<5s）。
+
+### 8.3 验收口径
+- 用户可见事件（开工/收工/报账/偷吃/重逢/等输入/等确认/自言自语/心声/早安/晚安/点击/被夸/被摸/喂食/叫她/偷吃台词）默认 LLM-first；池仅失败/超预算/深夜兜底。
+- 保留：¥1/日预算、去重/相似度、≤40 字（事件专项更短）、深夜不生成（S0/互动例外）、无 emoji/助手腔/主人称呼/读原文。

@@ -79,6 +79,14 @@ Invoke-Step "unit: whale-wiring" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: whale-acts/CF1 wiring fixtures（unit，<5s）"; return }
 }
 
+# 6g) task-133：LLM 全事件化（helpers 单测 + mock ctx.llm 集成；<5s）
+Invoke-Step "unit: llm-lines" {
+  & node plugin/server/test/llm-lines.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines（kind→池/夜间/回退原因/统计/接线契约）"; return }
+  & node plugin/server/test/llm-lines-mock.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines mock（成功/回退/点击互动/被夸）"; return }
+}
+
 # 7) git 状态（信息项，不判失败）
 Write-Host ""
 Write-Host "=== git status（信息项，未提交改动需说明） ==="
