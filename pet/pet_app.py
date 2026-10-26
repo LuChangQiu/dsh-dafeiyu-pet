@@ -367,8 +367,11 @@ def main():
             if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
                 raw = line[4:].strip()
                 if raw.lower() == "peek":
+                    # 用户明确不喜欢静态贴边偷看（只露半只、看起来像坏了）；
+                    # DSH 的 tool/read 探一眼改播「东张西望」动态 clip，不再进静态 peek。
                     try:
-                        w._webm.setPeek("left")
+                        if w._webm_play("东张西望", loop=False):
+                            return "actedB:peekClip"
                     except Exception:
                         pass
                     return "actedB:peek"
@@ -906,3 +909,4 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
