@@ -41,8 +41,6 @@ class WhaleGirlSkin:
         self.idx = 0
         self.acc = 0.0
         self.finished = False
-        self._quick_fade_ms = 80.0        # 快速事件（点击反应等）
-        self._dir_fade_ms = 150.0         # 方向/镜像变化（drag/fall）
         # 渲染平滑：动画时钟、上一显示帧、淡化进度、缩放帧缓存
         self.clock_ms = 0.0
         self.prev_path = None
@@ -185,7 +183,7 @@ class WhaleGirlSkin:
         if old_path and old_clip != name and _ok:
             self._start_fade(old_path, self.action_fade_ms)
         else:
-            self.prev_path = None      # 硬切：不保留旧帧
+            self.prev_path = None      # 硬切：不保留旧帧、不调 _start_fade
         return True
 
     def tick(self, ms):

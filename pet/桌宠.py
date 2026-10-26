@@ -6717,7 +6717,8 @@ class PetWindow(QWidget):
 
         cur_key = self._sprite_key()
         _force_now = getattr(self, "_whale_force", None)
-        _dir_fade_off = _force_now in ("drag", "fall", "sleep")
+        _loco_actions = getattr(getattr(self, "_smooth", None), "LOCOMOTION_ACTIONS", ())
+        _dir_fade_off = _force_now is not None and _force_now not in _loco_actions
         if self.cross_t > 0 and not _dir_fade_off:
             # 方向切换：两层都用原始帧（raw），淡化只由外层 cross_t 负责
             draw_one(self.prev_key, self.cross_t, raw=True)

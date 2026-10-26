@@ -71,22 +71,28 @@ S0_FORCES = ('think', 'waitPeek', 'errorSequence', 'none', 'sleep')
 # - 只允许：idle↔walk↔turnStop 等 locomotion + 普通动作切换 → 120ms（80–150 可配）；
 # - 必须硬切：sleep(holdLast)/fall/land/sneak→caught/drag/表情/眨眼帧等；
 # - walk 帧序不经过 play()，所以“走路帧间零淡化”天然满足。
+# 白名单 = 只允许这些 clip 之间的切换淡化（Lead/char-scout 最终口径：不做全动作淡化）
 LOCOMOTION_ACTIONS = ('idleBase', 'idleShift', 'idleSettle', 'idleStretch', 'walk', 'turnStop')
-HARD_CUT_ACTIONS = ('sleep', 'wake', 'fall', 'land', 'sneak', 'caught', 'drag', 'cry',
-                    'errorSequence', 'blink', 'note', 'lonelySit', 'jump')
+# 其余 clip（eat/eatSatisfied/wave/jump/land/dance/sneak/sleep/wake/drag/fall）+
+# composites（think/waitPeek/cheer/errorSequence/cry/caught/lonelySit/hum/report/pat/tsundere）+ note 一律硬切
+HARD_CUT_ACTIONS = (
+    'eat', 'eatSatisfied', 'wave', 'jump', 'land', 'dance', 'sneak', 'sleep', 'wake', 'drag', 'fall',
+    'think', 'waitPeek', 'cheer', 'errorSequence', 'cry', 'caught', 'lonelySit', 'hum', 'report',
+    'pat', 'tsundere', 'note', 'idle', 'background', 'blink', '',
+)
 
 
 def should_crossfade(prev_clip, next_clip, enabled=True):
-    """动作切换是否淡化：启用 + clip 变化 + 不涉及硬切动作。"""
+    """仅当 prev/next **都在 locomotion 白名单**内才淡化（walk/idle/turnStop 互相切换）；
+    其余（表情/动作/睡眠/摔倒/拖拽/偷看被抓等）一律硬切。"""
     if not enabled:
         return False
     if not prev_clip or not next_clip:
         return False
-    if str(prev_clip) == str(next_clip):
+    p, n = str(prev_clip), str(next_clip)
+    if p == n:
         return False
-    if str(prev_clip) in HARD_CUT_ACTIONS or str(next_clip) in HARD_CUT_ACTIONS:
-        return False
-    return True
+    return p in LOCOMOTION_ACTIONS and n in LOCOMOTION_ACTIONS
 
 
 def clamp(v, lo, hi):
