@@ -120,3 +120,21 @@
 ### 8.3 验收口径
 - 用户可见事件（开工/收工/报账/偷吃/重逢/等输入/等确认/自言自语/心声/早安/晚安/点击/被夸/被摸/喂食/叫她/偷吃台词）默认 LLM-first；池仅失败/超预算/深夜兜底。
 - 保留：¥1/日预算、去重/相似度、≤40 字（事件专项更短）、深夜不生成（S0/互动例外）、无 emoji/助手腔/主人称呼/读原文。
+
+
+---
+
+## 9. 文件上行队列（pet 本地事件 → 插件 LLM → say 推回）
+
+> 用户硬要求升级："每一句话都走 LLM 且每次不同"，pet 侧点击/双击/被夸/被摸/偷吃被抓等事件在 pet 进程内、插件收不到。
+> 契约：`verify/LLM-SPEECH-QUEUE.md`（pet-dev 按此实现钩子）。
+
+- pet 写 `<pet-work>/speech-requests.json`（原子：tmp+rename；数组最近 ≤50 条）：`{id,kind,context,at}`；context 只允许枚举/数值/布尔（白名单键，插件二次清洗）。
+- 插件 `speechRequests` 轮询（250ms，先 stat 比对 mtime/size，未变化不读；每 tick ≤4 条；200 id 去重）：
+  1. `kindToLlmKind` 映射（click→clickLine、doubleClick→doubleClickLine、praise/pat/feed/come/sneakCaught/report/approvalWait/waitingInput/greet/sleep/inner/selfTalk/celebrate）；
+  2. `generate(..., {interactive:true, allowNight:true, speechContext})` LLM-first；
+  3. 成功 → `send('say:<text>')` 推回 pet + 去重历史；失败/超时/超预算/重复重试后 → 池兜底并记 `fallbackReason`；日志 `speech reply {kind,llmKind,source,fallbackReason,latencyMs,tokens}`。
+- 插件配置：`speechRequests:{enabled:true,file:'',pollMs:250,maxPerTick:4,maxItems:50}`（file 空则从 `stateFileV2` 目录推导）；`llm.lines.interactivePerHour:60`、`llm.maxCallsPerDay:2000`（¥10/日预算仍为最终闸门，用户"不要在意这点 token"）。
+- pet 侧（pet-dev）：收到 say 取消对应 pending 兜底；**仅故障时**本地兜底（管道健康等 4–5s、离线 1.5s），正常时不得抢答固定池。
+- 测试：`speech-requests.test.mjs` **6/6**（映射/上下文白名单/解析容错/去重/限流/文本清洗）；`llm-lines-mock.test.mjs` **5/5**（LLM 成功/失败回退/点击/被夸/文件队列成功+失败）。
+- 新增文件：`plugin/server/lib/speech-requests.js`；`package.json test:llm-lines`；preflight `unit: llm-lines`（含 speech 测试）。

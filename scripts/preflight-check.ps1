@@ -83,8 +83,10 @@ Invoke-Step "unit: whale-wiring" {
 Invoke-Step "unit: llm-lines" {
   & node plugin/server/test/llm-lines.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines（kind→池/夜间/回退原因/统计/接线契约）"; return }
+  & node plugin/server/test/speech-requests.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: speech-requests（队列映射/上下文白名单/去重）"; return }
   & node plugin/server/test/llm-lines-mock.test.mjs
-  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines mock（成功/回退/点击互动/被夸）"; return }
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines mock（成功/回退/点击互动/被夸/文件队列）"; return }
 }
 
 # 7) git 状态（信息项，不判失败）

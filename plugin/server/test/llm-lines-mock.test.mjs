@@ -163,6 +163,51 @@ await run('mock llm: click interact-head + praise → LLM speech', async () => {
   }
 })
 
+await run('pet speech-request queue: click → llm reply (source:llm)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-speech-ok-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('ok') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    mod.apply(ctx, baseConfig(dir))
+    fs.writeFileSync(
+      queueFile,
+      JSON.stringify([{ id: 'q1', kind: 'click', context: { phase: 'click', mood: 2 } }]),
+      'utf8'
+    )
+    const ok = await waitFor(() => {
+      const st = readStats(dir)
+      return !!(st && st.byKind && st.byKind.clickLine && st.byKind.clickLine.llm >= 1)
+    }, 5000)
+    const log = readLog(path.join(dir, 'bridge.log'))
+    assert.ok(ok, 'expected clickLine llm; stats=' + JSON.stringify(readStats(dir)))
+    assert.ok(log.includes('speech reply') && /"source":"llm"/.test(log))
+    assert.equal(/speech request skipped/.test(log), false)
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await run('pet speech-request queue: llm failure → pool reply with fallbackReason', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-speech-fb-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('error') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    mod.apply(ctx, baseConfig(dir, 'error'))
+    fs.writeFileSync(queueFile, JSON.stringify([{ id: 'q2', kind: 'praise', context: {} }]), 'utf8')
+    const ok = await waitFor(() => {
+      const st = readStats(dir)
+      return !!(st && st.byKind && st.byKind.praise && st.byKind.praise.pool >= 1)
+    }, 5000)
+    const log = readLog(path.join(dir, 'bridge.log'))
+    assert.ok(ok, 'expected praise fallback; stats=' + JSON.stringify(readStats(dir)))
+    assert.ok(/speech reply .*"source":"pool".*"fallbackReason":"(empty|llm-unavailable|timeout|invalid)"/.test(log))
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 globalThis.setInterval = realSetInterval
 console.log(`llm-lines mock tests: ${pass}/${pass + fail} pass`)
 if (fail) process.exit(1)

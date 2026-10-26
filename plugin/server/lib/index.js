@@ -56,6 +56,13 @@ import { redactPathText, workspaceName, workspaceHash } from './privacy.js'
 import { buildTeamV2, emptyTeamV2 } from './team-view.js'
 import { composeReunion } from './text-fmt.js'
 import { KIND_POOL, S0_KINDS, INTERACTIVE_KINDS, isNightTime, createLlmStats } from './llm-lines.js'
+import {
+  parseSpeechRequests,
+  selectNewRequests,
+  kindToLlmKind,
+  contextPrompt,
+  buildSayLine
+} from './speech-requests.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -115,7 +122,9 @@ const DEFAULTS = {
       nightStartMin: 23 * 60 + 30,
       nightEndMin: 8 * 60,
       interactiveUseLlm: true,
-      statsLogEvery: 10
+      statsLogEvery: 10,
+      // task-133：用户主动交互/点击类不按 6/h 卡死；总量由预算+总 cap 控制
+      interactivePerHour: 60
     },
     enabled: true,
     provider: 'deepseek-official',
@@ -123,7 +132,7 @@ const DEFAULTS = {
     timeoutMs: 2500,
     maxTokens: 90,
     temperature: 0.9,
-    maxCallsPerDay: 300,
+    maxCallsPerDay: 2000, // task-133：全事件 LLM 化；¥10/日预算仍为最终闸门
     budgetPerDayYuan: 1.0,
     costPer1kTokensYuan: 0.0015,
     maxChars: 40,
@@ -442,7 +451,9 @@ export function apply(ctx, rawConfig) {
     interactFeed: '用户刚喂了你一口，你满足地回一句，不夸张',
     interactCome: '用户叫你了/让你过去，你答应了，短，别演过头',
     praise: '用户夸了你，你有点害羞又开心，不油腻、不索要更多夸奖',
-    sneakLine: '你偷偷多吃了两口被发现的低声一句，心虚但不卖惨'
+    sneakLine: '你偷偷多吃了两口被发现的低声一句，心虚但不卖惨',
+    clickLine: '用户刚点了你一下，你短促回应，像被碰到的小家伙',
+    doubleClickLine: '用户快速双击了你，你回一句，不重复点击台词'
   }
 
   const hist = []
@@ -564,6 +575,10 @@ export function apply(ctx, rawConfig) {
       `[抽象上下文] 这轮用了${toolBucket}；结果：${extra.outcome || '进行中'}；用时档：${extra.durBucket || '不长'}。`
     ]
     if (extra.numbers) lines.push(`[数字槽位] ${extra.numbers}（原样使用，不要自己计算/改写）`)
+    if (extra.speechContext) {
+      const cp = contextPrompt(extra.speechContext)
+      if (cp) lines.push(`[宠物事件上下文] ${cp}（只作语气参考，不要复述）`)
+    }
     if (cfg.llm.includeRecentText && extra.recentUser) lines.push(`[最近一句] 用户：${extra.recentUser}`)
     lines.push(
       `[要求] 只输出一句中文台词（不要解释、不要引号、不要列表）。≤${cfg.llm.maxChars} 字，口语，可带括号心声体。`
@@ -587,6 +602,8 @@ export function apply(ctx, rawConfig) {
     if (kind === 'interactCome') lines.push('[要求] 被叫过来的短回应：12–24 字，答应、就位；不评价用户。')
     if (kind === 'praise') lines.push('[要求] 被夸的短反应：害羞/开心但不油腻，≤20 字；不索要更多夸奖。')
     if (kind === 'sneakLine') lines.push('[要求] 偷吃被发现的低声一句：≤24 字，心虚俏皮但不卖惨；深夜不生成。')
+    if (kind === 'clickLine') lines.push('[要求] 被点一下：12–24 字，短促、有反应；不复述用户身份、不索取。')
+    if (kind === 'doubleClickLine') lines.push('[要求] 被双击：12–24 字，短促、有反应；不复述用户身份、不索取。')
     return lines.join('\n')
   }
 
@@ -3070,6 +3087,108 @@ export function apply(ctx, rawConfig) {
 
   ctx.on('session/event', onEvent)
 
+  // ---------- task-133：pet 台词请求队列（文件上行；pet 写，插件 LLM 后 say: 推回） ----------
+  const speechRequestsCfg = cfg.speechRequests || {}
+  const resolveSpeechFile = () => {
+    if (speechRequestsCfg.file) return String(speechRequestsCfg.file)
+    const base = cfg.stateFileV2 || cfg.companionFile || cfg.eventsFile || cfg.historyFile || ''
+    if (!base) return ''
+    return path.join(path.dirname(base), 'speech-requests.json')
+  }
+  const speechFile = speechRequestsCfg.enabled === false ? '' : resolveSpeechFile()
+  let speechQueueTimer = null
+  const speechProcessed = new Set()
+  const speechProcessedOrder = []
+  const speechQueueState = { busy: false, lastSize: -1, lastMtime: 0 }
+  const markSpeechProcessed = (ids) => {
+    for (const id of ids) {
+      if (speechProcessed.has(id)) continue
+      speechProcessed.add(id)
+      speechProcessedOrder.push(id)
+    }
+    while (speechProcessedOrder.length > 200) speechProcessed.delete(speechProcessedOrder.shift())
+  }
+  const pollSpeechRequests = async () => {
+    if (!speechFile || speechQueueState.busy) return
+    let st
+    try {
+      st = fs.statSync(speechFile)
+    } catch {
+      return
+    }
+    if (st.size === speechQueueState.lastSize && st.mtimeMs === speechQueueState.lastMtime) return
+    speechQueueState.lastSize = st.size
+    speechQueueState.lastMtime = st.mtimeMs
+    let raw = ''
+    try {
+      raw = fs.readFileSync(speechFile, 'utf8')
+    } catch {
+      return
+    }
+    const parsed = parseSpeechRequests(raw, { maxItems: speechRequestsCfg.maxItems || 50 })
+    if (parsed.invalid) {
+      log('warn', 'speech requests invalid json')
+      return
+    }
+    const { fresh, ids } = selectNewRequests(parsed.requests, speechProcessed, {
+      maxPerTick: speechRequestsCfg.maxPerTick || 4
+    })
+    if (!fresh.length) return
+    speechQueueState.busy = true
+    try {
+      for (const req of fresh) {
+        const llmKind = kindToLlmKind(req.kind)
+        if (!llmKind) {
+          log('info', 'speech request skipped', { kind: String(req.kind).slice(0, 40), reason: 'unknown-kind' })
+          continue
+        }
+        try {
+          const g = await generate(
+            llmKind,
+            { tools: 0 },
+            {
+              interactive: true,
+              allowNight: true,
+              speechContext: req.context
+            }
+          )
+          const t = validateLine(g.text, { maxChars: cfg.llm.maxChars })
+          if (!t) {
+            log('info', 'speech reply skipped', { kind: req.kind, llmKind, reason: 'empty' })
+            continue
+          }
+          send(buildSayLine(t), { force: true })
+          rememberLine(t, 'speech-request')
+          log('info', 'speech reply', {
+            kind: String(req.kind).slice(0, 40),
+            llmKind,
+            source: g.source,
+            fallbackReason: g.fallbackReason || null,
+            latencyMs: g.latencyMs,
+            tokens: g.tokens
+          })
+        } catch (err) {
+          log('warn', 'speech request error', {
+            kind: String(req.kind).slice(0, 40),
+            error: String(err && err.message).slice(0, 80)
+          })
+        }
+      }
+    } finally {
+      markSpeechProcessed(ids)
+      speechQueueState.busy = false
+    }
+  }
+  if (speechFile && speechRequestsCfg.enabled !== false) {
+    speechQueueTimer = setInterval(
+      () => {
+        pollSpeechRequests().catch(() => {})
+      },
+      Number(speechRequestsCfg.pollMs) || 250
+    )
+    log('info', 'speech requests queue', { enabled: true, file: redactPathText(speechFile) })
+  }
+
   // ---------- rituals (morning / sleep) ----------
   const ritualDone = { date: '', morning: false, sleep: false }
   const timer = setInterval(() => {
@@ -3353,6 +3472,9 @@ export function apply(ctx, rawConfig) {
     } catch {}
     try {
       clearInterval(bubbleTimer)
+    } catch {}
+    try {
+      if (speechQueueTimer) clearInterval(speechQueueTimer)
     } catch {}
     try {
       if (hookTimer) clearInterval(hookTimer)
