@@ -26,3 +26,5 @@ __pycache__/
 
 # harness 生成的临时 fixture（可随时用 test/make-fixture.mjs 重新生成）
 plugin/client/test/harness/fixture.js
+
+dist-b/
