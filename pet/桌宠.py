@@ -6716,7 +6716,9 @@ class PetWindow(QWidget):
             p.restore()
 
         cur_key = self._sprite_key()
-        if self.cross_t > 0:
+        _force_now = getattr(self, "_whale_force", None)
+        _dir_fade_off = _force_now in ("drag", "fall", "sleep")
+        if self.cross_t > 0 and not _dir_fade_off:
             # 方向切换：两层都用原始帧（raw），淡化只由外层 cross_t 负责
             draw_one(self.prev_key, self.cross_t, raw=True)
             draw_one(cur_key, 1.0 - self.cross_t, raw=True)
@@ -7323,6 +7325,25 @@ class PetWindow(QWidget):
         except Exception:
             pass
 
+    def _smooth_tick_rate(self):
+        """walk/过渡期 60Hz tick（亚像素位移更顺）；静止恢复标准 tick。"""
+        try:
+            if not getattr(self, "perf_mode", True):
+                return
+            fast = bool(self.target is not None and not self.dragging)
+            if not fast:
+                w = getattr(self, "_whale", None)
+                try:
+                    fast = w is not None and w.fade_alpha() is not None
+                except Exception:
+                    fast = False
+            want = 16 if fast else 20
+            if int(getattr(self, "tick_ms", 20) or 20) != want:
+                self.tick_ms = want
+                self.timer.setInterval(want)
+        except Exception:
+            pass
+
     # ---------- 事件动画编排（task-131）：庆祝 3 阶段 / 对话微动作 ----------
     def _anim_celebrate(self):
         """done/完成：跳起→落地→举双手/转圈 3 阶段 + 爱心 FX + 气泡（1.5–3s）。"""
@@ -7536,6 +7557,8 @@ class PetWindow(QWidget):
                 self._lyric_prev_h = self._lyric_last_h or 0.0
                 self._lyric_prev_w = self._lyric_last_w or 0.0
                 self._lyric_anim_t = 1.0
+        # walk/过渡期 60Hz（亚像素位移更顺）；静止恢复标准 tick
+        self._smooth_tick_rate()
         # 过渡期间（换句动画、或者气泡正在变大变小）换成 100 帧/秒的密帧重绘
         bubble_moving = (abs(self._bub_target[0] - self._bub_w) > 0.6
                          or abs(self._bub_target[1] - self._bub_h) > 0.6)

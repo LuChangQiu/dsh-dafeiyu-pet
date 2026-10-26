@@ -16,8 +16,10 @@ sys.path.insert(0, os.path.join(ROOT, 'pet'))
 from smooth_anim import (  # noqa: E402
     CELEBRATION_TOTAL_MS,
     DSH_MAP,
+    HARD_CUT_ACTIONS,
     IDLE_ACTIONS,
     IDLE_LOOP_ACTIONS,
+    LOCOMOTION_ACTIONS,
     IdleMicroScheduler,
     SmoothConfig,
     action_fade_layers,
@@ -28,6 +30,7 @@ from smooth_anim import (  # noqa: E402
     fade_alpha,
     frame_change_fades,
     secondary_motion,
+    should_crossfade,
 )
 
 ok = 0
@@ -47,8 +50,8 @@ def check(name, cond, detail=''):
 # ---------- 配置夹取 ----------
 c = SmoothConfig({})
 check('默认 enabled', c.enabled is True)
-check('默认 crossfade=100ms', c.crossfade_ms == 100)
-check('默认 actionFade=90ms', c.action_fade_ms == 90)
+check('默认 crossfade=120ms', c.crossfade_ms == 120)
+check('默认 actionFade=120ms', c.action_fade_ms == 120)
 c2 = SmoothConfig({'whale': {'smooth': {'crossfadeMs': 10, 'actionFadeMs': 999, 'breathAmpPct': 9,
                                         'breathPeriodSec': 1, 'swayDeg': 5, 'floatPx': 99,
                                         'microMinSec': 50, 'microMaxSec': 60}}})
@@ -121,6 +124,19 @@ layers = action_fade_layers(0.5)
 check('动作切换合成是单层 alpha（prev 满不透明）', len(layers) == 2 and layers[0] == ('prev', 1.0) and layers[1] == ('cur', 0.5))
 check('合成 alpha 夹取', action_fade_layers(2.0)[1] == ('cur', 1.0) and action_fade_layers(-1)[1] == ('cur', 0.0))
 check('方向 crossfade 使用原始帧', direction_crossfade_uses_raw(True) is True)
+
+# ---------- 淡化白名单（Lead 最终口径） ----------
+check('idle<->walk 允许淡化', should_crossfade('idleBase', 'walk') is True)
+check('walk->idle 允许淡化', should_crossfade('walk', 'idleBase') is True)
+check('idle→think 动作切换允许淡化', should_crossfade('idleBase', 'think') is True)
+check('同 clip 不淡化', should_crossfade('walk', 'walk') is False)
+check('sleep 硬切', should_crossfade('idleBase', 'sleep') is False and should_crossfade('sleep', 'idleBase') is False)
+check('fall/land 硬切', should_crossfade('fall', 'land') is False)
+check('sneak->caught 硬切', should_crossfade('sneak', 'caught') is False)
+check('drag 硬切', should_crossfade('idleBase', 'drag') is False and should_crossfade('drag', 'wear') is False)
+check('表情/眨眼硬切', should_crossfade('think', 'blink') is False)
+check('enabled=false 全硬切', should_crossfade('idleBase', 'walk', enabled=False) is False)
+check('白名单/硬切集合存在', 'idleBase' in LOCOMOTION_ACTIONS and 'sleep' in HARD_CUT_ACTIONS and 'walk' in LOCOMOTION_ACTIONS)
 
 print('\n%s smooth-anim: %d passed, %d failed' % ('PASS' if fail == 0 else 'FAIL', ok, fail))
 sys.exit(0 if fail == 0 else 1)

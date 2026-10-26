@@ -14,7 +14,7 @@ import json
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap
 
 NOMINAL_CONTENT_H = 263.0   # 标称内容高度（manifest/STATE-MAP 定义）
 FOOT_ANCHOR_Y = 295.0       # 脚底锚点 y（画布 320）
@@ -128,9 +128,11 @@ class WhaleGirlSkin:
         cfg = cfg if isinstance(cfg, dict) else {}
         self.fade_enabled = bool(cfg.get('enabled', True))
         try:
-            self.fade_ms = float(max(80.0, min(150.0, float(cfg.get('crossfadeMs', CROSSFADE_MS)))))
+            _cf = float(cfg.get('crossfadeMs', CROSSFADE_MS))
         except (TypeError, ValueError):
-            self.fade_ms = float(CROSSFADE_MS)
+            _cf = float(CROSSFADE_MS)
+        # 0 = 全硬切（可回退）；否则验收 80–150ms
+        self.fade_ms = 0.0 if _cf <= 0 else float(max(80.0, min(150.0, _cf)))
         try:
             self.action_fade_ms = float(max(80.0, min(150.0, float(cfg.get('actionFadeMs', ACTION_FADE_MS)))))
         except (TypeError, ValueError):
@@ -172,15 +174,18 @@ class WhaleGirlSkin:
         self.idx = 0
         self.acc = 0.0
         self.finished = False
-        # 淡化只发生在 **clip 切换**（同 clip 重播/换帧不淡化）；分档 80–150ms
-        if old_path and old_clip != name:
-            if name in ("drag", "fall"):
-                _fade = self._dir_fade_ms
-            elif name in ("pat", "tsundere"):
-                _fade = self._quick_fade_ms
-            else:
-                _fade = self.action_fade_ms
-            self._start_fade(old_path, _fade)
+        # 淡化白名单：idle↔walk↔turnStop/普通动作切换 → 120ms；sleep/fall/land/drag 等硬切
+        try:
+            from smooth_anim import should_crossfade
+        except Exception:
+            should_crossfade = None
+        _ok = False
+        if should_crossfade is not None:
+            _ok = bool(should_crossfade(old_clip, name, self.fade_enabled)) and self.fade_ms > 0
+        if old_path and old_clip != name and _ok:
+            self._start_fade(old_path, self.action_fade_ms)
+        else:
+            self.prev_path = None      # 硬切：不保留旧帧
         return True
 
     def tick(self, ms):
@@ -276,14 +281,22 @@ class WhaleGirlSkin:
         out = self._fade_cache.get(ckey)
         if out is not None:
             return out
-        # dissolve：prev 满不透明打底，cur 以 alpha 叠上（不对两层各设 opacity 后 SourceOver）
-        out = prev.copy()
-        p = QPainter(out)
+        # dissolve：prev 满不透明打底，cur 以 alpha 叠上（预乘 ARGB32 + DPR 物理像素）
+        img = QImage(cur.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
         try:
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            p.drawPixmap(0, 0, prev)
             p.setOpacity(max(0.0, min(1.0, alpha)))
             p.drawPixmap(0, 0, cur)
         finally:
             p.end()
+        out = QPixmap.fromImage(img)
+        try:
+            out.setDevicePixelRatio(cur.devicePixelRatio())
+        except Exception:
+            pass
         if len(self._fade_cache) > 64:
             self._fade_cache.clear()
         self._fade_cache[ckey] = out

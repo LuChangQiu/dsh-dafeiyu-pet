@@ -16,8 +16,8 @@ import random
 
 DEFAULTS = {
     'enabled': True,
-    'crossfadeMs': 100,
-    'actionFadeMs': 90,
+    'crossfadeMs': 120,
+    'actionFadeMs': 120,
     'breathAmpPct': 0.5,      # ±0.5%（验收 0.3–0.6）
     'breathPeriodSec': 5.0,   # 验收 4–6s
     'swayDeg': 0.35,          # 轻微摇摆（验收 ≤0.6°）
@@ -67,6 +67,27 @@ DIALOG_ACTIONS = {
 }
 S0_FORCES = ('think', 'waitPeek', 'errorSequence', 'none', 'sleep')
 
+# 淡化白名单/硬切策略（Lead 2026-10-26 最终口径）：
+# - 只允许：idle↔walk↔turnStop 等 locomotion + 普通动作切换 → 120ms（80–150 可配）；
+# - 必须硬切：sleep(holdLast)/fall/land/sneak→caught/drag/表情/眨眼帧等；
+# - walk 帧序不经过 play()，所以“走路帧间零淡化”天然满足。
+LOCOMOTION_ACTIONS = ('idleBase', 'idleShift', 'idleSettle', 'idleStretch', 'walk', 'turnStop')
+HARD_CUT_ACTIONS = ('sleep', 'wake', 'fall', 'land', 'sneak', 'caught', 'drag', 'cry',
+                    'errorSequence', 'blink', 'note', 'lonelySit', 'jump')
+
+
+def should_crossfade(prev_clip, next_clip, enabled=True):
+    """动作切换是否淡化：启用 + clip 变化 + 不涉及硬切动作。"""
+    if not enabled:
+        return False
+    if not prev_clip or not next_clip:
+        return False
+    if str(prev_clip) == str(next_clip):
+        return False
+    if str(prev_clip) in HARD_CUT_ACTIONS or str(next_clip) in HARD_CUT_ACTIONS:
+        return False
+    return True
+
 
 def clamp(v, lo, hi):
     return lo if v < lo else (hi if v > hi else v)
@@ -89,7 +110,13 @@ class SmoothConfig:
             if isinstance(whale, dict) and isinstance(whale.get('smooth'), dict):
                 raw = whale['smooth']
         self.enabled = bool(raw.get('enabled', DEFAULTS['enabled']))
-        self.crossfade_ms = int(_num(raw.get('crossfadeMs'), DEFAULTS['crossfadeMs'], 80, 150))
+        # 允许 0 = 全硬切；否则验收 80–150ms
+        _cf = raw.get('crossfadeMs', DEFAULTS['crossfadeMs'])
+        try:
+            _cfv = float(_cf)
+        except (TypeError, ValueError):
+            _cfv = float(DEFAULTS['crossfadeMs'])
+        self.crossfade_ms = 0 if _cfv <= 0 else int(clamp(_cfv, 80, 150))
         self.action_fade_ms = int(_num(raw.get('actionFadeMs'), DEFAULTS['actionFadeMs'], 80, 150))
         self.breath_amp_pct = _num(raw.get('breathAmpPct'), DEFAULTS['breathAmpPct'], 0.3, 0.6)
         self.breath_period_s = _num(raw.get('breathPeriodSec'), DEFAULTS['breathPeriodSec'], 4.0, 6.0)
