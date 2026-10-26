@@ -24,6 +24,7 @@ from smooth_anim import (  # noqa: E402
     SmoothConfig,
     action_fade_layers,
     breath_scale,
+    celebration_mode,
     celebration_stages,
     dialog_action,
     direction_crossfade_uses_raw,
@@ -94,9 +95,16 @@ check('8–20s 内到点', sch.due(c.micro_min_s) is True or sch.due(c.micro_max
 act = sch.pick(c.micro_max_s)
 check('到点返回池内动作', act in IDLE_ACTIONS, str(act))
 check('触发后重新排期（未到点）', sch.due(c.micro_max_s + 0.1) is False)
-check('池包含换重心/伸懒腰/看左右/摆手/哼歌/轻跳',
-      {'idleShift', 'idleStretch', 'turnStop', 'wave', 'hum'} <= set(IDLE_ACTIONS))
+check('池包含换重心/伸懒腰/看左右/哼歌/摸鱼/吃小鱼干/打哈欠',
+      {'idleShift', 'idleStretch', 'turnStop', 'hum', 'lonelySit', 'eatSatisfied', 'sleep'} <= set(IDLE_ACTIONS))
+check('池不再包含轻跳（蹦蹦蹦）', 'jump' not in IDLE_ACTIONS)
+check('默认微动作间隔 8–15s', c.micro_min_s == 8.0 and c.micro_max_s == 15.0)
 check('循环动作标记 hum', IDLE_LOOP_ACTIONS == {'hum'})
+rng2 = random.Random(7)
+sch2 = IdleMicroScheduler(c, now=0.0, rng=rng2)
+a1 = sch2.pick(20.0)
+a2 = sch2.pick(40.0)
+check('同类不连续（两次抽样不同）', a1 != a2, a1 + '/' + a2)
 
 # ---------- 庆祝 ----------
 st = celebration_stages()
@@ -147,6 +155,13 @@ c0 = SmoothConfig({'whale': {'smooth': {'crossfadeMs': 0}}})
 check('crossfadeMs=0 保留为全硬切', c0.crossfade_ms == 0)
 cdis = SmoothConfig({'whale': {'smooth': {'enabled': False}}})
 check('enabled=false 配置生效', cdis.enabled is False)
+
+# ---------- done 庆祝门控（用户反馈：不再蹦蹦蹦） ----------
+check('短任务 done 只短反应', celebration_mode(1000.0, task_started_at=990.0) == 'short')
+check('手动 done（无任务起点）只短反应', celebration_mode(1000.0, task_started_at=0.0) == 'short')
+check('长回合且无冷却 → 全链庆祝', celebration_mode(1000.0, task_started_at=900.0) == 'full')
+check('冷却期内 done 不庆祝', celebration_mode(1000.0, task_started_at=900.0, cd_until=1100.0) == 'short')
+check('冷却已过可再庆祝', celebration_mode(1200.0, task_started_at=1100.0, cd_until=1100.0) == 'full')
 
 print('\n%s smooth-anim: %d passed, %d failed' % ('PASS' if fail == 0 else 'FAIL', ok, fail))
 sys.exit(0 if fail == 0 else 1)

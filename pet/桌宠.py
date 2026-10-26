@@ -4264,6 +4264,8 @@ class PetWindow(QWidget):
         except Exception:
             self._idle_micro = None
         self._celebration = None          # 庆祝 3 阶段状态 {stage,t0}
+        self._celebrate_cd_until = 0.0    # done 庆祝冷却（墙上时间；120s）
+        self._task_started_at = 0.0       # 长回合计时（thinking/tool 开始时间）
         self._dialog_force = None         # 对话动作占用的 force（到时清）
         self._dialog_until = 0.0
         self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
@@ -7478,6 +7480,34 @@ class PetWindow(QWidget):
         stages = self._smooth.celebration_stages() if self._smooth else ()
         if not stages:
             return False
+        _now_w = time.time()
+        _mode = 'short'
+        try:
+            _mode = self._smooth.celebration_mode(
+                _now_w,
+                cd_until=getattr(self, "_celebrate_cd_until", 0.0),
+                task_started_at=getattr(self, "_task_started_at", 0.0),
+            )
+        except Exception:
+            _mode = 'short'
+        if _mode != 'full':
+            # 短反应 ≤0.8s：不 jump（用户反馈"蹦蹦蹦"）
+            _act = random.choice(("pat", "hum", "idleSettle"))
+            if w.has(_act):
+                self._whale_force_play(_act)
+                try:
+                    _st = w.action_stats(_act)
+                    _total = (_st[2] / 1000.0) if _st and _st[2] else 0.8
+                except Exception:
+                    _total = 0.8
+                self._dialog_force = _act
+                self._dialog_until = self._secs() + max(0.35, min(0.8, _total * 1.05))
+            try:
+                self._anim_log("celebrate short mode=%s act=%s" % (_mode, _act))
+            except Exception:
+                pass
+            return False
+        self._celebrate_cd_until = _now_w + 120.0
         self._celebration = {"stage": 0, "t0": self._secs()}
         self._anim_log("celebrate start stages=%d totalMs=%s" % (
             len(stages), self._smooth.celebration_total_ms() if self._smooth else "?"))
@@ -7835,16 +7865,23 @@ class PetWindow(QWidget):
                 ty = max(geo.top() + half_h, min(geo.bottom() - half_h, cursor.y() + 60))
                 self.target = (tx, ty)
         elif self.mode == "wander":
+            # 用户口径：静息为主（80% 时间站着/坐着微动），每 60–180s 才短距离走一次（2–4s）
             if self.target is None:
                 if now_ms < self.rest_until:
                     self._maybe_idle_action()
                     self.update()
                     return
                 geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
-                # 同样按窗口中心取点，保证这个点在"窗口不出屏"的钳制范围内可达
+                # 短距离目标：离当前位置 90–170px，走 2–4 秒就停，不再全屏乱跑
                 half_w, half_h = self.width() / 2, self.height() / 2
-                self.target = (random.randint(int(geo.left() + half_w), int(geo.right() - half_w)),
-                               random.randint(int(geo.top() + half_h), int(geo.bottom() - half_h)))
+                cx, cy = self.x() + half_w, self.y() + half_h
+                ang = random.uniform(0.0, math.pi * 2.0)
+                dist = random.uniform(90.0, 170.0)
+                tx = cx + math.cos(ang) * dist
+                ty = cy + math.sin(ang) * dist
+                tx = max(geo.left() + half_w, min(geo.right() - half_w, tx))
+                ty = max(geo.top() + half_h, min(geo.bottom() - half_h, ty))
+                self.target = (int(tx), int(ty))
         else:
             # 原地待着：一直维持正面形象，不再转头看鼠标、也不会背过身
             # （拖动过程中的朝向逻辑照旧走 mouseMoveEvent，不受这里影响）
@@ -7871,7 +7908,8 @@ class PetWindow(QWidget):
             dist = (dx * dx + dy * dy) ** 0.5
             if dist < 12:
                 self.target = None
-                self.rest_until = self.t * self.tick_ms + random.randint(8000, 18000)
+                # 走完长休息 60–180s（静息为主），期间只做微动作
+                self.rest_until = self.t * self.tick_ms + random.randint(60000, 180000)
                 self._set_dir("down")
             else:
                 step = self.cur_speed * self.tick_ms / 1000.0
@@ -7882,8 +7920,7 @@ class PetWindow(QWidget):
                 my = max(geo.top(), min(geo.bottom() - self.height() + 1, int(ny - self.height() / 2)))
                 self.move(mx, my)
                 self._face_travel(dx, dy)
-            if random.random() < 0.002 and self.jump_t == 0:
-                self.jump_t = 0.5
+            # 用户 2026-10-26：禁止散步时随机弹跳（"蹦蹦蹦"主因之一）
         target_speed = SPEED if self.target is not None else 0.0
         self.cur_speed += (target_speed - self.cur_speed) * 0.3
         self.update()
@@ -11725,6 +11762,11 @@ def main():
                     "cry": "cry",
                     "disconnected": "lonelySit",
                 }
+                try:
+                    if _name in ("thinking", "tool") and not getattr(w, "_task_started_at", 0.0):
+                        w._task_started_at = time.time()
+                except Exception:
+                    pass
                 _wh = getattr(w, "_whale", None)
                 _mapped = _whale_map.get(_name) if _name else None
                 if _name in ("idle", "background", ""):

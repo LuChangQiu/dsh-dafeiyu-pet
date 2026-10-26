@@ -22,8 +22,8 @@ DEFAULTS = {
     'breathPeriodSec': 5.0,   # 验收 4–6s
     'swayDeg': 0.35,          # 轻微摇摆（验收 ≤0.6°）
     'floatPx': 1.2,           # 上下浮动
-    'microMinSec': 8.0,       # 待机微动作间隔（验收 8–20s）
-    'microMaxSec': 18.0,
+    'microMinSec': 8.0,       # 待机微动作间隔（用户口径 8–15s）
+    'microMaxSec': 15.0,
     'microCooldownSec': 1.5,
 }
 
@@ -40,11 +40,13 @@ DSH_MAP = {
     'disconnected': 'lonelySit',
 }
 
-# 待机小动作池（组合现有帧）：换重心/整理/伸懒腰/看左右/摆手/哼歌/轻跳
-IDLE_ACTIONS = ('idleShift', 'idleSettle', 'idleStretch', 'turnStop', 'wave', 'hum', 'jump')
-IDLE_WEIGHTS = (30, 25, 18, 8, 6, 8, 5)
+# 待机小动作池（用户 2026-10-26 口径）：看左右/整理/伸懒腰/换重心/哼歌/摸鱼/吃小鱼干/打哈欠
+# 去掉"轻跳"（蹦蹦蹦的主因）；同类不连续由调度器保证。
+IDLE_ACTIONS = ('idleShift', 'idleSettle', 'idleStretch', 'turnStop',
+                'hum', 'lonelySit', 'eatSatisfied', 'sleep')
+IDLE_WEIGHTS = (18, 16, 14, 14, 12, 10, 10, 6)
 IDLE_LOOP_ACTIONS = {'hum'}          # 循环动作需调用方给定时长后收回
-IDLE_TIMED_MS = {'hum': 2600}        # 组合动作播放时长（ms）
+IDLE_TIMED_MS = {'hum': 2600, 'sleep': 1200}   # 播放时长（ms；sleep=打哈欠式短打盹）
 
 # 庆祝：3 阶段，总 1.5–3.0s（跳起→落地→举双手/celebrate）
 CELEBRATION_STAGES = (
@@ -202,6 +204,7 @@ class IdleMicroScheduler:
         self.rng = rng or random.Random()
         self.next_at = float(now) + self._interval()
         self.last_at = -1e9
+        self.last_action = ''
 
     def _interval(self):
         lo = max(0.1, self.cfg.micro_min_s)
@@ -219,7 +222,14 @@ class IdleMicroScheduler:
             return None
         self.last_at = float(now)
         self.next_at = float(now) + self._interval()
-        return self.rng.choices(IDLE_ACTIONS, weights=IDLE_WEIGHTS, k=1)[0]
+        # 同类不连续：最多重抽 4 次
+        n = ''
+        for _ in range(5):
+            n = self.rng.choices(IDLE_ACTIONS, weights=IDLE_WEIGHTS, k=1)[0]
+            if n != self.last_action:
+                break
+        self.last_action = n
+        return n
 
     def reset(self, now):
         self.last_at = float(now)
@@ -232,6 +242,27 @@ def celebration_stages():
 
 def celebration_total_ms():
     return CELEBRATION_TOTAL_MS
+
+
+def celebration_mode(now, cd_until=0.0, task_started_at=0.0,
+                     long_task_sec=45.0, cooldown_sec=120.0):
+    """done 庆祝门控：返回 'full'（完整 3 阶段）或 'short'（≤0.8s 短反应）。
+
+    - 冷却 120s：冷却期内 done 不再 jump；
+    - 只有长回合（从 thinking/tool 开始 ≥45s）才全链庆祝，短命令只短反应；
+    - 无 task_started_at（例如手动 act:done）视为短任务。
+    """
+    try:
+        now = float(now)
+        if not task_started_at:
+            return 'short'
+        if now - float(task_started_at) < float(long_task_sec):
+            return 'short'
+        if now < float(cd_until or 0.0):
+            return 'short'
+        return 'full'
+    except (TypeError, ValueError):
+        return 'short'
 
 
 def dialog_action(kind):
