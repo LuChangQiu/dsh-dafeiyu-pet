@@ -232,12 +232,7 @@ SPRITE_DIR = os.path.join(BUNDLE_DIR, "sprites")
 ASSET_DIR = os.path.join(BUNDLE_DIR, "assets")     # 音效 + 小鲸鱼挂件形象
 CONFIG_PATH = os.path.join(USER_DIR, "config.json")
 
-# 鲸鱼娘 2D 帧动画皮肤（素材 YunYueSama/codex-deepseek-pet，署名许可 1.0；
-# 缺失/损坏时自动回退原三视图 classic，不影响桌宠启动）
-try:
-    import whale_skin as _whale_skin
-except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
-    _whale_skin = None
+# 旧 A 皮肤（whale_skin.py / sprites）已退役（task-138）；当前只使用 B（webm_body.py）。
 try:
     import smooth_anim as _smooth_anim
 except Exception:      # 平滑/编排模块缺失 → 退回原渲染（不阻塞启动）
@@ -4269,12 +4264,9 @@ class PetWindow(QWidget):
                 self._whale_walk_rate = max(0.5, min(3.0, float(_wcfg.get("walkRate", 1.35) or 1.35)))
             except (TypeError, ValueError):
                 self._whale_walk_rate = 1.35
-            if _wcfg.get("on", True) and _whale_skin is not None:
-                self._whale = _whale_skin.load(__file__)
-                if self._whale is not None:
-                    self._whale.play("idleBase")
-        except Exception as _whale_err:
-            print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
+            # A 皮肤已退役；B 由 webm_body 负责，_whale 保持 None。
+            self._whale = None
+        except Exception:
             self._whale = None
 
         # ---- 渲染平滑 / 事件动画（task-131）：淡化 + 次级运动 + 待机微动作 + 庆祝/对话编排 ----

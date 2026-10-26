@@ -1,7 +1,7 @@
 # ruff（Python 代码规范，120 列；仅检查 pet/ 与脚本生成的补丁）
 line-length = 120
 target-version = "py311"
-exclude = ["pet/assets", "pet/sprites", "node_modules"]
+exclude = ["pet/assets", "node_modules"]
 
 [lint]
 select = ["E", "F", "W", "I"]

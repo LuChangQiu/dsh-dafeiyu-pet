@@ -14,7 +14,7 @@
   ├─ 大肥鱼桌宠.exe        ← 双击即可启动（免 Python）
   ├─ INSTALL.md            ← 本文件
   ├─ selfcheck.ps1         ← 一键自检/修复（packaged 模式）
-  └─ _internal\...         ← 运行时与资源（含 _internal\assets\whale-girl）
+  └─ _internal\...         ← 运行时与资源（含 _internal\assets\webm_body + body-b）
 ```
 
 ### 第 2 步：自检（在**解压目录根部**运行）
@@ -116,7 +116,7 @@ node pet-work\tools\pet-cmd.mjs ping    # 期望 {"ok":true,...,"reply":"pong"}
 | 杀软报毒/拦截 exe | PyInstaller 引导器误报 | 加信任/白名单；源码模式可 `python pet\桌宠.py` |
 | 双击 exe 没反应/一闪而过 | 缺少 VC 运行库或被拦截 | 在解压目录运行 `.\selfcheck.ps1` 看 `pipe-down`；命令行启动 exe 看报错；安装 VC++ Redistributable |
 | `selfcheck` 报 `pipe-down` | 桌宠未启动 / 单实例管道被占 | 先启动 `大肥鱼桌宠.exe`；或 `.\selfcheck.ps1 -Repair -Yes` 拉起；结束残留 exe 后重试 |
-| 窗口是 classic 皮肤不是鲸鱼娘 | 发行包漏 `assets/whale-girl`（历史 P0，已修复） | 用带鲸鱼娘的 zip（`_internal/assets/whale-girl` 内应有 `manifest.json`） |
+| 看不到 B 角色 | B 素材缺失（历史 P0，已修复） | 用 B-only zip（`_internal/assets/webm_body/assets` 应有 50 个 webm） |
 | 管理面板 404 | DSH 未重启/插件未安装 | 重启 `dsh web`；检查 profile node_modules 与 patch 块；`.\selfcheck.ps1 -Repair -Yes` 可更新插件（zip 模式若包内无插件源码则需重装发行包） |
 | 计划任务不存在/禁用 | 安装脚本被策略拦截/手动删了 | `.\selfcheck.ps1 -Repair -Yes` 重注册（packaged 指向 exe；源码指向 start-pet.ps1） |
 | `node_modules` 被 `pnpm install` 清理 | DSH 升级/重装依赖 | 源码模式：`scripts\selfcheck.ps1 -Repair -Yes` 或 `install/install.ps1` |

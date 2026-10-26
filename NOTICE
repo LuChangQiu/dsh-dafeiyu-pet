@@ -1,17 +1,25 @@
-授权链总览与分发口径见仓库根 **`PROVENANCE.md`**：
-- **公开 Release（暂不做）**：如未来做，只发 MIT 代码 + 说明，不随角色素材；
-- **内部/同事私有包**：MIT 代码 + 2D 帧（附 NOTICE/ATTRIBUTION、非商业）+ 文档；**不含 LOCAL ONLY 资产**（BlueFatFish VRM 等由用户本机自备导入，不随包/不再分发）。
+# NOTICE — 大肥鱼桌宠（B-only）
 
-本仓库包含：
-1) 上游 大肥鱼桌宠（RYANFFY/deepseek-dafeiyu-pet）MIT 代码与素材 —— 保留上游 LICENSE；素材仅限个人使用，不随本仓库代码再授权。
-2) 本 fork 新增的 DSH 联动补丁与脚本 —— 同样以 MIT 发布（见 LICENSE）。
-3) DSH 插件 server/client 依赖 PySide6（LGPLv3，运行时依赖，不修改其源码）；分发二进制时须遵守 LGPL 相应义务。
-4) 所有用户配置/密钥不进入本仓库；DSH 凭据仅在本机使用。
+本仓库只分发 **B 鲸鱼娘身体**（MIT 50 段 WebM）；旧 A（鲸尾女仆三视图）素材/皮肤已于 task-138 退役，仅保留历史说明，不再随包、不再映射。
 
-## 鲸鱼娘 2D 帧动画素材（assets/whale-girl、pet/whale_skin.py）
-- 作者：YunYueSama
-- 仓库：https://github.com/YunYueSama/codex-deepseek-pet
-- 许可：大肥鱼项目署名许可 1.0。许可条文允许使用/修改/分享及商用，**但上游未授予底层第三方参考作品/角色设计/标志的权利**，因此公开分发或商用前须自行确认/取得相应授权；本项目按个人/内部使用处理。
-- 署名要求：保留 `作者：YunYueSama`、仓库链接与许可说明；本形象为社区二创，**非 DeepSeek 官方形象**，不代表深度求索官方授权。
-- 修改说明：按 manifest 裁剪/降采样为 320px 帧序列、去除补间帧、生成 manifest v3 与状态映射；仅用于本项目桌宠形象。
-- 许可全文、第三方排除与来源见 `assets/whale-girl/ATTRIBUTION.md`；授权链上游（溟月 CC BY-NC-SA → ZipZipPipe 禁商用 → BlueFatFish 禁二次配布 → codex 署名许可）与分发口径见仓库根 **`PROVENANCE.md`**；3D v1 的 BlueFatFish VRM 为用户自备导入（LOCAL ONLY），不随包/不再分发。
+## 1. 本仓库代码
+
+- 上游桌宠代码：`RYANFFY/deepseek-dafeiyu-pet`（MIT）；本 fork 的 DSH 联动补丁同样以 MIT 发布（见根 `LICENSE`）。
+- 不包含任何 API Key、用户数据或对话内容。
+
+## 2. B 身体素材（50 段 WebM）
+
+- 项目：`dsh-whale-girl-pet`；作者：**yanzwzz**。
+- 许可：**MIT**（全文见 `packaging/third-party-b/LICENSE-B.txt`）。
+- 生成/处理：AI/Vidu 生成，VP9 alpha 重编码为 50 段 WebM；来源与处理链见 `packaging/PROVENANCE-B.md`、`packaging/third-party-b/NOTICE-B.md`。
+- 本形象为社区二创，**非 DeepSeek 官方形象**，不代表深度求索授权/背书。
+- 50 段中 `举牌不是大肥鱼`、`空白举牌` 仅作素材保留，不接任何 DSH 状态/自动映射。
+
+## 3. 运行时依赖
+
+- PySide6 / Qt（LGPLv3，运行时依赖，不修改其源码；分发二进制时遵守 LGPL 义务）。
+- QtWebEngine（随 PySide6；B 透明窗口渲染）。
+
+## 4. 旧 A（已退役）
+
+- `assets/whale-girl`、`pet/sprites`、`pet/whale_skin.py` 及相关旧授权链已于 task-138 删除；本 NOTICE 不再包含其条款。

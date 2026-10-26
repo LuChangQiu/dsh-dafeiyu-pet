@@ -1,12 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 const root = process.cwd()
-const candidates = [
-  join(root, 'assets', 'whale-girl', 'manifest.json'),
-  join(root, 'pet', 'assets', 'whale-girl', 'manifest.json'),
-  join(root, '..', '..', 'pet-integration-src', 'pet-work', 'assets', 'whale-girl', 'manifest.json')
-]
-const manifestPath = candidates.find((p) => existsSync(p)) || candidates[candidates.length - 1]
+// B-only：不再依赖已删除的 assets/whale-girl/manifest.json；使用内置 A-fallback act 名（与历史白名单一致）
 const fallbackClips = [
   'caught',
   'cheer',
@@ -58,23 +53,6 @@ const acts = new Set()
 const fx = new Set(FX_14)
 let source = 'fallback(task-92 pending)'
 let unknowns = []
-try {
-  if (existsSync(manifestPath)) {
-    const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    const a = m.actions || m.clips || {}
-    const c = m.composites || {}
-    for (const k of Object.keys(a)) acts.add(k)
-    const META = new Set(['note', 'notes', 'description', 'version', 'meta'])
-    for (const k of Object.keys(c)) {
-      if (META.has(k)) {
-        unknowns.push('composites.' + k)
-      } else acts.add(k)
-    }
-    if (acts.size) source = 'manifest'
-  }
-} catch (e) {
-  console.error('manifest read failed:', e.message)
-}
 if (!acts.size) {
   for (const k of fallbackClips) acts.add(k)
   for (const k of fallbackComposites) acts.add(k)

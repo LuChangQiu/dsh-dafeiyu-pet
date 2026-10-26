@@ -6,12 +6,10 @@
 本作品是一个**桥接/管理界面**，不包含也不重新分发下列第三方作品，但运行时会与其交互；
 分发整个「大肥鱼桌宠 × DSH 联动」发行包时，请一并保留以下声明：
 
-## 1. 上游桌宠（大肥鱼桌宠）
+## 1. 上游桌宠与 B 素材
 
-- 运行时依赖的桌宠程序 `桌宠.py` / `ui_console.py` / `assets` / `sprites` 来自上游项目的 fork
-  （见仓库根目录 `FORK.md`、`LICENSE` 与 git 历史中的 `upstream` tag）。
-- 上游项目以其原始许可证发布（本 fork 保留上游 `LICENSE` 与版权声明）。
-- 本作品不修改上游美术素材；桌宠形象/立绘/图标版权归原作者所有。
+- 运行时依赖的桌宠程序 `桌宠.py` / `ui_console.py` 来自上游 fork（MIT）；本 fork 只保留 B 身体。
+- B 鲸鱼娘 WebM 素材来自 `dsh-whale-girl-pet`（作者 yanzwzz，MIT）；旧 A 素材/皮肤已退役。
 
 ## 2. PySide6 / Qt（LGPL）
 
@@ -27,7 +25,7 @@
 
 ## 4. 字体 / 图标 / 音效等素材
 
-- 仓库 `assets/`、`sprites/` 下的美术资源随上游桌宠项目提供，版权归原作者；
+- B 素材署名/许可见根 `NOTICE`、`packaging/third-party-b/`；旧 A 的 `assets/whale-girl`/`sprites` 已删除。
 - 用户自行添加的皮肤、音效、台词库不进入本仓库（见 `.gitignore` 的 `backup/`、`evidence/` 等）。
 
 ## 5. 其它

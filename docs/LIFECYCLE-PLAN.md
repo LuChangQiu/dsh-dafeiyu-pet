@@ -70,4 +70,4 @@ life:{"offline":true,"silentMs":121348,"offlineAfterMs":120000,"exitWithDsh":fal
 - [ ] 插件 `state:` 心跳间隔若 < `offlineAfterMs`，桌宠不会打盹（当前生产联调时有 5s 级状态推送，属"有人在线"语义，符合预期；真失联时插件自身停止推送 → 到点打盹）。
 - [ ] 插件 UI 开关（失联休眠/退出策略）后续在设置页暴露；pet 侧只读 `lifecycle` 配置，缺省安全。
 - [ ] `exitWithDsh=true` 需要用户明确开启才允许；默认绝不启用，避免 Agent/联调误退。
-- [ ] 打包：`pet/NOTICE.md` + `assets/whale-girl/ATTRIBUTION.md` 随发行包分发（见 NOTICE）。
+- [ ] 打包：B-only 包附 `LICENSE-B.txt` + `NOTICE-B.md` + `PROVENANCE-B.md`（`packaging/third-party-b/`）；旧 A ATTRIBUTION 已删除。

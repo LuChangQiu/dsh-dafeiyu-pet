@@ -438,10 +438,10 @@ def bundle_icon(bundle_dir):
     """窗口 / 任务栏用的图标。
 
     原来全项目一个 `setWindowIcon` 都没有 → 任务栏上是一只**空白方块**（Windows
-    找不到图标时的占位图）。这里优先用打包用的 `icon.ico`（16~256 各尺寸都齐），
-    退回 `sprites/icon.png`。
+    找不到图标时的占位图）。这里优先用打包用的 `icon.ico`（16~256 各尺寸都齐）；
+    旧 A 的 `sprites/icon.png` 已退役（task-138）。
     """
-    for rel in ("icon.ico", os.path.join("sprites", "icon.png")):
+    for rel in ("icon.ico",):
         path = os.path.join(bundle_dir or "", rel)
         try:
             if os.path.exists(path):
