@@ -242,6 +242,10 @@ try:
     import smooth_anim as _smooth_anim
 except Exception:      # 平滑/编排模块缺失 → 退回原渲染（不阻塞启动）
     _smooth_anim = None
+try:
+    import speech_requests as _speech_requests
+except Exception:      # LLM 台词队列缺失 → 固定台词降级（不阻塞启动）
+    _speech_requests = None
 
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
@@ -4091,6 +4095,12 @@ class PetWindow(QWidget):
                 "on": True,
                 "maxSize": 0.35,        # 用户偏好：最大显示尺寸（0.35 ≈ 生产上限；硬上限仍 1.35）
             },
+            # LLM 台词请求（task-133）：正常走插件 LLM，固定台词仅故障兜底
+            "speech": {
+                "llmRequests": True,
+                "fallbackTimeoutHealthyMs": 4500,   # 管道健康时等 LLM（p95≈1.5s，留余量）
+                "fallbackTimeoutOfflineMs": 1500,   # 管道离线时快速兜底
+            },
             # 失联休眠（task-77）：DSH 长时间没消息 → 离线打盹；默认不擅自退出（Agent 安全）
             "lifecycle": {
                 "offlineAfterMs": 120000,   # 2 分钟没收到任何管道命令 → 进入离线打盹
@@ -4258,6 +4268,28 @@ class PetWindow(QWidget):
         self._dialog_until = 0.0
         self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
         self._anim_fast = False           # 过渡期 16ms 提频标记
+        # ---- LLM 台词请求队列（task-133）：正常抑制固定台词，插件 say: 回来即取消兜底 ----
+        self._speech = None
+        self._speech_enabled = bool((self.cfg.get("speech") or {}).get("llmRequests", True))
+        self._speech_log_path = ""
+        try:
+            if os.path.exists(os.path.join(APP_DIR, "speech-debug.on")):
+                self._speech_log_path = os.path.join(APP_DIR, "speech-debug.log")
+        except Exception:
+            pass
+        try:
+            if _speech_requests is not None and self._speech_enabled:
+                _sp = self.cfg.get("speech") or {}
+                _sp_dir = os.path.dirname(APP_DIR)
+                if not os.path.isdir(os.path.join(_sp_dir, "tools")):
+                    _sp_dir = APP_DIR
+                self._speech = _speech_requests.build_queue(
+                    _sp_dir,
+                    timeout_healthy_ms=int(_sp.get("fallbackTimeoutHealthyMs", 4500) or 4500),
+                    timeout_offline_ms=int(_sp.get("fallbackTimeoutOfflineMs", 1500) or 1500),
+                )
+        except Exception:
+            self._speech = None
         self._anim_log_path = str(os.environ.get("PET_ANIM_LOG") or "")
         if not self._anim_log_path:
             try:
@@ -7334,6 +7366,77 @@ class PetWindow(QWidget):
         except Exception:
             pass
 
+    # ---------- LLM 台词请求（task-133）----------
+    def _speech_log(self, msg):
+        _p = getattr(self, "_speech_log_path", "")
+        if not _p:
+            return
+        try:
+            with open(_p, "a", encoding="utf-8") as f:
+                f.write("%.3f [speech] %s\n" % (time.time(), msg))
+        except Exception:
+            pass
+
+    def _speech_local(self, text, seconds=3.2):
+        try:
+            self.say(text, seconds=seconds, queue=True, again=True)
+        except Exception:
+            pass
+
+    def _speech_request(self, kind, context=None, fallback=None):
+        """写 LLM 台词请求；正常返回 True（不冒固定台词），仅故障/失败时用 fallback。"""
+        q = getattr(self, "_speech", None)
+        if q is None or not getattr(self, "_speech_enabled", True):
+            if fallback:
+                self._speech_local(fallback)
+            return False
+        try:
+            item = q.enqueue(kind, context)
+        except Exception:
+            item = None
+        if item is None:
+            if fallback:
+                self._speech_local(fallback)
+            return False
+        try:
+            self._speech_log("request kind=%s id=%s context=%s" % (kind, item.get("id"), context))
+        except Exception:
+            pass
+        return True
+
+    def _speech_on_reply(self):
+        q = getattr(self, "_speech", None)
+        if q is not None:
+            try:
+                q.on_reply()
+                self._speech_log("reply received -> pending cleared")
+            except Exception:
+                pass
+
+    def _speech_tick(self, now):
+        """兜底：超过健康/离线阈值还没收到插件 say: → 用本地池一句（仅故障时）。"""
+        q = getattr(self, "_speech", None)
+        if q is None or not getattr(self, "_speech_enabled", True):
+            return
+        if not getattr(q, "pending", None):
+            return
+        try:
+            due = q.fallback_due(now, getattr(self, "_last_line_at", 0.0))
+        except Exception:
+            due = None
+        if due:
+            text, reason = due
+            try:
+                print("[speech] fallback:", reason, text)
+            except Exception:
+                pass
+            self._bridge_bubble_kind = "remind"
+            try:
+                self._speech_log("fallback reason=%s text=%s" % (reason, text))
+            except Exception:
+                pass
+            self._speech_local(text)
+
     def _smooth_tick_rate(self):
         """walk/过渡期 60Hz tick（亚像素位移更顺）；静止恢复标准 tick。"""
         try:
@@ -7376,7 +7479,7 @@ class PetWindow(QWidget):
         except Exception:
             pass
         self._bridge_bubble_kind = "report"
-        self.say("完成啦！", seconds=3.2, queue=True)
+        self._speech_request("celebrate", {"phase": "celebrate"}, fallback="完成啦！")
         return True
 
     def _anim_dialog(self, kind):
@@ -7568,6 +7671,8 @@ class PetWindow(QWidget):
                 self._lyric_anim_t = 1.0
         # walk/过渡期 60Hz（亚像素位移更顺）；静止恢复标准 tick
         self._smooth_tick_rate()
+        # LLM 台词兜底检查
+        self._speech_tick(time.time())
         # 过渡期间（换句动画、或者气泡正在变大变小）换成 100 帧/秒的密帧重绘
         bubble_moving = (abs(self._bub_target[0] - self._bub_w) > 0.6
                          or abs(self._bub_target[1] - self._bub_h) > 0.6)
@@ -8615,15 +8720,18 @@ class PetWindow(QWidget):
         self.jump_t = max(getattr(self, "jump_t", 0.0), 0.5)
         if zone == "head":
             self._bridge_bubble_kind = "love"
-            self.say("别摸头啦……再摸要长不高了", seconds=3.6, again=True)
+            self._speech_request("pat", {"phase": "pat", "subkind": "head"},
+                                 fallback="别摸头啦……再摸要长不高了")
             self.action, self.action_t = "sway", 0.8
             getattr(self, "_bridge_fx_play", lambda _n: None)("love")
         elif zone == "tail":
             self._bridge_bubble_kind = "remind"
-            self.say("尾巴不能拽！拽掉就不摇了", seconds=3.6, again=True)
+            self._speech_request("pat", {"phase": "pat", "subkind": "tail"},
+                                 fallback="尾巴不能拽！拽掉就不摇了")
             self.action, self.action_t = "shake", 1.0
         elif zone == "body":
-            self._bridge_bubble_kind = ""
+            self._bridge_bubble_kind = "love"
+            self._speech_request("praise", {"phase": "praise", "subkind": "body"})
             self.action, self.action_t = "stretch", 0.8
 
     def _whale_click_react(self):
@@ -8650,7 +8758,8 @@ class PetWindow(QWidget):
         if force == "sneak" and w.cur == "sneak" and w.has("caught"):
             self._whale_force_play("caught")
             self._bridge_bubble_kind = "remind"
-            self.say("！才、才没有偷吃", seconds=3.6, again=True)
+            self._speech_request("sneakCaught", {"phase": "click", "subkind": "sneakCaught"},
+                                 fallback="！才、才没有偷吃")
             return True
         if not self._whale_gag_ok() or now < getattr(self, "_whale_pat_cd", 0.0):
             return False
@@ -8668,14 +8777,13 @@ class PetWindow(QWidget):
         self.jump_t = max(getattr(self, "jump_t", 0.0), 0.4)
         self._bridge_bubble_kind = "love" if name == "pat" else "remind"
         if name == "pat":
-            self.say(random.choice(("呼噜呼噜……再摸一下", "别、别摸头啦", "嗯？找我干嘛")),
-                     seconds=3.2, again=True)
+            self._speech_request("pat", {"phase": "click", "subkind": "pat"})
             try:
                 getattr(self, "_bridge_fx_play", lambda _n: None)("love")
             except Exception:
                 pass
         else:
-            self.say(random.choice(("才没有很开心呢", "哼，只有这次哦")), seconds=3.2, again=True)
+            self._speech_request("praise", {"phase": "click", "subkind": "tsundere"})
         return True
 
     def _on_single_click(self):
@@ -8738,6 +8846,11 @@ class PetWindow(QWidget):
         「看一眼余额」要配了 Key 才算数 —— 没配 Key 时**不会弹余额窗口**，
         还是原来的"换姿势"，并且只在本次启动里提醒一次怎么配。
         """
+        # LLM 台词：双击事件也走插件（固定台词仅故障兜底）
+        try:
+            self._speech_request("doubleClick", {"phase": "doubleClick"})
+        except Exception:
+            pass
         # P1.5 联动小票：DSH 插件写 daily_receipt.txt，双击时优先念它（没有就退回原行为）
         try:
             _receipt = os.path.join(USER_DIR, "daily_receipt.txt")
@@ -11373,6 +11486,7 @@ def main():
                 return "muted"
             text = " ".join(line[4:].split())[:PIPE_TEXT_MAX]
             if text:
+                w._speech_on_reply()       # 插件 LLM 回复到达 → 取消本地兜底
                 w._bridge_bubble_kind = ""
                 w.say(text, seconds=4.0, queue=True)
             return "said"
@@ -11450,9 +11564,18 @@ def main():
             elif act == "peek":
                 w.action, w.action_t = "sway", 0.7
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.45)
-            elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn"):
+            elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn", "feed", "come"):
                 # 鲸鱼娘 2D 帧动作：eat / steal(偷吃) / sleep / wave / dance / turn
-                clip = {"steal": "sneak"}.get(act, act)
+                try:
+                    if act in ("eat", "feed"):
+                        w._speech_request("feed", {"subkind": act})
+                    elif act == "come":
+                        w._speech_request("come", {"phase": "come"})
+                    elif act == "steal":
+                        w._speech_request("stealCaught", {"subkind": "steal"})
+                except Exception:
+                    pass
+                clip = {"steal": "sneak", "feed": "eat", "come": "wave"}.get(act, act)
                 if getattr(w, "_whale_active", lambda: False)() and w._whale_force_play(clip):
                     return "acted:" + act
                 return "unknownact:" + act
@@ -11613,8 +11736,12 @@ def main():
                         w._whale_clear_force()
                         if _wh.cur != "idleBase":
                             _wh.play("idleBase")
-                # 完成：庆祝 3 阶段（跳起→落地→举双手/转圈 + 爱心 FX + 气泡）
+                # 完成：庆祝 3 阶段 + LLM 台词（固定"完成啦"仅故障兜底）
                 if _name == "done":
+                    try:
+                        w._speech_request("celebrate", {"phase": "done"})
+                    except Exception:
+                        pass
                     try:
                         w._anim_celebrate()
                     except Exception:
@@ -11628,9 +11755,6 @@ def main():
                         _lines = {
                             "thinking": "在想呢…",
                             "tool": "看到你在跑命令啦",
-                            "done": "干完啦！",
-                            "waiting_input": "我在等你～",
-                            "error": "这次没成…",
                         }
                         _txt2 = _lines.get(_name) or ""
                         if _txt2:
@@ -11648,7 +11772,8 @@ def main():
                     pass
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
-                    w.say("我在等你的确认哦", seconds=8.0, queue=True)
+                    w._speech_request("approvalWait", {"phase": "waiting", "s0": True},
+                                      fallback="我在等你的确认哦")
                 elif _name == "error":
                     try:
                         w._bridge_fx_play("sweat")
