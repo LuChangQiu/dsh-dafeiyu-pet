@@ -7572,7 +7572,7 @@ class PetWindow(QWidget):
             self._anim_log("webm init: assets=%s" % getattr(_webm_body, 'ASSETS_DIR', '?'))
         except Exception:
             pass
-        b = _webm_body.WebmBody(auto_click_clip=False)
+        b = _webm_body.WebmBody(auto_click_clip=True)
         try:
             self._anim_log("webm init: view=%s assets=%s clips=%d" % (
                 b._view is not None, b.assets_dir, len(b.listClips())))
@@ -7690,7 +7690,7 @@ class PetWindow(QWidget):
         except Exception:
             pass
         try:
-            self._webm.playClip("点击回应 - 开心跃动", 120, False)
+            self._anim_log("webm click clip via module auto_click_clip")
         except Exception:
             pass
 
@@ -12112,7 +12112,11 @@ def main():
                     _name = _dev[5:].strip()
                     return "playB:" + str(w._webm_play(_name, loop=False))
                 if _dev == "click":
-                    w._webm_on_clicked(None)
+                    _b = getattr(w, "_webm", None)
+                    if _b is not None and hasattr(_b, "_on_clicked"):
+                        _b._on_clicked()
+                    else:
+                        w._webm_on_clicked(None)
                     return "devclick"
                 if _dev.startswith("peek:"):
                     _edge = _dev[5:].strip()
