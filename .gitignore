@@ -26,3 +26,10 @@ __pycache__/
 
 # harness 生成的临时 fixture（可随时用 test/make-fixture.mjs 重新生成）
 plugin/client/test/harness/fixture.js
+
+dist-b/
+release-build/
+
+# B 素材（不入库；构建时从 third-party 注入）
+tools/body-b/
+*.webm

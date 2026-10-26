@@ -238,6 +238,19 @@ try:
     import whale_skin as _whale_skin
 except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
     _whale_skin = None
+try:
+    import smooth_anim as _smooth_anim
+except Exception:      # 平滑/编排模块缺失 → 退回原渲染（不阻塞启动）
+    _smooth_anim = None
+try:
+    import speech_requests as _speech_requests
+except Exception:      # LLM 台词队列缺失 → 固定台词降级（不阻塞启动）
+    _speech_requests = None
+try:
+    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-low-end-device-mode")
+    import webm_body as _webm_body
+except Exception:      # B 身体模块缺失 → 回退 png/占位
+    _webm_body = None
 
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
@@ -297,7 +310,8 @@ SIZE_LEVELS = {"迷你": 0.27, "特小": 0.36, "小": 0.54, "中": 0.72, "大": 
 SIZE_REF = SIZE_LEVELS["大"]      # 滑块上的 100% = 这一档（340 * 0.9 = 306px）
 # 无级调节的范围：20% ~ 150%（原来只有 30% ~ 120%）
 SIZE_MIN = 0.18
-SIZE_MAX = 1.35
+SIZE_MAX = 1.35                 # 硬上限（任何配置都不允许超过）
+SIZE_MAX_DEFAULT = 0.35         # 用户偏好默认（Lead 2026-10-26：生产 cap=0.35，防"又变大"）
 SIZE_DEFAULT = SIZE_LEVELS["中"]
 
 
@@ -3923,6 +3937,35 @@ def load_json(path, default):
         return default
 
 
+class StaticBodyWindow(QWidget):
+    """B 静帧/占位窗口：低内存或 B 加载失败时显示 MIT 鲸鱼娘静态帧，不回 A 外观。"""
+
+    def __init__(self, pix_path=''):
+        super().__init__()
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+                            Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setWindowTitle("whale-girl static body")
+        self._pix = QPixmap(pix_path) if pix_path else QPixmap()
+        self.resize(168, 198)
+
+    def set_pix(self, pix_path):
+        pm = QPixmap(pix_path) if pix_path else QPixmap()
+        if not pm.isNull():
+            self._pix = pm
+            self.update()
+
+    def paintEvent(self, _e):  # noqa: N802
+        if self._pix.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        x = (self.width() - self._pix.width()) // 2
+        y = self.height() - self._pix.height()
+        p.drawPixmap(x, y, self._pix)
+
+
 class PetWindow(QWidget):
     # ---------- 城市（联网添加） ----------
     def auto_locate_city(self):
@@ -4084,6 +4127,14 @@ class PetWindow(QWidget):
             # 鲸鱼娘 2D 帧动画皮肤（素材：codex-deepseek-pet；资产缺失自动回退 classic）
             "whale": {
                 "on": True,
+                "body": "webm",         # 用户 2026-10-26：只保留 B（MIT 鲸鱼娘 50 WebM），A 不再展示
+                "maxSize": 0.35,        # 用户偏好：最大显示尺寸（0.35 ≈ 生产上限；硬上限仍 1.35）
+            },
+            # LLM 台词请求（task-133）：正常走插件 LLM，固定台词仅故障兜底
+            "speech": {
+                "llmRequests": True,
+                "fallbackTimeoutHealthyMs": 4500,   # 管道健康时等 LLM（p95≈1.5s，留余量）
+                "fallbackTimeoutOfflineMs": 1500,   # 管道离线时快速兜底
             },
             # 失联休眠（task-77）：DSH 长时间没消息 → 离线打盹；默认不擅自退出（Agent 安全）
             "lifecycle": {
@@ -4188,6 +4239,12 @@ class PetWindow(QWidget):
                                                         and not self._has_sprite("挂件")):
             self.skin = SKIN_PET
 
+        # 用户偏好：最大显示尺寸（生产默认 0.35；config.whale.maxSize 可调，向上不超硬上限）
+        try:
+            _wmax = float((self.cfg.get("whale") or {}).get("maxSize", SIZE_MAX_DEFAULT))
+        except (TypeError, ValueError):
+            _wmax = SIZE_MAX_DEFAULT
+        self.max_size = max(SIZE_MIN, min(SIZE_MAX, _wmax))
         self.cfg["size"] = self._clamp_size(self.cfg["size"])
         self.cur_h = int(340 * self.cfg["size"])
         # 老配置里存的是无级调节调出来的高度（不在五档上）时，得把那个高度的精灵补上，
@@ -4219,6 +4276,100 @@ class PetWindow(QWidget):
         except Exception as _whale_err:
             print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
             self._whale = None
+
+        # ---- 渲染平滑 / 事件动画（task-131）：淡化 + 次级运动 + 待机微动作 + 庆祝/对话编排 ----
+        self._smooth = _smooth_anim
+        try:
+            self._smooth_cfg = _smooth_anim.SmoothConfig(self.cfg) if _smooth_anim else None
+        except Exception:
+            self._smooth_cfg = None
+        if self._whale is not None and self._smooth_cfg is not None:
+            try:
+                self._whale.set_smooth({
+                    "enabled": self._smooth_cfg.enabled,
+                    "crossfadeMs": self._smooth_cfg.crossfade_ms,
+                    "actionFadeMs": self._smooth_cfg.action_fade_ms,
+                })
+            except Exception:
+                pass
+        try:
+            self._idle_micro = _smooth_anim.IdleMicroScheduler(
+                self._smooth_cfg or _smooth_anim.SmoothConfig({}), now=time.time(),
+                rng=random.Random()) if _smooth_anim else None
+        except Exception:
+            self._idle_micro = None
+        self._celebration = None          # 庆祝 5 拍状态 {stage,t0}
+        self._cellbrate_stage_at = 0.0
+        self._celebrate_cd_until = 0.0    # done 庆祝冷却（墙上时间；120s）
+        self._task_started_at = 0.0       # 长回合计时（thinking/tool 开始时间）
+        self._short_done_i = 0            # done 短反应轮换计数（动作/句式去重）
+        self._dialog_force = None         # 对话动作占用的 force（到时清）
+        self._dialog_until = 0.0
+        self._dialog_queue = []           # 对话后续拍 [(action, at_secs)]
+        self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
+        self._anim_fast = False           # 过渡期 16ms 提频标记
+        # ---- LLM 台词请求队列（task-133）：正常抑制固定台词，插件 say: 回来即取消兜底 ----
+        # ---- B 身体（WebM QWebEngineView，默认；失败回退占位/旧渲染）----
+        self._body = "png"
+        self._webm = None
+        self._webm_ready = False
+        self._webm_h = 105
+        self._webm_main_click_through = False
+        self._static_body = None
+        self._speech = None
+        self._speech_enabled = bool((self.cfg.get("speech") or {}).get("llmRequests", True))
+        self._speech_log_path = ""
+        self._speech_dir = ""
+        try:
+            if os.path.exists(os.path.join(APP_DIR, "speech-debug.on")):
+                self._speech_log_path = os.path.join(APP_DIR, "speech-debug.log")
+        except Exception:
+            pass
+        try:
+            _want_body = str((self.cfg.get("whale") or {}).get("body") or "webm")
+        except Exception:
+            _want_body = "webm"
+        if _want_body == "placeholder":
+            try:
+                if not self._show_static_body():
+                    self._body = "png"
+            except Exception:
+                self._body = "png"
+        elif _want_body == "webm":
+            try:
+                self._init_webm_body()
+            except Exception as _wexc:
+                print("WebM 身体初始化失败，回退 B 静帧:", repr(_wexc))
+                try:
+                    self._anim_log("webm init FAILED: %r" % (_wexc,))
+                except Exception:
+                    pass
+                self._show_static_body()
+                self._body = "placeholder"
+        try:
+            if _speech_requests is not None and self._speech_enabled:
+                _sp = self.cfg.get("speech") or {}
+                # P2：显式 queueDir / PET_WORK_DIR 优先；否则源码布局 pet-work（含 tools）优先
+                _sp_dir = str(_sp.get("queueDir") or os.environ.get("PET_WORK_DIR") or os.environ.get("PET_WORK") or "")
+                if not _sp_dir:
+                    _cand = os.path.dirname(APP_DIR)
+                    _sp_dir = _cand if os.path.isdir(os.path.join(_cand, "tools")) else APP_DIR
+                self._speech_dir = _sp_dir
+                self._speech = _speech_requests.build_queue(
+                    _sp_dir,
+                    timeout_healthy_ms=int(_sp.get("fallbackTimeoutHealthyMs", 4500) or 4500),
+                    timeout_offline_ms=int(_sp.get("fallbackTimeoutOfflineMs", 1500) or 1500),
+                )
+                self._speech_log("queue path=%s" % os.path.join(_sp_dir, "speech-requests.json"))
+        except Exception:
+            self._speech = None
+        self._anim_log_path = str(os.environ.get("PET_ANIM_LOG") or "")
+        if not self._anim_log_path:
+            try:
+                if os.path.exists(os.path.join(APP_DIR, "anim-log.on")):
+                    self._anim_log_path = os.path.join(APP_DIR, "anim-log.txt")
+            except Exception:
+                pass
 
         # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
         _lc = self.cfg.get("lifecycle")
@@ -5900,14 +6051,14 @@ class PetWindow(QWidget):
                     self.sprites[(key, h)] = pix
         self.widget_skin_ok = self._has_sprite("挂件")
 
-    @staticmethod
-    def _clamp_size(mult):
-        """把大小倍率收进允许范围（老配置里可能存着奇怪的值）。"""
+    def _clamp_size(self, mult):
+        """把大小倍率收进允许范围（上限 = 用户偏好 maxSize，默认 0.35）。"""
         try:
             mult = float(mult)
         except (TypeError, ValueError):
             mult = SIZE_DEFAULT
-        return max(SIZE_MIN, min(SIZE_MAX, mult))
+        _hi = getattr(self, "max_size", SIZE_MAX_DEFAULT)
+        return max(SIZE_MIN, min(_hi, mult))
 
     def _ensure_sprites(self, h):
         """把某个高度的精灵补进 self.sprites（已经有了就跳过）。
@@ -6592,13 +6743,25 @@ class PetWindow(QWidget):
         # A 路线增强：贴地软阴影（身体之前画，作为"地面"）
         self._enh_paint_shadow(p, cx, bottom, st)
         walking = self.target is not None and not self.dragging
-        if walking:
-            sway = math.sin(now * 9.0) * 3.5
-            bob = -abs(math.sin(now * 4.5)) * 7.0
+        _smcfg = getattr(self, "_smooth_cfg", None)
+        _smmod = getattr(self, "_smooth", None)
+        if _smcfg is not None and getattr(_smcfg, "enabled", True) and _smmod is not None:
+            _sm = _smmod.secondary_motion(now, _smcfg, walking=walking)
+            if walking:
+                sway = math.sin(now * 9.0) * 2.6
+                bob = -abs(math.sin(now * 4.5)) * 5.5
+            else:
+                sway = _sm["sway_deg"]
+                bob = _sm["float_px"]
+            breath = _sm["scale"]
         else:
-            sway = math.sin(now * 2.5) * 1.5
-            bob = 0.0
-        breath = 1.0 + 0.02 * math.sin(now * 2.5)
+            if walking:
+                sway = math.sin(now * 9.0) * 3.5
+                bob = -abs(math.sin(now * 4.5)) * 7.0
+            else:
+                sway = math.sin(now * 2.5) * 1.5
+                bob = 0.0
+            breath = 1.0 + 0.02 * math.sin(now * 2.5)
         scale = breath
         jump = -abs(math.sin(self.jump_t * 3.14159)) * 14 * self.jump_t if self.jump_t > 0 else 0
         act_rot = act_sx = act_sy = 0.0
@@ -6616,7 +6779,7 @@ class PetWindow(QWidget):
         press_sx = 1 + 0.13 * self.press_t
         press_sy = 1 - 0.13 * self.press_t
 
-        def draw_one(key, opacity):
+        def draw_one(key, opacity, raw=False):
             if key is None:
                 return
             name, h, facing = key
@@ -6624,7 +6787,8 @@ class PetWindow(QWidget):
             # 鲸鱼娘帧动画：帧画布带脚底留白，按 foot_ratio 对齐落地点；挂件形象 / 回退时走原逻辑
             whale = getattr(self, "_whale", None)
             if whale is not None and name != "挂件" and self._whale_active():
-                pix = whale.pixmap(h)
+                # 方向 crossfade 期间用原始帧（避免与动作淡化叠加成双层）
+                pix = whale.pixmap_raw(h) if raw else whale.pixmap(h)
                 if pix is None or pix.isNull():
                     return
                 ph = pix.height() * scale * (1 + act_sy) * press_sy
@@ -6665,9 +6829,13 @@ class PetWindow(QWidget):
             p.restore()
 
         cur_key = self._sprite_key()
-        if self.cross_t > 0:
-            draw_one(self.prev_key, self.cross_t)
-            draw_one(cur_key, 1.0 - self.cross_t)
+        _force_now = getattr(self, "_whale_force", None)
+        _loco_actions = getattr(getattr(self, "_smooth", None), "LOCOMOTION_ACTIONS", ())
+        _dir_fade_off = _force_now is not None and _force_now not in _loco_actions
+        if self.cross_t > 0 and not _dir_fade_off:
+            # 方向切换：两层都用原始帧（raw），淡化只由外层 cross_t 负责
+            draw_one(self.prev_key, self.cross_t, raw=True)
+            draw_one(cur_key, 1.0 - self.cross_t, raw=True)
         else:
             draw_one(cur_key, 1.0)
         try:
@@ -7261,6 +7429,529 @@ class PetWindow(QWidget):
             QTimer.singleShot(1000, _greet_after_wake)
         print("失联休眠：醒来")
 
+    def _anim_log(self, msg):
+        _p = getattr(self, "_anim_log_path", "")
+        if not _p:
+            return
+        try:
+            with open(_p, "a", encoding="utf-8") as f:
+                f.write("%.3f [anim] %s\n" % (time.time(), msg))
+        except Exception:
+            pass
+
+    # ---------- LLM 台词请求（task-133）----------
+    def _speech_log(self, msg):
+        _p = getattr(self, "_speech_log_path", "")
+        if not _p:
+            return
+        try:
+            with open(_p, "a", encoding="utf-8") as f:
+                f.write("%.3f [speech] %s\n" % (time.time(), msg))
+        except Exception:
+            pass
+
+    def _speech_local(self, text, seconds=3.2):
+        try:
+            self.say(text, seconds=seconds, queue=True, again=True)
+        except Exception:
+            pass
+
+    def _speech_request(self, kind, context=None, fallback=None):
+        """写 LLM 台词请求；正常返回 True（不冒固定台词），仅故障/失败时用 fallback。"""
+        q = getattr(self, "_speech", None)
+        if q is None or not getattr(self, "_speech_enabled", True):
+            if fallback:
+                self._speech_local(fallback)
+            return False
+        try:
+            item = q.enqueue(kind, context)
+        except Exception:
+            item = None
+        if item is None:
+            if fallback:
+                self._speech_local(fallback)
+            return False
+        try:
+            self._speech_log("request kind=%s id=%s context=%s" % (kind, item.get("id"), context))
+        except Exception:
+            pass
+        return True
+
+    def _speech_on_reply(self):
+        q = getattr(self, "_speech", None)
+        if q is not None:
+            try:
+                q.on_reply()
+                self._speech_log("reply received -> pending cleared")
+            except Exception:
+                pass
+
+    def _speech_tick(self, now):
+        """兜底：超过健康/离线阈值还没收到插件 say: → 用本地池一句（仅故障时）。"""
+        q = getattr(self, "_speech", None)
+        if q is None or not getattr(self, "_speech_enabled", True):
+            return
+        if not getattr(q, "pending", None):
+            return
+        try:
+            # P1：健康判定用桥接生命状态（life_offline=失联休眠），不要只看最后一行时间；
+            # 插件正常但静默 >30s 时也等 4.5s，绝不让本地池抢在 LLM 前。
+            _healthy = not bool(getattr(self, "_life_offline", False))
+            due = q.fallback_due(now, getattr(self, "_last_line_at", 0.0), healthy=_healthy)
+        except Exception:
+            due = None
+        if due:
+            text, reason = due
+            try:
+                print("[speech] fallback:", reason, text)
+            except Exception:
+                pass
+            self._bridge_bubble_kind = "remind"
+            try:
+                self._speech_log("fallback reason=%s text=%s" % (reason, text))
+            except Exception:
+                pass
+            self._speech_local(text)
+
+    # ---------- B 身体（WebM QWebEngineView）----------
+    def _static_pix_path(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        cands = [os.path.join(os.path.dirname(here), 'tools', 'body-b', 'placeholder.png'),
+                 os.path.join(here, 'assets', 'body-b', 'placeholder.png'),
+                 os.path.join(here, 'assets', 'webm_body', 'placeholder.png')]
+        for p in cands:
+            if os.path.isfile(p):
+                return p
+        return ''
+
+    def _show_static_body(self):
+        path = self._static_pix_path()
+        if not path:
+            return False
+        try:
+            if self._static_body is None:
+                self._static_body = StaticBodyWindow(path)
+            else:
+                self._static_body.set_pix(path)
+            pos = None
+            try:
+                if self._webm is not None and self._webm._view is not None:
+                    pos = self._webm._view.pos()
+            except Exception:
+                pos = None
+            if pos is None:
+                pos = self.pos()
+            self._static_body.move(pos)
+            self._static_body.show()
+            self._static_body.raise_()
+            self._body = "placeholder"
+            self.hide()
+            return True
+        except Exception:
+            return False
+
+    def _hide_static_body(self):
+        try:
+            if self._static_body is not None:
+                self._static_body.hide()
+        except Exception:
+            pass
+
+    def _webm_height(self):
+        try:
+            sz = float(self.cfg.get("size", 0.2) or 0.2)
+        except (TypeError, ValueError):
+            sz = 0.2
+        # 验收：B 人物显示身高 184±10px（窗口固定 168×198）
+        return max(174, min(194, int(round(184 * max(0.85, min(1.0, sz / 0.2))))))
+
+    def _init_webm_body(self):
+        if _webm_body is None:
+            raise RuntimeError('webm_body module missing')
+        try:
+            self._anim_log("webm init: assets=%s" % getattr(_webm_body, 'ASSETS_DIR', '?'))
+        except Exception:
+            pass
+        b = _webm_body.WebmBody(auto_click_clip=True)
+        try:
+            self._anim_log("webm init: view=%s assets=%s clips=%d" % (
+                b._view is not None, b.assets_dir, len(b.listClips())))
+        except Exception:
+            pass
+        b.error.connect(self._webm_on_error)
+        b.clicked.connect(self._webm_on_clicked)
+        b.positionChanged.connect(self._webm_on_pos)
+        b.dragFinished.connect(self._webm_on_drag_finished)
+        b.firstFrame.connect(self._webm_on_first_frame)
+        try:
+            b.clipChanged.connect(lambda n: self._anim_log("webm clip=%s" % n))
+        except Exception:
+            pass
+        b.start(show=False)
+        b.setSize(168, 198, self._webm_height())
+        # 初始位置：屏幕右下角（宠物区），主窗（168×198，气泡层）同位置
+        try:
+            _scr = QApplication.primaryScreen().availableGeometry()
+            _bx = int(_scr.right() - 168 - 24)
+            _by = int(_scr.bottom() - 198 - 8)
+            b.setPosition(_bx, _by)
+            self.move(_bx, _by)
+        except Exception:
+            pass
+        b.start(show=True)
+        self._webm = b
+        self._body = "webm"
+        self._whale = None            # A 外观不再展示
+        self.mode = "still"           # B 原型：静息为主，不做 A 的散步位移
+        self._apply_main_click_through(True)
+        self._webm_sync_main()
+        try:
+            self.hide()          # B 模式：旧 A QWidget 窗口不显示
+        except Exception:
+            pass
+        try:
+            v = b._view
+            self._anim_log("webm init done: visible=%s geom=%s,%s,%sx%s" % (
+                bool(v.isVisible()) if v else '?', v.x() if v else -1, v.y() if v else -1,
+                v.width() if v else -1, v.height() if v else -1))
+        except Exception:
+            pass
+        try:
+            self._anim_log("body=webm size=%d" % self._webm_h)
+        except Exception:
+            pass
+
+    def show(self):
+        if getattr(self, "_body", "png") == "placeholder":
+            try:
+                self._static_body.show()
+                self._static_body.raise_()
+            except Exception:
+                pass
+            return
+        if getattr(self, "_body", "png") == "webm" and getattr(self, "_webm", None) is not None:
+            try:
+                self._webm._view.show()
+                self._webm._view.raise_()
+            except Exception:
+                pass
+            return
+        super().show()
+
+    def _apply_main_click_through(self, on):
+        try:
+            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, bool(on))
+            self._webm_main_click_through = bool(on)
+            if self.isVisible():
+                self.show()
+        except Exception:
+            pass
+
+    def _webm_sync_main(self):
+        try:
+            b = self._webm
+            if b is None or b._view is None:
+                return
+            vp = b.position()
+            self.move(int(vp.x()), int(vp.y()))
+        except Exception:
+            pass
+
+    def _webm_on_first_frame(self, name, ms):
+        _first = not self._webm_ready
+        self._webm_ready = True
+        if _first:
+            try:
+                self._anim_log("webm firstFrame clip=%s ms=%.0f" % (name, ms))
+            except Exception:
+                pass
+        # B 规范：clip 切换 120ms（覆盖包内首次 180ms）；只覆盖一次，避免 firstFrame 回环重载
+        if not getattr(self, "_webm_idle_fade_fixed", False):
+            self._webm_idle_fade_fixed = True
+            try:
+                self._webm.playClip("待机呼吸休闲", 120, True)
+            except Exception:
+                pass
+
+    def _webm_on_error(self, msg):
+        print("[webm] error:", msg, flush=True)
+        try:
+            self._anim_log("webm error %s" % msg)
+        except Exception:
+            pass
+
+    def _webm_on_clicked(self, pos=None):
+        try:
+            self._anim_log("webm clicked pos=%s -> speech_request(click)" % (pos,))
+        except Exception:
+            pass
+        try:
+            self._speech_request("click", {"phase": "click"})
+        except Exception:
+            pass
+        try:
+            self._anim_log("webm click clip via module auto_click_clip")
+        except Exception:
+            pass
+
+    def _webm_on_pos(self, _pos=None):
+        self._webm_sync_main()
+
+    def _webm_on_drag_finished(self, pos=None):
+        try:
+            self._anim_log("webm dragFinished pos=%s" % (pos,))
+        except Exception:
+            pass
+        try:
+            self.cfg["x"] = int(pos.x())
+            self.cfg["y"] = int(pos.y())
+        except Exception:
+            pass
+        self._webm_sync_main()
+
+    def _webm_play(self, act, loop=None):
+        b = getattr(self, "_webm", None)
+        if b is None:
+            return False
+        name = str(act or "")
+        mapped = None
+        try:
+            mapped = self._webm_map_act(name)
+        except Exception:
+            mapped = None
+        try:
+            self._anim_log("webm act=%s -> %s peek=%s pending=%s" % (
+                name, mapped, (self._webm.peekState() if getattr(self, "_webm", None) else ""),
+                (self._webm.pendingClip() if getattr(self, "_webm", None) else "")))
+        except Exception:
+            pass
+        if loop is None:
+            loop = (mapped or name) in ("待机呼吸休闲", "认真工作", "工作思考", "工作摸鱼",
+                                        "working", "thinking", "tool")
+        return b.playClip(mapped or name, 120, bool(loop))
+
+    def _webm_map_act(self, name):
+        n = str(name or "")
+        m = {
+            "idleBase": "待机呼吸休闲", "idle": "待机呼吸休闲", "background": "待机呼吸休闲",
+            "walk": "待机呼吸休闲", "turnStop": "东张西望", "idleShift": "工作摸鱼",
+            "idleSettle": "东张西望", "idleStretch": "超大伸懒腰", "hum": "悠闲哼歌",
+            "think": "工作思考", "thinking": "工作思考", "tool": "认真工作",
+            "waitPeek": "东张西望", "waiting": "东张西望", "waiting_input": "工作被打扰",
+            "waiting_approval": "东张西望", "approvalWait": "东张西望", "waitingInput": "工作被打扰",
+            "disconnected": "待机呼吸休闲", "unavailable": "待机呼吸休闲",
+            "approval": "东张西望", "done": "工作结束", "success": "工作结束",
+            "cheer": "女仆屈膝礼仪", "error": "工作被打扰", "errorSequence": "工作被打扰",
+            "cry": "被吓一跳（炸毛）", "caught": "摸鱼被抓", "pat": "点击回应 - 害羞惊讶",
+            "poke": "点击回应 - 开心跃动", "tsundere": "点击回应 - 傲娇生气（侧身展示）",
+            "tail": "用鲸鱼尾巴拍打地面", "eat": "吃小鱼干", "eatSatisfied": "吃盒饭",
+            "sleep": "睡觉第一段", "wake": "睡眼惺忪", "drag": "被鼠标拖拽悬空反馈",
+            "fall": "被吓一跳（炸毛）", "land": "工作结束", "dance": "小幅度原地 360 度旋转展示",
+            "wave": "点击回应 - 开心跃动", "report": "翻钱包", "note": "东张西望",
+            "lonelySit": "原地小憩沉眠", "sneak": "摸鱼被抓", "jump": "原地跳跃抓碎头顶物品",
+        }
+        if n in m:
+            return m[n]
+        # OP-MATRIX/原生 B clip 名直通
+        return n
+
+    def _webm_state_clip(self, name, st=None):
+        """纯函数：DSH state/上下文 → B clip 名（不播放；单测/证据用）。"""
+        n = str(name or "")
+        if n == "tool":
+            tool = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
+            if any(k in tool for k in ("bash", "command", "shell", "terminal")):
+                return "原地敲击桌面互动"
+            if any(k in tool for k in ("search", "grep", "find")):
+                return "东张西望"
+            return "认真工作"
+        return self._webm_map_act(n)
+
+    def _webm_apply_state(self, name, st=None):
+        b = getattr(self, "_webm", None)
+        if b is None:
+            return False
+        n = str(name or "")
+        clip = self._webm_state_clip(n, st)
+        try:
+            _tt = str((st or {}).get("toolType") or (st or {}).get("tool") or "")
+            self._anim_log("webm state=%s toolType=%s -> %s" % (n, _tt, clip))
+        except Exception:
+            pass
+        loop = clip in ("待机呼吸休闲", "认真工作", "工作思考", "工作摸鱼")
+        return b.playClip(clip, 120, loop)
+
+    def set_body(self, kind):
+        """同进程切换身体：webm（B）/ png（旧渲染 / 低内存回退）。"""
+        kind = str(kind or "").lower()
+        if kind == "webm":
+            self._hide_static_body()
+            if getattr(self, "_body", "") == "webm":
+                return True
+            try:
+                self._init_webm_body()
+                self.cfg.setdefault("whale", {})["body"] = "webm"
+                return True
+            except Exception as exc:
+                print("切 B 失败:", repr(exc))
+                return False
+        if kind in ("png", "placeholder"):
+            b = getattr(self, "_webm", None)
+            if b is not None:
+                try:
+                    b.close()
+                except Exception:
+                    pass
+            self._webm = None
+            self._whale = None
+            self._apply_main_click_through(False)
+            ok = self._show_static_body()
+            self.cfg.setdefault("whale", {})["body"] = "placeholder" if ok else "png"
+            try:
+                self._anim_log("body=placeholder static ok=%s" % ok)
+            except Exception:
+                pass
+            return ok
+        return False
+
+    def closeEvent(self, event):
+        try:
+            b = getattr(self, "_webm", None)
+            if b is not None:
+                b.close()
+                self._webm = None
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
+        except Exception:
+            pass
+
+    def _smooth_tick_rate(self):
+        """walk/过渡期 60Hz tick（亚像素位移更顺）；静止恢复标准 tick。"""
+        try:
+            if not getattr(self, "perf_mode", True):
+                return
+            fast = bool(self.target is not None and not self.dragging)
+            if not fast:
+                w = getattr(self, "_whale", None)
+                try:
+                    fast = w is not None and w.fade_alpha() is not None
+                except Exception:
+                    fast = False
+            want = 16 if fast else 20
+            if int(getattr(self, "tick_ms", 20) or 20) != want:
+                self.tick_ms = want
+                self.timer.setInterval(want)
+        except Exception:
+            pass
+
+    # ---------- 事件动画编排（task-131）：庆祝 3 阶段 / 对话微动作 ----------
+    def _anim_celebrate(self):
+        """done/完成：跳起→落地→举双手/转圈 3 阶段 + 爱心 FX + 气泡（1.5–3s）。"""
+        w = getattr(self, "_whale", None)
+        if w is None or not self._whale_active() or self.dragging:
+            return False
+        try:
+            if not self._whale_gag_ok():
+                return False
+        except Exception:
+            pass
+        stages = self._smooth.celebration_stages() if self._smooth else ()
+        if not stages:
+            return False
+        _now_w = time.time()
+        _mode = 'short'
+        try:
+            _mode = self._smooth.celebration_mode(
+                _now_w,
+                cd_until=getattr(self, "_celebrate_cd_until", 0.0),
+                task_started_at=getattr(self, "_task_started_at", 0.0),
+            )
+        except Exception:
+            _mode = 'short'
+        if _mode != 'full':
+            # 短反应 ≤0.8s：不 jump；动作/请求 kind 轮换（V5 复读修复）
+            _cycle = ("pat", "hum", "idleSettle")
+            _kinds = ("praise", "report", "pat")
+            _i = int(getattr(self, "_short_done_i", 0))
+            _act = _cycle[_i % len(_cycle)]
+            self._short_done_i = _i + 1
+            if w.has(_act):
+                self._whale_force_play(_act)
+                try:
+                    _st = w.action_stats(_act)
+                    _total = (_st[2] / 1000.0) if _st and _st[2] else 0.8
+                except Exception:
+                    _total = 0.8
+                self._dialog_force = _act
+                self._dialog_until = self._secs() + max(0.35, min(0.8, _total * 1.05))
+            try:
+                self._speech_request(_kinds[_i % len(_kinds)],
+                                     {"phase": "doneShort", "subkind": _kinds[_i % len(_kinds)]})
+            except Exception:
+                pass
+            try:
+                self._anim_log("celebrate short mode=%s act=%s" % (_mode, _act))
+            except Exception:
+                pass
+            return False
+        self._celebrate_cd_until = _now_w + 120.0
+        self._celebration = {"stage": 0, "t0": self._secs()}
+        self._celebrate_stage_at = self._secs()
+        self._anim_log("celebrate start stages=%d totalMs=%s" % (
+            len(stages), self._smooth.celebration_total_ms() if self._smooth else "?"))
+        self._whale_force_play(stages[0]["action"])
+        try:
+            self._bridge_fx_play("love")
+        except Exception:
+            pass
+        self._bridge_bubble_kind = "report"
+        self._speech_request("celebrate", {"phase": "celebrate"}, fallback="完成啦！")
+        return True
+
+    def _anim_dialog(self, kind):
+        """气泡 kind → 微动作（点头/歪头/害羞/摆手）；不抢 S0/庆祝通道。"""
+        if getattr(self, "_celebration", None) is not None:
+            return False
+        w = getattr(self, "_whale", None)
+        if w is None or not self._whale_active() or self.dragging:
+            return False
+        if self._smooth is None:
+            return False
+        act = self._smooth.dialog_action(kind)
+        if not act or not w.has(act):
+            return False
+        force = getattr(self, "_whale_force", None)
+        if force in ("think", "waitPeek", "errorSequence", "sleep", "cry"):
+            return False
+        # 多拍编排：首拍立即起（动作先起、气泡同帧到），后续拍按 gap 入队
+        try:
+            _beats = self._smooth.dialog_beats(kind) if self._smooth else ((act, 0),)
+        except Exception:
+            _beats = ((act, 0),)
+        if not _beats:
+            _beats = ((act, 0),)
+        _first = _beats[0][0]
+        if not w.has(_first):
+            _first = act
+        if self._whale_force_play(_first):
+            self._anim_log("dialog kind=%s beats=%d first=%s" % (kind, len(_beats), _first))
+            self._dialog_force = _first
+            try:
+                _st = w.action_stats(_first)
+                _total = (_st[2] / 1000.0) if _st and _st[2] else 0.9
+            except Exception:
+                _total = 0.9
+            self._dialog_until = self._secs() + max(0.45, min(1.6, _total * 1.05))
+            self._dialog_queue = []
+            _t = self._dialog_until
+            for _a, _gap in _beats[1:]:
+                _t += max(0.08, float(_gap) / 1000.0)
+                self._dialog_queue.append((_a, _t))
+            return True
+        return False
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
@@ -7275,6 +7966,56 @@ class PetWindow(QWidget):
                     self._life_wake()       # 被拎起来就醒（_life_wake 内刷新心跳，不会立刻睡回去）
                     self._whale_clear_force()
             force = self._whale_force
+            # 事件动画通道：庆祝 3 阶段（jump→land→cheer）优先于 work/idle；对话动作短时占用
+            if getattr(self, "_celebration", None) is not None:
+                if self.dragging:
+                    self._celebration = None
+                    self._whale_clear_force()
+                else:
+                    _stages = self._smooth.celebration_stages() if self._smooth else ()
+                    _si = int(self._celebration.get("stage", 0))
+                    _stage_dur = (float(_stages[_si].get("durMs", 500)) / 1000.0) if _si < len(_stages) else 0.5
+                    _stage_el = now - float(getattr(self, "_celebrate_stage_at", now))
+                    if force in ("jump", "land", "cheer", "idleSettle") and (_stage_el >= _stage_dur or w.finished):
+                        _si += 1
+                        if _si >= len(_stages):
+                            self._celebration = None
+                            self._whale_clear_force()
+                        else:
+                            self._celebration["stage"] = _si
+                            self._anim_log("celebrate stage=%s" % _stages[_si]["name"])
+                            self._whale_force_play(_stages[_si]["action"])
+                            self._celebrate_stage_at = now
+                            if _stages[_si]["name"] == "cheer":
+                                try:
+                                    self._bridge_fx_play("love")
+                                except Exception:
+                                    pass
+                    force = self._whale_force
+            if getattr(self, "_dialog_force", None) and force == self._dialog_force and now >= self._dialog_until:
+                self._dialog_force = None
+                self._whale_clear_force()
+                force = self._whale_force
+            # 对话后续拍：到点且当前无强制动作时接一拍
+            if getattr(self, "_dialog_queue", None) and not force:
+                _nxt = self._dialog_queue[0]
+                if now >= _nxt[1] and w.has(_nxt[0]):
+                    self._dialog_queue.pop(0)
+                    self._whale_force_play(_nxt[0])
+                    self._dialog_force = _nxt[0]
+                    try:
+                        _stq = w.action_stats(_nxt[0])
+                        _totq = (_stq[2] / 1000.0) if _stq and _stq[2] else 0.7
+                    except Exception:
+                        _totq = 0.7
+                    self._dialog_until = now + max(0.4, min(1.2, _totq * 1.05))
+                    self._anim_log("dialog beat=%s" % _nxt[0])
+                    force = self._whale_force
+            # hum 等循环微动作按定时回收，回 idle
+            if getattr(self, "_whale_micro_until", 0.0) and now >= self._whale_micro_until:
+                self._whale_micro_until = 0.0
+                if w.cur == "hum":
+                    w.play("idleBase")
             # CF5：fall 帧只在物理飞行期间保持；物理已被外部清空（phys:stop/异常）且不处于拖拽时
             # 自动接 land 再回 idle，避免卡在 fall 帧（act:fall 手动触发同样会 1 tick 内落回 land）。
             if force == "fall" and not self.dragging and getattr(self, "_enh_phys", None) is None:
@@ -7307,13 +8048,18 @@ class PetWindow(QWidget):
                     w.play("walk" if abs(dx) >= abs(dy) * 0.7 else "idleBase")
                 elif w.finished or w.cur in ("", "walk", "drag"):
                     w.play("idleBase")
-                elif w.cur == "idleBase" and self.t >= self._whale_micro_at:
+                elif w.cur == "idleBase" and getattr(self, "_idle_micro", None) is not None and self._idle_micro.due(now):
                     if self._whale_gag_ok():        # 深夜/免打扰只留呼吸，不做 idle 微动作（D3）
-                        n = random.choice(("idleShift", "idleSettle", "idleStretch"))
-                        if w.has(n):
+                        n = self._idle_micro.pick(now)
+                        if n and w.has(n):
+                            self._anim_log("micro action=%s" % n)
                             w.play(n, restart=True)
-                    self._whale_micro_at = self.t + int(
-                        random.uniform(8.0, 25.0) * 1000.0 / max(1, self.tick_ms))
+                            try:
+                                _timed = self._smooth.IDLE_TIMED_MS.get(n) if self._smooth else None
+                            except Exception:
+                                _timed = None
+                            if _timed:
+                                self._whale_micro_until = now + float(_timed) / 1000.0
             # 走路步频（体验评审 2026-10-24）：默认慢放 ×1.35（45→60.75ms/帧，1.94s/循环，≈1.03 步/秒）；
             # ×1.2 / ×1.35 / ×1.6 三档可配（whale.walkRate，1.6 = 悠闲/深夜档）。
             # tool 状态是"慢速 walk"，在正常步频上再慢 5%（不是过度拖慢）。
@@ -7384,6 +8130,10 @@ class PetWindow(QWidget):
                 self._lyric_prev_h = self._lyric_last_h or 0.0
                 self._lyric_prev_w = self._lyric_last_w or 0.0
                 self._lyric_anim_t = 1.0
+        # walk/过渡期 60Hz（亚像素位移更顺）；静止恢复标准 tick
+        self._smooth_tick_rate()
+        # LLM 台词兜底检查
+        self._speech_tick(time.time())
         # 过渡期间（换句动画、或者气泡正在变大变小）换成 100 帧/秒的密帧重绘
         bubble_moving = (abs(self._bub_target[0] - self._bub_w) > 0.6
                          or abs(self._bub_target[1] - self._bub_h) > 0.6)
@@ -7538,16 +8288,23 @@ class PetWindow(QWidget):
                 ty = max(geo.top() + half_h, min(geo.bottom() - half_h, cursor.y() + 60))
                 self.target = (tx, ty)
         elif self.mode == "wander":
+            # 用户口径：静息为主（80% 时间站着/坐着微动），每 60–180s 才短距离走一次（2–4s）
             if self.target is None:
                 if now_ms < self.rest_until:
                     self._maybe_idle_action()
                     self.update()
                     return
                 geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
-                # 同样按窗口中心取点，保证这个点在"窗口不出屏"的钳制范围内可达
+                # 短距离目标：离当前位置 90–170px，走 2–4 秒就停，不再全屏乱跑
                 half_w, half_h = self.width() / 2, self.height() / 2
-                self.target = (random.randint(int(geo.left() + half_w), int(geo.right() - half_w)),
-                               random.randint(int(geo.top() + half_h), int(geo.bottom() - half_h)))
+                cx, cy = self.x() + half_w, self.y() + half_h
+                ang = random.uniform(0.0, math.pi * 2.0)
+                dist = random.uniform(90.0, 170.0)
+                tx = cx + math.cos(ang) * dist
+                ty = cy + math.sin(ang) * dist
+                tx = max(geo.left() + half_w, min(geo.right() - half_w, tx))
+                ty = max(geo.top() + half_h, min(geo.bottom() - half_h, ty))
+                self.target = (int(tx), int(ty))
         else:
             # 原地待着：一直维持正面形象，不再转头看鼠标、也不会背过身
             # （拖动过程中的朝向逻辑照旧走 mouseMoveEvent，不受这里影响）
@@ -7574,7 +8331,8 @@ class PetWindow(QWidget):
             dist = (dx * dx + dy * dy) ** 0.5
             if dist < 12:
                 self.target = None
-                self.rest_until = self.t * self.tick_ms + random.randint(8000, 18000)
+                # 走完长休息 60–180s（静息为主），期间只做微动作
+                self.rest_until = self.t * self.tick_ms + random.randint(60000, 180000)
                 self._set_dir("down")
             else:
                 step = self.cur_speed * self.tick_ms / 1000.0
@@ -7585,8 +8343,7 @@ class PetWindow(QWidget):
                 my = max(geo.top(), min(geo.bottom() - self.height() + 1, int(ny - self.height() / 2)))
                 self.move(mx, my)
                 self._face_travel(dx, dy)
-            if random.random() < 0.002 and self.jump_t == 0:
-                self.jump_t = 0.5
+            # 用户 2026-10-26：禁止散步时随机弹跳（"蹦蹦蹦"主因之一）
         target_speed = SPEED if self.target is not None else 0.0
         self.cur_speed += (target_speed - self.cur_speed) * 0.3
         self.update()
@@ -8235,6 +8992,17 @@ class PetWindow(QWidget):
                 self._pending_bubbles.append((when, text, inner))
                 del self._pending_bubbles[:-6]        # 排太长了就丢掉最早的
                 return
+        if getattr(self, "_body", "png") == "webm" and getattr(self, "_webm", None) is not None:
+            try:
+                _txt = ("（" + text + "）") if inner else text
+                self._webm.showBubble(_txt, seconds)
+                self.last_line = text
+                self.bubble_inner = inner
+                self.bubble_text = _txt
+                self.bubble_until = self._secs() + seconds
+                return
+            except Exception:
+                pass
         self.last_line = text
         self.bubble_inner = inner
         self.bubble_text = f"（{text}）" if inner else text
@@ -8242,6 +9010,12 @@ class PetWindow(QWidget):
         if not idle:
             # 这段时间归"触发类"的话：闲着冒话先憋着（见 _maybe_idle_action 里那个判断）
             self._trigger_until = self._secs() + seconds
+        # 对话动画化：气泡 kind → 微动作（点头/歪头/害羞/摆手），动作先起、气泡同帧到
+        try:
+            _kind = getattr(self, "_bridge_bubble_kind", "") or ("inner" if inner else "")
+            self._anim_dialog(_kind)
+        except Exception:
+            pass
         self.update()
 
     def _queue_behind(self):
@@ -8425,15 +9199,18 @@ class PetWindow(QWidget):
         self.jump_t = max(getattr(self, "jump_t", 0.0), 0.5)
         if zone == "head":
             self._bridge_bubble_kind = "love"
-            self.say("别摸头啦……再摸要长不高了", seconds=3.6, again=True)
+            self._speech_request("pat", {"phase": "pat", "subkind": "head"},
+                                 fallback="别摸头啦……再摸要长不高了")
             self.action, self.action_t = "sway", 0.8
             getattr(self, "_bridge_fx_play", lambda _n: None)("love")
         elif zone == "tail":
             self._bridge_bubble_kind = "remind"
-            self.say("尾巴不能拽！拽掉就不摇了", seconds=3.6, again=True)
+            self._speech_request("pat", {"phase": "pat", "subkind": "tail"},
+                                 fallback="尾巴不能拽！拽掉就不摇了")
             self.action, self.action_t = "shake", 1.0
         elif zone == "body":
-            self._bridge_bubble_kind = ""
+            self._bridge_bubble_kind = "love"
+            self._speech_request("praise", {"phase": "praise", "subkind": "body"})
             self.action, self.action_t = "stretch", 0.8
 
     def _whale_click_react(self):
@@ -8460,7 +9237,8 @@ class PetWindow(QWidget):
         if force == "sneak" and w.cur == "sneak" and w.has("caught"):
             self._whale_force_play("caught")
             self._bridge_bubble_kind = "remind"
-            self.say("！才、才没有偷吃", seconds=3.6, again=True)
+            self._speech_request("sneakCaught", {"phase": "click", "subkind": "sneakCaught"},
+                                 fallback="！才、才没有偷吃")
             return True
         if not self._whale_gag_ok() or now < getattr(self, "_whale_pat_cd", 0.0):
             return False
@@ -8478,14 +9256,13 @@ class PetWindow(QWidget):
         self.jump_t = max(getattr(self, "jump_t", 0.0), 0.4)
         self._bridge_bubble_kind = "love" if name == "pat" else "remind"
         if name == "pat":
-            self.say(random.choice(("呼噜呼噜……再摸一下", "别、别摸头啦", "嗯？找我干嘛")),
-                     seconds=3.2, again=True)
+            self._speech_request("pat", {"phase": "click", "subkind": "pat"})
             try:
                 getattr(self, "_bridge_fx_play", lambda _n: None)("love")
             except Exception:
                 pass
         else:
-            self.say(random.choice(("才没有很开心呢", "哼，只有这次哦")), seconds=3.2, again=True)
+            self._speech_request("praise", {"phase": "click", "subkind": "tsundere"})
         return True
 
     def _on_single_click(self):
@@ -8548,6 +9325,11 @@ class PetWindow(QWidget):
         「看一眼余额」要配了 Key 才算数 —— 没配 Key 时**不会弹余额窗口**，
         还是原来的"换姿势"，并且只在本次启动里提醒一次怎么配。
         """
+        # LLM 台词：双击事件也走插件（固定台词仅故障兜底）
+        try:
+            self._speech_request("doubleClick", {"phase": "doubleClick"})
+        except Exception:
+            pass
         # P1.5 联动小票：DSH 插件写 daily_receipt.txt，双击时优先念它（没有就退回原行为）
         try:
             _receipt = os.path.join(USER_DIR, "daily_receipt.txt")
@@ -9036,6 +9818,7 @@ class PetWindow(QWidget):
             a.triggered.connect(lambda _, k=mode: self.set_perf_mode(k))
         perf_menu.addSeparator()
         perf_menu.addAction("开设置菜单时：性能=动画照跑，休闲=降到约 5 帧").setEnabled(False)
+        perf_menu.addAction("crossfade 仅位移/姿态切换（idle↔walk↔turnStop）").setEnabled(False)
 
         # 百宝箱：以后别的小工具都往这儿放（现在只有内存回收）
         box_menu = m.addMenu("百宝箱")
@@ -9141,7 +9924,7 @@ class PetWindow(QWidget):
             "size_percent": size_percent,
             "size_from_percent": size_from_percent,
             "SIZE_MIN": SIZE_MIN,
-            "SIZE_MAX": SIZE_MAX,
+            "SIZE_MAX": getattr(self, "max_size", SIZE_MAX_DEFAULT),
             "LYRIC_OFFSET_LEVELS": LYRIC_OFFSET_LEVELS,
             "DOUBLE_CLICK_CHOICES": DOUBLE_CLICK_CHOICES,
             "PEAK_TEXT_STYLES": PEAK_TEXT_STYLES,
@@ -10653,11 +11436,11 @@ class PetWindow(QWidget):
         cur = size_percent(self.cfg.get("size", SIZE_DEFAULT))
         self._slider_dialog(
             "大小（无级调节）",
-            f"拖动滑块无级调大小（{size_percent(SIZE_MIN)}% ~ {size_percent(SIZE_MAX)}%，"
+            f"拖动滑块无级调大小（{size_percent(SIZE_MIN)}% ~ {size_percent(getattr(self, 'max_size', SIZE_MAX_DEFAULT))}%，"
             "100% 就是「大」那一档那么大）：拖着的时候它当场变大变小，"
             "而且是原地缩放（脚底和中心不动，不会满屏乱窜）；松手就记住，"
             "菜单里的「迷你 / 特小 / 小 / 中 / 大」五档照旧点一下就到。",
-            size_percent(SIZE_MIN), size_percent(SIZE_MAX), cur,
+            size_percent(SIZE_MIN), size_percent(getattr(self, "max_size", SIZE_MAX_DEFAULT)), cur,
             lambda pct: self.set_size(size_from_percent(pct)))
 
     def set_process_alerts(self, on):
@@ -10866,6 +11649,12 @@ class PetWindow(QWidget):
         old_x, old_y = self.x(), self.y()
         old_w, old_h = self.width(), self.height()
         self.cur_h = int(340 * mult)
+        if getattr(self, "_webm", None) is not None:
+            try:
+                self._webm.setSize(self._webm_height())
+                self._webm_sync_main()
+            except Exception:
+                pass
         self._prune_sprites(self.cur_h)
         self._ensure_sprites(self.cur_h)
         self._apply_window_size()
@@ -11007,6 +11796,7 @@ SINGLE_INSTANCE_KEY = "dafeiyu-pet-whale-single-instance"
 
 
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     install_qt_translator(app)      # Qt 自带按钮（OK / Cancel…）显示中文
@@ -11183,7 +11973,12 @@ def main():
                 return "muted"
             text = " ".join(line[4:].split())[:PIPE_TEXT_MAX]
             if text:
-                w._bridge_bubble_kind = ""
+                w._speech_on_reply()       # 插件 LLM 回复到达 → 取消本地兜底
+                try:
+                    w._anim_log("speech say len=%d" % len(text))
+                except Exception:
+                    pass
+                # 保留当前 bubble kind：既用于情绪色调，也允许 say: 触发对应节拍动作（cmd:style + say）
                 w.say(text, seconds=4.0, queue=True)
             return "said"
 
@@ -11243,10 +12038,119 @@ def main():
                 w.say(text, inner=True, seconds=4.0, queue=True)
             return "inner"
 
+        if line.startswith("dev:"):
+            # 开发/取证通道（不出现在正式协议文档；B 身体联调用）
+            try:
+                _dev = line[4:].strip()
+                if _dev.startswith("shotstatic:"):
+                    _path = _dev[11:].strip()
+                    _sb = getattr(w, "_static_body", None)
+                    if _sb is None:
+                        return "noStatic"
+                    _pm = _sb.grab()
+                    _pm.save(_path)
+                    return "shotstatic:" + _path
+                if _dev.startswith("shotb:"):
+                    _path = _dev[6:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None or _b._view is None:
+                        return "noB"
+                    _pm = _b._view.grab()
+                    _pm.save(_path)
+                    return "shotb:" + _path
+                if _dev == "info":
+                    import json as _json
+                    _b = getattr(w, "_webm", None)
+                    return _json.dumps({
+                        "body": getattr(w, "_body", ""),
+                        "webm": _b is not None,
+                        "clips": (len(_b.listClips()) if _b else 0),
+                        "current": (_b.currentClip() if _b else ""),
+                        "view": (([_b._view.x(), _b._view.y(), _b._view.width(), _b._view.height()]) if (_b and _b._view) else None),
+                        "main_visible": bool(w.isVisible()),
+                    }, ensure_ascii=False)
+                if _dev.startswith("mark:"):
+                    _m = _dev[5:].strip()
+                    try:
+                        w._anim_log("MARK " + _m)
+                    except Exception:
+                        pass
+                    return "mark:" + _m
+                if _dev.startswith("bubble:"):
+                    _txt = _dev[7:].strip() or "测试气泡"
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _r = _b.showBubble(_txt, 4.0)
+                    try:
+                        w._anim_log("dev bubble ret=%s len=%d" % (_r, len(_txt)))
+                    except Exception:
+                        pass
+                    return "bubbleB:%s" % _r
+                if _dev.startswith("jseval:"):
+                    _code = _dev[7:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _b._page.runJavaScript(
+                        _code,
+                        lambda _r: w._anim_log("jseval=%s" % (_r,)))
+                    return "jsevalB"
+                if _dev.startswith("js:"):
+                    _code = _dev[3:].strip()
+                    _b = getattr(w, "_webm", None)
+                    if _b is None:
+                        return "noB"
+                    _b._page.runJavaScript(_code)
+                    return "jsB"
+                if _dev.startswith("stateclip:"):
+                    _payload = _dev[10:].strip()
+                    try:
+                        _o = json.loads(_payload)
+                    except Exception:
+                        _o = {"state": _payload}
+                    _name = _o.get("state") or ""
+                    _clip = w._webm_state_clip(_name, _o)
+                    try:
+                        w._anim_log("stateclip=%s toolType=%s -> %s" % (
+                            _name, _o.get("toolType", ""), _clip))
+                    except Exception:
+                        pass
+                    return "stateclip:" + _clip
+                if _dev.startswith("play:"):
+                    _name = _dev[5:].strip()
+                    return "playB:" + str(w._webm_play(_name, loop=False))
+                if _dev == "click":
+                    _b = getattr(w, "_webm", None)
+                    if _b is not None and hasattr(_b, "_on_clicked"):
+                        _b._on_clicked()
+                    else:
+                        w._webm_on_clicked(None)
+                    return "devclick"
+                if _dev.startswith("peek:"):
+                    _edge = _dev[5:].strip()
+                    if getattr(w, "_webm", None) is not None:
+                        w._webm.setPeek(_edge)
+                        return "peekB:" + _edge
+                    return "noB"
+                return "unknownDev:" + _dev[:40]
+            except Exception as _dexc:
+                return "devErr:" + repr(_dexc)[:80]
+
         if line.startswith("act:"):
             if muted:
                 return "muted"
             act = line[4:].strip().lower()
+            if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                raw = line[4:].strip()
+                if raw.lower() == "peek":
+                    try:
+                        w._webm.setPeek("left")
+                    except Exception:
+                        pass
+                    return "actedB:peek"
+                if w._webm_play(raw, loop=False):
+                    return "actedB:" + raw
             if act in ("jump", "hop"):
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.6)
             elif act == "sway":
@@ -11260,9 +12164,18 @@ def main():
             elif act == "peek":
                 w.action, w.action_t = "sway", 0.7
                 w.jump_t = max(getattr(w, "jump_t", 0.0), 0.45)
-            elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn"):
+            elif act in ("eat", "steal", "sneak", "sleep", "wake", "wave", "dance", "turn", "feed", "come"):
                 # 鲸鱼娘 2D 帧动作：eat / steal(偷吃) / sleep / wave / dance / turn
-                clip = {"steal": "sneak"}.get(act, act)
+                try:
+                    if act in ("eat", "feed"):
+                        w._speech_request("feed", {"subkind": act})
+                    elif act == "come":
+                        w._speech_request("come", {"phase": "come"})
+                    elif act == "steal":
+                        w._speech_request("stealCaught", {"subkind": "steal"})
+                except Exception:
+                    pass
+                clip = {"steal": "sneak", "feed": "eat", "come": "wave"}.get(act, act)
                 if getattr(w, "_whale_active", lambda: False)() and w._whale_force_play(clip):
                     return "acted:" + act
                 return "unknownact:" + act
@@ -11302,6 +12215,19 @@ def main():
             if muted:
                 return "muted"
             edge = line[5:].strip().lower()
+            if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                if edge in ("left", "l"):
+                    w._webm.setPeek("left")
+                elif edge in ("right", "r"):
+                    w._webm.setPeek("right")
+                else:
+                    w._webm.setPeek(None)
+                try:
+                    w._anim_log("webm peek=%s pending=%s" % (
+                        w._webm.peekState(), w._webm.pendingClip()))
+                except Exception:
+                    pass
+                return "peekB:" + edge
             geo = _bridge_screen_geo()
             if geo is None:
                 return "nogeo"
@@ -11391,22 +12317,34 @@ def main():
                 _st = json.loads(line[6:])
                 w._bridge_state = _st
                 _name = str(_st.get("state") or "")
+                # B 身体：状态 → B clip（主路径）；A 映射保留给 png 回退
+                if getattr(w, "_body", "png") == "webm" and getattr(w, "_webm", None) is not None:
+                    try:
+                        w._webm_apply_state(_name, _st)
+                    except Exception:
+                        pass
                 # 鲸鱼娘 2D 帧动画：DSH 状态 → 动作（thinking/tool/waiting/done/error 等）
                 _whale_map = {
                     "thinking": "think",
-                    "tool": "walk",
+                    "tool": "hum",          # tool 不再 walk：站桩哼歌（生产热补丁收编）
                     "waiting_approval": "waitPeek",
                     "approval": "waitPeek",
                     "waiting_input": "waitPeek",
-                    "done": "cheer",
+                    "done": "celebrate",    # 庆祝由 _anim_celebrate 3 阶段编排
                     "error": "errorSequence",
                     "cry": "cry",
                     "disconnected": "lonelySit",
                 }
+                try:
+                    if _name in ("thinking", "tool") and not getattr(w, "_task_started_at", 0.0):
+                        w._task_started_at = time.time()
+                except Exception:
+                    pass
                 _wh = getattr(w, "_whale", None)
                 _mapped = _whale_map.get(_name) if _name else None
                 if _name in ("idle", "background", ""):
-                    w._whale_clear_force()
+                    if getattr(w, "_celebration", None) is None:
+                        w._whale_clear_force()
                 elif _wh is not None and _mapped and _wh.has(_mapped):
                     try:
                         _gagged = bool(w._whale_gag_ok())
@@ -11422,9 +12360,44 @@ def main():
                         w._whale_clear_force()
                         if _wh.cur != "idleBase":
                             _wh.play("idleBase")
+                # 完成：庆祝 3 阶段 + LLM 台词（固定"完成啦"仅故障兜底）
+                if _name == "done":
+                    try:
+                        w._speech_request("celebrate", {"phase": "done"})
+                    except Exception:
+                        pass
+                    try:
+                        w._anim_celebrate()
+                    except Exception:
+                        pass
+                # 让 DSH 联动"看得见"：状态切换一句短气泡（45s 冷却；深夜/免打扰闭嘴）——生产热补丁收编
+                try:
+                    _now2 = time.time()
+                    _last_name = str(getattr(w, "_bridge_state_last", "") or "")
+                    if _name != _last_name:
+                        w._bridge_state_last = _name
+                        _lines = {
+                            "thinking": "在想呢…",
+                            "tool": "看到你在跑命令啦",
+                        }
+                        _txt2 = _lines.get(_name) or ""
+                        if _txt2:
+                            _allowed = True
+                            try:
+                                _allowed = bool(w._whale_gag_ok()) or _name in ("error", "waiting_input")
+                            except Exception:
+                                _allowed = True
+                            _last_at = float(getattr(w, "_bridge_say_at_" + _name, 0.0) or 0.0)
+                            if _allowed and (_now2 - _last_at) >= 45.0:
+                                setattr(w, "_bridge_say_at_" + _name, _now2)
+                                w._bridge_bubble_kind = "report" if _name in ("tool", "done") else ("remind" if _name in ("error", "waiting_input") else "inner")
+                                w.say(_txt2, seconds=3.2, queue=True)
+                except Exception:
+                    pass
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
-                    w.say("我在等你的确认哦", seconds=8.0, queue=True)
+                    w._speech_request("approvalWait", {"phase": "waiting", "s0": True},
+                                      fallback="我在等你的确认哦")
                 elif _name == "error":
                     try:
                         w._bridge_fx_play("sweat")
@@ -11449,6 +12422,8 @@ def main():
             try:
                 if name == "mode" and val in ("wander", "follow", "still"):
                     w.set_mode(val)
+                elif name == "body" and val in ("webm", "png"):
+                    return ("body:" + val + ":" + str(w.set_body(val)))
                 elif name == "size":
                     w.set_size(_bridge_num(val, 0.7))
                 elif name == "opacity":
