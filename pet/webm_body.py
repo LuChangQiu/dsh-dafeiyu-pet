@@ -425,6 +425,12 @@ class WebmBody(QObject):
                 QTimer.singleShot(0, lambda: self.playClip(n, self._pending_fade, self._pending_loop))
 
 
+    def peekState(self) -> str:
+        return str(getattr(self, "_peek", "") or "")
+
+    def pendingClip(self) -> str:
+        return str(getattr(self, "_pending_clip", "") or "")
+
     def showBubble(self, text: str, seconds: float = 3.2) -> bool:
         """在 B 同一个 QWebEngineView 内显示台词气泡；**窗口固定 168×198 不缩放不跳位**。"""
         if self._view is None:

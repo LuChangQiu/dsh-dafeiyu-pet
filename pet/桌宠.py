@@ -7720,7 +7720,9 @@ class PetWindow(QWidget):
         except Exception:
             mapped = None
         try:
-            self._anim_log("webm act=%s -> %s" % (name, mapped))
+            self._anim_log("webm act=%s -> %s peek=%s pending=%s" % (
+                name, mapped, (self._webm.peekState() if getattr(self, "_webm", None) else ""),
+                (self._webm.pendingClip() if getattr(self, "_webm", None) else "")))
         except Exception:
             pass
         if loop is None:
@@ -12067,6 +12069,13 @@ def main():
                         "view": (([_b._view.x(), _b._view.y(), _b._view.width(), _b._view.height()]) if (_b and _b._view) else None),
                         "main_visible": bool(w.isVisible()),
                     }, ensure_ascii=False)
+                if _dev.startswith("mark:"):
+                    _m = _dev[5:].strip()
+                    try:
+                        w._anim_log("MARK " + _m)
+                    except Exception:
+                        pass
+                    return "mark:" + _m
                 if _dev.startswith("bubble:"):
                     _txt = _dev[7:].strip() or "测试气泡"
                     _b = getattr(w, "_webm", None)
@@ -12213,6 +12222,11 @@ def main():
                     w._webm.setPeek("right")
                 else:
                     w._webm.setPeek(None)
+                try:
+                    w._anim_log("webm peek=%s pending=%s" % (
+                        w._webm.peekState(), w._webm.pendingClip()))
+                except Exception:
+                    pass
                 return "peekB:" + edge
             geo = _bridge_screen_geo()
             if geo is None:
