@@ -8,10 +8,13 @@
 pet/                     # 改好的桌宠源码（干净快照，无 git 历史，约 2.2MB）
   ├─ 桌宠.py             # 主程序（含 DSH 联动补丁：管道协议/动作/微动画/配置）
   ├─ ui_console.py       # 原生对话框配色（设置窗口已移除，仍用于余额/天气/小票弹窗样式）
-  ├─ assets/            # B 素材（webm_body HTML/JS + body-b 静帧；50 WebM 构建时注入）
+  ├─ assets/body-b/      # B 静帧 placeholder.png（tracked）
+  ├─ assets/webm_body/   # B HTML/JS + 50 WebM（由 fetch-b-assets 注入，不入 git）
   ├─ icon.ico            # 图标
-  ├─ webm_body.py         # B 身体 QWebEngine 适配器
+  ├─ webm_body.py        # B 身体 QWebEngine 适配器
   └─ requirements.txt    # PySide6 等依赖
+scripts/fetch-b-assets.ps1  # 注入 B 50 WebM（从 third-party/本机 pet-work；不入 git）
+packaging/             # B-only PyInstaller spec/build（根级 INSTALL/selfcheck/许可 + UTF-8 zip）
 plugin/
   ├─ server/             # DSH host 插件 dsh-pet-bridge
   └─ client/             # 管理面板 dsh-pet-bridge-ui
@@ -22,7 +25,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 
 ## 安装（同事）
 1. 装 DSH（Node 22+），克隆本仓库。
-2. `install\install.ps1`：复制 server/client 到 DSH profile、写 patch 两块、把 `pet/` 释放到 `%USERPROFILE%\pet-work\pet`。
+2. `install\install.ps1`：复制 server/client 到 DSH profile、写 patch 两块、把 `pet/` 与 `scripts/`（tools）释放到 `%USERPROFILE%\pet-work`，并尝试注入 B 50 WebM；无 B 源时 B 静帧回退。
 3. 重启 `dsh web`：管理面板出现；插件启动自举（`scripts\bootstrap-pet.ps1`）：
    - 优先用**仓库内 `pet/` 源码** + 本机 Python 3.11+ 建 venv 启动；
    - 无 Python / 无法建 venv 时，才回退 Release zip（`lifecycle.releaseZipUrl`，可选）。
@@ -45,9 +48,10 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 > 给 AI Agent / DSH 的安装说明见 [`AGENTS.md`](AGENTS.md)。
 
 ## 发行包（B-only，免 Python）
-- 打包：`scripts\pet-build-release.ps1` → `dafeiyu-b-...-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入，不入 git；源码模式先跑 `scripts\fetch-b-assets.ps1`）。
+- 打包：`packaging\build-b-only.ps1 -Build` → `dafeiyu-pet-win64-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入；根级 LICENSE/NOTICE/README/INSTALL/selfcheck + UTF-8 zip）。
+- 源码模式先跑 `scripts\fetch-b-assets.ps1` 注入 B 素材；`-DryRun` 可零写入检查。
 - 分发：**内部小范围**，直接发 zip（解压即用）；不公开 Release（见 `PROVENANCE.md`）。
-- 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`，**276,704,799B / SHA256 `63D39B4C0430BE88DAB0E5B4826F75C61E4B484DD7F11041C4EA91789D64ECF7`**（解压即用；根级 INSTALL/selfcheck/许可齐全）。
+- 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`（r2），**276,706,744B / SHA256 `D550CAE684F30AB25CAD9B6E0E5B7EDBF5A3E1DBF69F6B9989629E8E681D5A44`**（解压即用；根级 LICENSE/NOTICE/INSTALL/README/selfcheck 齐全）。
 
 ## 上游更新
 不 fork、不建上游 git 历史：手动 diff 上游 `桌宠.py` 与 `pet/桌宠.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。

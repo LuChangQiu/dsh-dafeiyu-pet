@@ -14,7 +14,7 @@
   ├─ 大肥鱼桌宠.exe        ← 双击即可启动（免 Python）
   ├─ INSTALL.md            ← 本文件
   ├─ selfcheck.ps1         ← 一键自检/修复（packaged 模式）
-  └─ _internal\...         ← 运行时与资源（含 _internal\assets\webm_body + body-b）
+  └─ _internal\...         ← 运行时与资源（含 _internal\assets\webm_body 50 WebM + body-b 静帧）
 ```
 
 ### 第 2 步：自检（在**解压目录根部**运行）
@@ -140,12 +140,20 @@ node pet-work\tools\pet-cmd.mjs ping    # 期望 {"ok":true,...,"reply":"pong"}
 ## 5. 开发 / 源码安装（从仓库）
 
 ```powershell
-# 仓库根
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Human
+# 仓库根；先 dry-run 验证（零写入）
+powershell -NoProfile -ExecutionPolicy Bypass -File install\install.ps1 -DryRun
+# 正式安装：释放 plugin server/client、pet/、scripts/→pet-work\tools，尝试注入 B 50 WebM
+powershell -NoProfile -ExecutionPolicy Bypass -File install\install.ps1 -BSource "D:\path\to\webm_pet"
+# 若安装时未注入 B：手动补（DestPet 指向 pet-work\pet）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-b-assets.ps1 -DestPet "$env:USERPROFILE\pet-work\pet" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-b-assets.ps1 -DestPet "$env:USERPROFILE\pet-work\pet"
+# 启动/自检
 powershell -NoProfile -ExecutionPolicy Bypass -File pet-work\tools\start-pet.ps1
 node pet-work\tools\pet-cmd.mjs ping
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\selfcheck.ps1 -Human
 ```
-- 源码模式需要 `pet-work\.venv`（PySide6/requests）与 `pet-work\pet` 源码；构建发行包见 `scripts\pet-build-release.ps1`（自动把 INSTALL.md/selfcheck.ps1 打入 zip）；
+- 源码模式需要 `pet-work\.venv`（PySide6/requests）与 `pet-work\pet` 源码；B 50 WebM 不入 git，必须 `fetch-b-assets.ps1` 注入（无 B 源时 B 静帧回退）。
+- 构建发行包：`packaging\build-b-only.ps1 -Build`（repo 内完成根级 LICENSE/NOTICE/README/INSTALL/selfcheck + UTF-8 zip；不再依赖仓外后处理）。
 - 本文件在仓库与发行包中保持一致（构建时复制到 app 根）。
 
 ## 6. 验收清单（zip 用户）

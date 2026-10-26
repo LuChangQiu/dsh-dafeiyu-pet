@@ -1,4 +1,4 @@
-# B-only 桌宠发行打包（PyInstaller onedir）
+﻿# B-only 桌宠发行打包（PyInstaller onedir）
 # 默认 dry-run；-Build 才真正打包（等 B PASS 后由 Lead 批准）。
 param(
   [switch]$Build,
@@ -23,6 +23,7 @@ if (-not $BWeb) { $BWeb = $env:DSH_PET_B_WEB }
 if (-not $BWeb) {
   $cands = @(
     (Join-Path $RepoRoot 'tools\body-b\webm_pet'),
+    (Join-Path $RepoRoot '..\pet-integration-src\pet-work\tools\body-b\webm_pet'),
     (Join-Path (Split-Path -Parent (Split-Path -Parent $RepoRoot)) 'tools\body-b\webm_pet')
   )
   foreach ($c in $cands) { if (Test-Path (Join-Path $c 'index.html')) { $BWeb = $c; break } }
@@ -36,6 +37,19 @@ if (-not (Test-Path $Placeholder)) { $Placeholder = Join-Path $RepoRoot 'pet\ass
 $SpecSrc = Join-Path $PSScriptRoot 'pet-b-only.spec'
 if (-not (Test-Path (Join-Path $BWeb 'index.html'))) { throw "B 预览素材缺失: $BWeb" }
 if (-not (Test-Path $SpecSrc)) { throw "spec 缺失: $SpecSrc" }
+$RootFiles = @(
+  @{ src = (Join-Path $RepoRoot 'LICENSE'); name = 'LICENSE' },
+  @{ src = (Join-Path $RepoRoot 'NOTICE'); name = 'NOTICE' },
+  @{ src = (Join-Path $RepoRoot 'README.md'); name = 'README.md' },
+  @{ src = (Join-Path $RepoRoot 'INSTALL.md'); name = 'INSTALL.md' },
+  @{ src = (Join-Path $RepoRoot 'scripts\selfcheck.ps1'); name = 'selfcheck.ps1' },
+  @{ src = (Join-Path $PSScriptRoot 'third-party-b\LICENSE-B.txt'); name = 'LICENSE-B.txt' },
+  @{ src = (Join-Path $PSScriptRoot 'third-party-b\NOTICE-B.md'); name = 'NOTICE-B.md' },
+  @{ src = (Join-Path $PSScriptRoot 'PROVENANCE-B.md'); name = 'PROVENANCE-B.md' }
+)
+foreach ($rf in $RootFiles) { if (-not (Test-Path -LiteralPath $rf.src)) { throw ("根级交付文件缺失: " + $rf.src) } }
+$Utf8Zip = Join-Path $PSScriptRoot 'make_utf8_zip.py'
+if (-not (Test-Path $Utf8Zip)) { throw "UTF-8 zip helper 缺失: $Utf8Zip" }
 $webmCount = @(Get-ChildItem $BWebm -Filter '*.webm' -File).Count
 if ($webmCount -lt 50) { throw "B WebM 数量不足: $webmCount < 50" }
 
@@ -97,11 +111,19 @@ $name = "dafeiyu-pet-win64-$Version-$GitSha"
 $target = Join-Path $OutRoot $name
 if (Test-Path $target) { Remove-Item -Recurse -Force $target }
 Move-Item $appDir.FullName $target
+# 6b) 根级交付文件 + UTF-8 zip（repo 内可复现，不依赖仓外后处理）
+foreach ($rf in $RootFiles) {
+  Copy-Item -LiteralPath $rf.src -Destination (Join-Path $target $rf.name) -Force
+  Write-Output ("[b-only] root file: " + $rf.name)
+}
 $zip = Join-Path $OutRoot ($name + '.zip')
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $target '*') -DestinationPath $zip -CompressionLevel Optimal
+$rootNames = @($RootFiles | ForEach-Object { $_.name })
+$zipArgs = @($target, $zip, '--root-file') + $rootNames
+& $PythonExe $Utf8Zip @zipArgs
+if ($LASTEXITCODE -ne 0) { throw ("UTF-8 zip failed ($LASTEXITCODE)") }
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
-"$hash  $(Split-Path -Leaf $zip)" | Set-Content ($zip + '.sha256') -Encoding ASCII
 Write-Output "[b-only] zip=$zip"
 Write-Output "[b-only] sha256=$hash"
+Write-Output '[b-only] root files + UTF-8 zip + 50 webm verified by helper'
 

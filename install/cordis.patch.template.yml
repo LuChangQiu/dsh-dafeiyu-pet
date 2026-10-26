@@ -39,8 +39,8 @@
           timeoutMs: 3000
           maxTokens: 200
           temperature: 0.9
-          maxCallsPerDay: 300
-          budgetPerDayYuan: 1.0
+          maxCallsPerDay: 2000
+          budgetPerDayYuan: 10.0
           costPer1kTokensYuan: 0.0015
           maxChars: 40
           pregen: true
@@ -67,7 +67,7 @@
         heartbeatFile: '{{PET_WORK}}\evidence\ui-route-mounted.json'
         petConfigFile: '{{PET_WORK}}\pet\config.json'
         actionFile: '{{PET_WORK}}\ui-action.json'
-        defaultBudgetPerDayYuan: 1.0
+        defaultBudgetPerDayYuan: 10.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
 
