@@ -1,4 +1,4 @@
-﻿param(
+param(
   [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
   [string]$PetWork = '',
   [string]$ProfileDir = '',
@@ -12,7 +12,7 @@
   [switch]$Human,
   [switch]$SkipPipeProbe
 )
-# selfcheck.ps1 — 安装自检 / 幂等修复（对齐 docs/INSTALL-STRATEGY.md）
+# selfcheck.ps1 — 安装自检 / 幂等修复（覆盖安装/回滚关键路径）
 #
 # 检查六项：
 #   1) profile 插件完整性（server + ui 包；node_modules 是否被 pnpm 清理/文件缺失）
@@ -670,3 +670,4 @@ if ($Human) {
 }
 Write-Output ($result | ConvertTo-Json -Depth 12)
 exit $(if ($result.healthy) { 0 } else { 1 })
+

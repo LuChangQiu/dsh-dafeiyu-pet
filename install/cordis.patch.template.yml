@@ -1,7 +1,7 @@
 # ── 大肥鱼 × DSH 联动（v10：配置真源 + 原生UI移除 + 生命周期 + ui-action）─────
 - insert:
-    - id: pet-bridge-v18
-      name: 'dsh-pet-bridge-v18'
+    - id: pet-bridge-v49
+      name: 'dsh-pet-bridge-v49'
       config:
         dryRun: false
         logLevel: info
@@ -40,7 +40,7 @@
           maxTokens: 200
           temperature: 0.9
           maxCallsPerDay: 300
-          budgetPerDayYuan: 1.0
+          budgetPerDayYuan: 10.0
           costPer1kTokensYuan: 0.0015
           maxChars: 40
           pregen: true
@@ -51,7 +51,7 @@
         sleep: { enabled: true, hour: 23, minute: 30 }
         ritualWalk: true
 # ── 大肥鱼 × DSH 联动：管理界面（Web 设置面板） —— 由独立插件 dsh-pet-bridge-ui 提供（host 路由 /pet-bridge-ui + 设置页入口）
-# 只读状态聚合 + sidecar 配置写（ui-config.json）；不改 pet-bridge-v7 逻辑。
+# 只读状态聚合 + sidecar 配置写（ui-config.json）；不改 pet-bridge-v49 逻辑。
 # 安装/回滚：dsh-pet-bridge-ui\scripts\{install,rollback}.ps1
 - insert:
     - id: pet-bridge-ui
@@ -67,9 +67,10 @@
         heartbeatFile: '{{PET_WORK}}\evidence\ui-route-mounted.json'
         petConfigFile: '{{PET_WORK}}\pet\config.json'
         actionFile: '{{PET_WORK}}\ui-action.json'
-        defaultBudgetPerDayYuan: 1.0
+        defaultbudgetPerDayYuan: 10.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
+
 
 
 

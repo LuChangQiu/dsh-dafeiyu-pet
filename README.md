@@ -1,7 +1,7 @@
 # dsh-dafeiyu-pet — 大肥鱼桌宠 × DSH 联动（单仓产品）
 
 > 桌宠源码 + DSH 插件 + 管理面板 + 安装脚本，全部在这一个仓库里：**不 fork 上游、不保留上游 git 历史**。
-> 上游只做手动对比（见 `docs/UPSTREAM.md`），不参与构建。
+> 上游代码仅保留 MIT 署名，本仓已大幅改造为 B-only，不再同步/对比上游源码。
 
 ## 结构
 ```
@@ -17,7 +17,7 @@ plugin/
   └─ client/             # 管理面板 dsh-pet-bridge-ui
 install/                 # 一键安装 + cordis.patch 模板（server+client 两块）
 scripts/                 # 自举/启停/回滚/活跃度/管道工具 + 发行构建脚本
-docs/                    # 仓库布局、功能范围、配置映射、代码盘点、上游对比
+docs/                    # 仓库布局、契约、扩展、测试、发布与安全说明
 ```
 
 ## 安装（同事）
@@ -46,7 +46,7 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 
 ## 发行包（B-only，免 Python）
 - 打包：`scripts\pet-build-release.ps1` → `dafeiyu-b-...-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入，不入 git）。
-- 分发：优先 GitHub Release（https://github.com/LuChangQiu/dsh-dafeiyu-pet/releases/tag/pet-v1.1.5-dsh.1）；未上传时可直接发 zip（解压即用；单实例互斥会与运行中的桌宠二选一）。
+- 分发：**内部小范围**，直接发 zip（解压即用）；不公开 Release（见 `PROVENANCE.md`）。
 - 当前候选交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`（最终 UTF-8 根级交付包另见 `release-build/b-only-final`；sha 以实际产物为准）。
 
 ## 上游更新
@@ -59,5 +59,6 @@ docs/                    # 仓库布局、功能范围、配置映射、代码�
 
 ## License
 MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`；**授权链与内部分发口径见 `PROVENANCE.md`（仅内部/同事使用，暂无公开 Release 计划）**。
+
 
 

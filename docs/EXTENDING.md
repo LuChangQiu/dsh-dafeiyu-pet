@@ -64,7 +64,7 @@ DSH 会持续加功能（新事件/新工具/新 bundle/新 UI 槽位），本�
 
 ## 6. 加一个配置项（面板可调）
 
-1. `ui-config.json` 加字段（面板写入）→ host 侧白名单校验 → 需要下发给桌宠时补齐 `cmd:config` 映射（`docs/32-config-mapping.md`）。
+1. `ui-config.json` 加字段（面板写入）→ host 侧白名单校验 → 需要下发给桌宠时补齐 `cmd:config` 映射（配置映射见 `docs/32-config-mapping.md` 已删除；以 `pet/config.json` + `ui-config.json` 字段为准）。
 2. 默认值写进 `DATA-CONTRACT.md`/面板默认值表；非法值拒绝并回 `failed`。
 3. 兼容：旧配置缺字段时用默认，不影响升级。
 
@@ -87,3 +87,4 @@ node scripts/audit-privacy.mjs        # v2/events/companion/log 路径/原文/ke
 - 客户端槽位注册用 try/catch，失败静默跳过（不炸页面）。
 - 状态文件新旧字段并存一个版本周期，面板优先新字段、回退旧字段，之后再移除旧字段。
 - DSH 升级时的检查清单见 `docs/DSH-UPGRADE.md`。
+

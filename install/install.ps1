@@ -1,4 +1,4 @@
-﻿param(
+param(
   [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
   [string]$Profile = (Join-Path $env:USERPROFILE '.dsh\profiles\web'),
   [string]$PetWork = (Join-Path $env:USERPROFILE 'pet-work')
@@ -12,9 +12,9 @@ if (-not (Test-Path $Profile)) { throw "profile not found: $Profile" }
 
 # 1) copy plugin packages (server + ui if present)
 $pkgs = @()
-$p1 = Join-Path $RepoRoot 'plugin\dsh-pet-bridge'
-if (Test-Path $p1) { $pkgs += @{ src = $p1; name = 'dsh-pet-bridge' } }
-$p2 = Join-Path $RepoRoot 'plugin\dsh-pet-bridge-ui'
+$p1 = Join-Path $RepoRoot 'plugin\\server'
+if (Test-Path $p1) { $pkgs += @{ src = $p1; name = 'dsh-pet-bridge-v49' } }
+$p2 = Join-Path $RepoRoot 'plugin\\client'
 if (Test-Path $p2) { $pkgs += @{ src = $p2; name = 'dsh-pet-bridge-ui' } }
 foreach ($p in $pkgs) {
   $dst = Join-Path $Profile ("node_modules\" + $p.name)
@@ -105,3 +105,4 @@ try {
   $top = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
   if ($top) { & git -C $top config core.hooksPath .githooks | Out-Null; Write-Info 'git hooksPath = .githooks' }
 } catch { Write-Info ('WARN: git hooks 配置失败: ' + $_.Exception.Message) }
+
