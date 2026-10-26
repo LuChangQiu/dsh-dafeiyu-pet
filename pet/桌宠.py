@@ -4272,6 +4272,7 @@ class PetWindow(QWidget):
         self._speech = None
         self._speech_enabled = bool((self.cfg.get("speech") or {}).get("llmRequests", True))
         self._speech_log_path = ""
+        self._speech_dir = ""
         try:
             if os.path.exists(os.path.join(APP_DIR, "speech-debug.on")):
                 self._speech_log_path = os.path.join(APP_DIR, "speech-debug.log")
@@ -4280,14 +4281,18 @@ class PetWindow(QWidget):
         try:
             if _speech_requests is not None and self._speech_enabled:
                 _sp = self.cfg.get("speech") or {}
-                _sp_dir = os.path.dirname(APP_DIR)
-                if not os.path.isdir(os.path.join(_sp_dir, "tools")):
-                    _sp_dir = APP_DIR
+                # P2：显式 queueDir / PET_WORK_DIR 优先；否则源码布局 pet-work（含 tools）优先
+                _sp_dir = str(_sp.get("queueDir") or os.environ.get("PET_WORK_DIR") or os.environ.get("PET_WORK") or "")
+                if not _sp_dir:
+                    _cand = os.path.dirname(APP_DIR)
+                    _sp_dir = _cand if os.path.isdir(os.path.join(_cand, "tools")) else APP_DIR
+                self._speech_dir = _sp_dir
                 self._speech = _speech_requests.build_queue(
                     _sp_dir,
                     timeout_healthy_ms=int(_sp.get("fallbackTimeoutHealthyMs", 4500) or 4500),
                     timeout_offline_ms=int(_sp.get("fallbackTimeoutOfflineMs", 1500) or 1500),
                 )
+                self._speech_log("queue path=%s" % os.path.join(_sp_dir, "speech-requests.json"))
         except Exception:
             self._speech = None
         self._anim_log_path = str(os.environ.get("PET_ANIM_LOG") or "")
@@ -7421,7 +7426,10 @@ class PetWindow(QWidget):
         if not getattr(q, "pending", None):
             return
         try:
-            due = q.fallback_due(now, getattr(self, "_last_line_at", 0.0))
+            # P1：健康判定用桥接生命状态（life_offline=失联休眠），不要只看最后一行时间；
+            # 插件正常但静默 >30s 时也等 4.5s，绝不让本地池抢在 LLM 前。
+            _healthy = not bool(getattr(self, "_life_offline", False))
+            due = q.fallback_due(now, getattr(self, "_last_line_at", 0.0), healthy=_healthy)
         except Exception:
             due = None
         if due:

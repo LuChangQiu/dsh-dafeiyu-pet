@@ -97,6 +97,19 @@ try:
     q4.on_reply()
     check('收到回复后不兜底', q4.fallback_due(now() + 99, last_pipe_at=now()) is None)
 
+    # P1：健康覆盖（桥接生命状态）——插件正常但静默 >30s 时仍等 4.5s
+    clock['t'] = 3000.0
+    qh = SpeechRequestQueue(path, now_fn=now, id_fn=make_id)
+    qh.enqueue('click')
+    check('P1 健康覆盖：旧 last_pipe 也不 1.5s 兜底', qh.fallback_due(now() + 2.0, last_pipe_at=now() - 100, healthy=True) is None)
+    check('P1 健康覆盖：4.6s 才兜底', qh.fallback_due(now() + 4.6, last_pipe_at=now() - 100, healthy=True) is not None)
+    qh.enqueue('pat')
+    check('P1 离线覆盖：1.6s 兜底', qh.fallback_due(now() + 1.6, last_pipe_at=now(), healthy=False) is not None)
+    # P2：context 枚举收紧（非枚举文本丢弃）
+    qe = SpeechRequestQueue(path, now_fn=now, id_fn=make_id)
+    it = qe.enqueue('click', {'phase': '点击一下', 'subkind': 'head', 'toolType': 'bash', 'mood': 2})
+    check('P2 context 非枚举文本丢弃', it['context'] == {'subkind': 'head', 'toolType': 'bash', 'mood': 2}, str(it['context']))
+
     # 损坏文件可恢复
     open(path, 'w', encoding='utf-8').write('{not-json')
     q5 = SpeechRequestQueue(path, now_fn=now, id_fn=make_id)

@@ -14,6 +14,7 @@
 import json
 import os
 import random
+import re
 import time
 
 KINDS = (
@@ -62,9 +63,9 @@ def _sanitize_context(ctx):
         elif isinstance(v, (int, float)):
             out[k] = v
         elif isinstance(v, str):
-            # 只允许短枚举字符串，防止把用户文本带进队列
-            s = v.strip()[:24]
-            if s and len(s) <= 24:
+            # 契约要求枚举：仅 ^[a-z0-9._:-]{1,24}$；其它文本一律丢弃
+            s = v.strip()
+            if s and re.fullmatch(r'[a-z0-9._:-]{1,24}', s):
                 out[k] = s
     return out
 
@@ -149,13 +150,18 @@ class SpeechRequestQueue:
         except (TypeError, ValueError):
             return False
 
-    def fallback_due(self, now, last_pipe_at):
-        """超时兜底：返回 (文本, 原因)；未到期返回 None；收到回复后 pending=None。"""
+    def fallback_due(self, now, last_pipe_at, healthy=None):
+        """超时兜底：返回 (文本, 原因)；未到期返回 None；收到回复后 pending=None。
+
+        healthy 显式传入时优先（pet 用桥接生命状态判断，而不是只看最后一行数据时间）：
+        避免插件正常但静默 >30s 时被误判离线、本地池抢在 LLM 前冒固定句。
+        """
         p = self.pending
         if not p:
             return None
         now = float(now)
-        if self.healthy(last_pipe_at, now):
+        is_healthy = self.healthy(last_pipe_at, now) if healthy is None else bool(healthy)
+        if is_healthy:
             timeout_ms = self.timeout_healthy_ms
         else:
             timeout_ms = self.timeout_offline_ms
