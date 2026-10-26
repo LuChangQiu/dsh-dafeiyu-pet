@@ -28,9 +28,9 @@ powershell -File packaging\build-b-only.ps1 -Build -Version 1.1.5-dsh.2-whalegir
 
 ## 体积估算（onedir / zip）
 
-- 当前 PyInstaller 依赖树（PySide6 + QtWebEngine + Python）onedir 约 **300–380MB**（视 UPX/排除项）；
-- B 素材 25.8MB；
-- zip（Optimal）预计 **120–190MB**；最终以实际构建为准，脚本 dry-run 会打印 stage 体积。
+- 实际候选构建（2026-10-26，`7168c54`）：onedir **658.5MB / 2205 files**（`大肥鱼桌宠.exe` 5.4MB），zip **263.9MB**；B 素材 25.8MB；
+- 早前 300–380MB 估算偏低；PySide6/QtWebEngine 全量收集。后续可按需裁 Qt 模块 / UPX 对照优化。
+- 构建产物不进 git（`release-build/` 忽略）；发布时上传 zip + `.sha256`。
 
 ## 许可
 

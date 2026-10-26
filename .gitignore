@@ -28,3 +28,4 @@ __pycache__/
 plugin/client/test/harness/fixture.js
 
 dist-b/
+release-build/
