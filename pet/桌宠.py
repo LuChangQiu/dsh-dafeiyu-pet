@@ -238,6 +238,10 @@ try:
     import whale_skin as _whale_skin
 except Exception:      # 模块缺失 / 依赖异常 → 视为没有鲸鱼娘皮肤
     _whale_skin = None
+try:
+    import smooth_anim as _smooth_anim
+except Exception:      # 平滑/编排模块缺失 → 退回原渲染（不阻塞启动）
+    _smooth_anim = None
 
 # 新界面（设置窗口）：v1.1.0 起，菜单里的「打开设置…」开的是它。
 # 单独一个模块；万一它起不来，也绝不能拖垮桌宠本身 —— 老菜单照旧能用。
@@ -4220,6 +4224,32 @@ class PetWindow(QWidget):
             print("鲸鱼娘皮肤加载失败（回退 classic）:", repr(_whale_err))
             self._whale = None
 
+        # ---- 渲染平滑 / 事件动画（task-131）：淡化 + 次级运动 + 待机微动作 + 庆祝/对话编排 ----
+        self._smooth = _smooth_anim
+        try:
+            self._smooth_cfg = _smooth_anim.SmoothConfig(self.cfg) if _smooth_anim else None
+        except Exception:
+            self._smooth_cfg = None
+        if self._whale is not None and self._smooth_cfg is not None:
+            try:
+                self._whale.set_smooth({
+                    "enabled": self._smooth_cfg.enabled,
+                    "crossfadeMs": self._smooth_cfg.crossfade_ms,
+                    "actionFadeMs": self._smooth_cfg.action_fade_ms,
+                })
+            except Exception:
+                pass
+        try:
+            self._idle_micro = _smooth_anim.IdleMicroScheduler(
+                self._smooth_cfg or _smooth_anim.SmoothConfig({}), now=time.time(),
+                rng=random.Random()) if _smooth_anim else None
+        except Exception:
+            self._idle_micro = None
+        self._celebration = None          # 庆祝 3 阶段状态 {stage,t0}
+        self._dialog_force = None         # 对话动作占用的 force（到时清）
+        self._dialog_until = 0.0
+        self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
+
         # ---- 失联休眠（task-77）：默认 2 分钟无命令打盹，不擅自退出 ----
         _lc = self.cfg.get("lifecycle")
         if not isinstance(_lc, dict):
@@ -6592,13 +6622,25 @@ class PetWindow(QWidget):
         # A 路线增强：贴地软阴影（身体之前画，作为"地面"）
         self._enh_paint_shadow(p, cx, bottom, st)
         walking = self.target is not None and not self.dragging
-        if walking:
-            sway = math.sin(now * 9.0) * 3.5
-            bob = -abs(math.sin(now * 4.5)) * 7.0
+        _smcfg = getattr(self, "_smooth_cfg", None)
+        _smmod = getattr(self, "_smooth", None)
+        if _smcfg is not None and getattr(_smcfg, "enabled", True) and _smmod is not None:
+            _sm = _smmod.secondary_motion(now, _smcfg, walking=walking)
+            if walking:
+                sway = math.sin(now * 9.0) * 2.6
+                bob = -abs(math.sin(now * 4.5)) * 5.5
+            else:
+                sway = _sm["sway_deg"]
+                bob = _sm["float_px"]
+            breath = _sm["scale"]
         else:
-            sway = math.sin(now * 2.5) * 1.5
-            bob = 0.0
-        breath = 1.0 + 0.02 * math.sin(now * 2.5)
+            if walking:
+                sway = math.sin(now * 9.0) * 3.5
+                bob = -abs(math.sin(now * 4.5)) * 7.0
+            else:
+                sway = math.sin(now * 2.5) * 1.5
+                bob = 0.0
+            breath = 1.0 + 0.02 * math.sin(now * 2.5)
         scale = breath
         jump = -abs(math.sin(self.jump_t * 3.14159)) * 14 * self.jump_t if self.jump_t > 0 else 0
         act_rot = act_sx = act_sy = 0.0
@@ -7261,6 +7303,56 @@ class PetWindow(QWidget):
             QTimer.singleShot(1000, _greet_after_wake)
         print("失联休眠：醒来")
 
+    # ---------- 事件动画编排（task-131）：庆祝 3 阶段 / 对话微动作 ----------
+    def _anim_celebrate(self):
+        """done/完成：跳起→落地→举双手/转圈 3 阶段 + 爱心 FX + 气泡（1.5–3s）。"""
+        w = getattr(self, "_whale", None)
+        if w is None or not self._whale_active() or self.dragging:
+            return False
+        try:
+            if not self._whale_gag_ok():
+                return False
+        except Exception:
+            pass
+        stages = self._smooth.celebration_stages() if self._smooth else ()
+        if not stages:
+            return False
+        self._celebration = {"stage": 0, "t0": self._secs()}
+        self._whale_force_play(stages[0]["action"])
+        try:
+            self._bridge_fx_play("love")
+        except Exception:
+            pass
+        self._bridge_bubble_kind = "report"
+        self.say("完成啦！", seconds=3.2, queue=True)
+        return True
+
+    def _anim_dialog(self, kind):
+        """气泡 kind → 微动作（点头/歪头/害羞/摆手）；不抢 S0/庆祝通道。"""
+        if getattr(self, "_celebration", None) is not None:
+            return False
+        w = getattr(self, "_whale", None)
+        if w is None or not self._whale_active() or self.dragging:
+            return False
+        if self._smooth is None:
+            return False
+        act = self._smooth.dialog_action(kind)
+        if not act or not w.has(act):
+            return False
+        force = getattr(self, "_whale_force", None)
+        if force in ("think", "waitPeek", "errorSequence", "sleep", "cry"):
+            return False
+        if self._whale_force_play(act):
+            self._dialog_force = act
+            try:
+                _st = w.action_stats(act)
+                _total = (_st[2] / 1000.0) if _st and _st[2] else 0.9
+            except Exception:
+                _total = 0.9
+            self._dialog_until = self._secs() + max(0.7, min(1.6, _total * 1.05))
+            return True
+        return False
+
     def _whale_tick(self):
         """把桌宠状态翻译成帧动作；素材只是表现层，异常绝不打断主循环。"""
         w = getattr(self, "_whale", None)
@@ -7275,6 +7367,37 @@ class PetWindow(QWidget):
                     self._life_wake()       # 被拎起来就醒（_life_wake 内刷新心跳，不会立刻睡回去）
                     self._whale_clear_force()
             force = self._whale_force
+            # 事件动画通道：庆祝 3 阶段（jump→land→cheer）优先于 work/idle；对话动作短时占用
+            if getattr(self, "_celebration", None) is not None:
+                if self.dragging:
+                    self._celebration = None
+                    self._whale_clear_force()
+                else:
+                    _stages = self._smooth.celebration_stages() if self._smooth else ()
+                    _si = int(self._celebration.get("stage", 0))
+                    if force in ("jump", "land", "cheer") and w.finished:
+                        _si += 1
+                        if _si >= len(_stages):
+                            self._celebration = None
+                            self._whale_clear_force()
+                        else:
+                            self._celebration["stage"] = _si
+                            self._whale_force_play(_stages[_si]["action"])
+                            if _stages[_si]["name"] == "cheer":
+                                try:
+                                    self._bridge_fx_play("love")
+                                except Exception:
+                                    pass
+                    force = self._whale_force
+            if getattr(self, "_dialog_force", None) and force == self._dialog_force and now >= self._dialog_until:
+                self._dialog_force = None
+                self._whale_clear_force()
+                force = self._whale_force
+            # hum 等循环微动作按定时回收，回 idle
+            if getattr(self, "_whale_micro_until", 0.0) and now >= self._whale_micro_until:
+                self._whale_micro_until = 0.0
+                if w.cur == "hum":
+                    w.play("idleBase")
             # CF5：fall 帧只在物理飞行期间保持；物理已被外部清空（phys:stop/异常）且不处于拖拽时
             # 自动接 land 再回 idle，避免卡在 fall 帧（act:fall 手动触发同样会 1 tick 内落回 land）。
             if force == "fall" and not self.dragging and getattr(self, "_enh_phys", None) is None:
@@ -7307,13 +7430,17 @@ class PetWindow(QWidget):
                     w.play("walk" if abs(dx) >= abs(dy) * 0.7 else "idleBase")
                 elif w.finished or w.cur in ("", "walk", "drag"):
                     w.play("idleBase")
-                elif w.cur == "idleBase" and self.t >= self._whale_micro_at:
+                elif w.cur == "idleBase" and getattr(self, "_idle_micro", None) is not None and self._idle_micro.due(now):
                     if self._whale_gag_ok():        # 深夜/免打扰只留呼吸，不做 idle 微动作（D3）
-                        n = random.choice(("idleShift", "idleSettle", "idleStretch"))
-                        if w.has(n):
+                        n = self._idle_micro.pick(now)
+                        if n and w.has(n):
                             w.play(n, restart=True)
-                    self._whale_micro_at = self.t + int(
-                        random.uniform(8.0, 25.0) * 1000.0 / max(1, self.tick_ms))
+                            try:
+                                _timed = self._smooth.IDLE_TIMED_MS.get(n) if self._smooth else None
+                            except Exception:
+                                _timed = None
+                            if _timed:
+                                self._whale_micro_until = now + float(_timed) / 1000.0
             # 走路步频（体验评审 2026-10-24）：默认慢放 ×1.35（45→60.75ms/帧，1.94s/循环，≈1.03 步/秒）；
             # ×1.2 / ×1.35 / ×1.6 三档可配（whale.walkRate，1.6 = 悠闲/深夜档）。
             # tool 状态是"慢速 walk"，在正常步频上再慢 5%（不是过度拖慢）。
@@ -8242,6 +8369,12 @@ class PetWindow(QWidget):
         if not idle:
             # 这段时间归"触发类"的话：闲着冒话先憋着（见 _maybe_idle_action 里那个判断）
             self._trigger_until = self._secs() + seconds
+        # 对话动画化：气泡 kind → 微动作（点头/歪头/害羞/摆手），动作先起、气泡同帧到
+        try:
+            _kind = getattr(self, "_bridge_bubble_kind", "") or ("inner" if inner else "")
+            self._anim_dialog(_kind)
+        except Exception:
+            pass
         self.update()
 
     def _queue_behind(self):
@@ -11394,11 +11527,11 @@ def main():
                 # 鲸鱼娘 2D 帧动画：DSH 状态 → 动作（thinking/tool/waiting/done/error 等）
                 _whale_map = {
                     "thinking": "think",
-                    "tool": "walk",
+                    "tool": "hum",          # tool 不再 walk：站桩哼歌（生产热补丁收编）
                     "waiting_approval": "waitPeek",
                     "approval": "waitPeek",
                     "waiting_input": "waitPeek",
-                    "done": "cheer",
+                    "done": "celebrate",    # 庆祝由 _anim_celebrate 3 阶段编排
                     "error": "errorSequence",
                     "cry": "cry",
                     "disconnected": "lonelySit",
@@ -11406,7 +11539,8 @@ def main():
                 _wh = getattr(w, "_whale", None)
                 _mapped = _whale_map.get(_name) if _name else None
                 if _name in ("idle", "background", ""):
-                    w._whale_clear_force()
+                    if getattr(w, "_celebration", None) is None:
+                        w._whale_clear_force()
                 elif _wh is not None and _mapped and _wh.has(_mapped):
                     try:
                         _gagged = bool(w._whale_gag_ok())
@@ -11422,6 +11556,39 @@ def main():
                         w._whale_clear_force()
                         if _wh.cur != "idleBase":
                             _wh.play("idleBase")
+                # 完成：庆祝 3 阶段（跳起→落地→举双手/转圈 + 爱心 FX + 气泡）
+                if _name == "done":
+                    try:
+                        w._anim_celebrate()
+                    except Exception:
+                        pass
+                # 让 DSH 联动"看得见"：状态切换一句短气泡（45s 冷却；深夜/免打扰闭嘴）——生产热补丁收编
+                try:
+                    _now2 = time.time()
+                    _last_name = str(getattr(w, "_bridge_state_last", "") or "")
+                    if _name != _last_name:
+                        w._bridge_state_last = _name
+                        _lines = {
+                            "thinking": "在想呢…",
+                            "tool": "看到你在跑命令啦",
+                            "done": "干完啦！",
+                            "waiting_input": "我在等你～",
+                            "error": "这次没成…",
+                        }
+                        _txt2 = _lines.get(_name) or ""
+                        if _txt2:
+                            _allowed = True
+                            try:
+                                _allowed = bool(w._whale_gag_ok()) or _name in ("error", "waiting_input")
+                            except Exception:
+                                _allowed = True
+                            _last_at = float(getattr(w, "_bridge_say_at_" + _name, 0.0) or 0.0)
+                            if _allowed and (_now2 - _last_at) >= 45.0:
+                                setattr(w, "_bridge_say_at_" + _name, _now2)
+                                w._bridge_bubble_kind = "report" if _name in ("tool", "done") else ("remind" if _name in ("error", "waiting_input") else "inner")
+                                w.say(_txt2, seconds=3.2, queue=True)
+                except Exception:
+                    pass
                 if _name in ("approval", "waiting_approval"):
                     w._bridge_bubble_kind = "remind"
                     w.say("我在等你的确认哦", seconds=8.0, queue=True)

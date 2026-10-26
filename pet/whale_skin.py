@@ -14,11 +14,14 @@ import json
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPainter, QPixmap
 
 NOMINAL_CONTENT_H = 263.0   # 标称内容高度（manifest/STATE-MAP 定义）
 FOOT_ANCHOR_Y = 295.0       # 脚底锚点 y（画布 320）
 DEFAULT_CANVAS = 320
+# 渲染平滑（窗口期 task-131）：帧间/动作切换交叉淡化 + 亚像素整帧变换（由桌宠.py 叠加）
+CROSSFADE_MS = 100          # 帧间淡化（验收 80–150ms）
+ACTION_FADE_MS = 90         # play() 切换动作时的短淡化
 
 
 class WhaleGirlSkin:
@@ -38,6 +41,14 @@ class WhaleGirlSkin:
         self.idx = 0
         self.acc = 0.0
         self.finished = False
+        # 渲染平滑：动画时钟、上一显示帧、淡化进度、缩放帧缓存
+        self.clock_ms = 0.0
+        self.prev_path = None
+        self.fade_start_ms = 0.0
+        self.fade_ms = float(CROSSFADE_MS)
+        self.action_fade_ms = float(ACTION_FADE_MS)
+        self.fade_enabled = True
+        self._fade_cache = {}
         try:
             self._load()
             self.ok = True
@@ -110,16 +121,55 @@ class WhaleGirlSkin:
     def has(self, name):
         return name in self._seq
 
+    def set_smooth(self, cfg=None):
+        """配置渲染平滑：crossfadeMs / actionFadeMs / enabled（缺省用常量）。"""
+        cfg = cfg if isinstance(cfg, dict) else {}
+        self.fade_enabled = bool(cfg.get('enabled', True))
+        try:
+            self.fade_ms = float(max(80.0, min(150.0, float(cfg.get('crossfadeMs', CROSSFADE_MS)))))
+        except (TypeError, ValueError):
+            self.fade_ms = float(CROSSFADE_MS)
+        try:
+            self.action_fade_ms = float(max(80.0, min(150.0, float(cfg.get('actionFadeMs', ACTION_FADE_MS)))))
+        except (TypeError, ValueError):
+            self.action_fade_ms = float(ACTION_FADE_MS)
+
+    def _start_fade(self, old_path, fade_ms):
+        if not self.fade_enabled or not old_path:
+            return
+        self.prev_path = old_path
+        self.fade_start_ms = self.clock_ms
+        self.fade_ms = max(60.0, float(fade_ms))
+        if len(self._fade_cache) > 64:
+            self._fade_cache.clear()
+
+    def fade_alpha(self):
+        """当前淡化进度（0=旧帧/旧动作，1=新）；无淡化返回 None。"""
+        if not self.prev_path or not self.fade_enabled:
+            return None
+        el = self.clock_ms - self.fade_start_ms
+        if el < 0 or el >= self.fade_ms or self.fade_ms <= 0:
+            self.prev_path = None
+            return None
+        a = max(0.0, min(1.0, el / self.fade_ms))
+        a = a * a * (3.0 - 2.0 * a)      # smoothstep
+        if a >= 0.999:
+            self.prev_path = None
+            return None
+        return a
+
     def play(self, name, restart=False):
-        """切换到指定动作；返回是否成功。"""
+        """切换到指定动作；返回是否成功。动作切换也走短交叉淡化，避免硬切。"""
         if name not in self._seq:
             return False
         if name == self.cur and not restart:
             return True
+        old_path = self.frame_path()
         self.cur = name
         self.idx = 0
         self.acc = 0.0
         self.finished = False
+        self._start_fade(old_path, self.action_fade_ms)
         return True
 
     def tick(self, ms):
@@ -127,6 +177,8 @@ class WhaleGirlSkin:
         seq = self._seq.get(self.cur)
         if not seq or self.finished:
             return
+        old_path = self.frame_path()
+        self.clock_ms += float(ms)
         self.acc += float(ms)
         guard = 0
         while self.acc >= seq[self.idx][1] and guard < 128:
@@ -141,6 +193,14 @@ class WhaleGirlSkin:
                 if self._hold.get(self.cur):
                     self.idx = len(seq) - 1
                 break
+        new_path = self.frame_path()
+        if new_path and old_path and new_path != old_path:
+            # 帧时长很短（如走路 45ms/帧）时按当前帧时长收短淡化，避免前后帧一直重叠发虚
+            try:
+                _dur = float(seq[self.idx][1])
+            except Exception:
+                _dur = float(self.fade_ms)
+            self._start_fade(old_path, min(self.fade_ms, max(30.0, _dur * 0.55)))
 
     def frame_path(self):
         seq = self._seq.get(self.cur)
@@ -161,15 +221,7 @@ class WhaleGirlSkin:
             total += float(ms)
         return (len(seq), total / len(seq), total)
 
-    def pixmap(self, display_h):
-        """取当前帧，按“显示内容身高 display_h”缩放；画布等比缩放为 320*display_h/263。"""
-        path = self.frame_path()
-        if not path:
-            return None
-        try:
-            h = max(48, int(display_h))
-        except (TypeError, ValueError):
-            h = 184
+    def _scaled_pix(self, path, h):
         key = (path, h)
         pix = self._pix.get(key)
         if pix is not None:
@@ -185,6 +237,44 @@ class WhaleGirlSkin:
             self._pix.clear()
         self._pix[key] = pix
         return pix
+
+    def pixmap(self, display_h):
+        """取当前帧（淡化中返回前后帧 alpha 混合），按“显示内容身高 display_h”缩放。"""
+        path = self.frame_path()
+        if not path:
+            return None
+        try:
+            h = max(48, int(display_h))
+        except (TypeError, ValueError):
+            h = 184
+        cur = self._scaled_pix(path, h)
+        if cur is None:
+            return None
+        alpha = self.fade_alpha()
+        if alpha is None or not self.prev_path:
+            return cur
+        prev = self._scaled_pix(self.prev_path, h)
+        if prev is None or prev.size() != cur.size():
+            return cur
+        step = int(alpha * 16)
+        ckey = (self.prev_path, path, h, step)
+        out = self._fade_cache.get(ckey)
+        if out is not None:
+            return out
+        out = QPixmap(cur.size())
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        try:
+            p.setOpacity(1.0 - alpha)
+            p.drawPixmap(0, 0, prev)
+            p.setOpacity(alpha)
+            p.drawPixmap(0, 0, cur)
+        finally:
+            p.end()
+        if len(self._fade_cache) > 64:
+            self._fade_cache.clear()
+        self._fade_cache[ckey] = out
+        return out
 
     def foot_ratio(self):
         """脚底锚点在帧画布高度中的比例（绘制时用于把脚底对齐到落地点）。"""
