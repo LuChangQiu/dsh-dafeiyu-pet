@@ -85,6 +85,8 @@ Invoke-Step "unit: llm-lines" {
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines（kind→池/夜间/回退原因/统计/接线契约）"; return }
   & node plugin/server/test/speech-requests.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: speech-requests（队列映射/上下文白名单/去重）"; return }
+  & node plugin/server/test/action-director.test.mjs
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: action-director（JSON 解析/白名单/边界/兜底/perf payload）"; return }
   & node plugin/server/test/llm-lines-mock.test.mjs
   if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: llm-lines mock（成功/回退/点击互动/被夸/文件队列）"; return }
 }

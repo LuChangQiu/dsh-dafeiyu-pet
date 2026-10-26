@@ -44,6 +44,36 @@ const makeLlm = (mode = 'ok') => {
         await new Promise((r) => setTimeout(r, 800))
         throw Object.assign(new Error('aborted'), { code: 'ABORT_ERR' })
       }
+      if (mode === 'garbage') {
+        yield { type: 'text-delta', text: '这不是 JSON，只是一句普通台词' }
+        yield { type: 'finish' }
+        return
+      }
+      if (mode === 'sameDirector') {
+        yield {
+          type: 'text-delta',
+          text: JSON.stringify({
+            text: '重复台词甲',
+            beats: [
+              { act: 'think', ms: 300 },
+              { act: 'hum', ms: 300 }
+            ]
+          })
+        }
+        yield { type: 'finish' }
+        return
+      }
+      if (mode === 'director') {
+        const actSets = [
+          ['think', 'hum'],
+          ['wave', 'peek'],
+          ['stretch', 'think']
+        ]
+        const beats = actSets[i % actSets.length].map((act) => ({ act, ms: 300 }))
+        yield { type: 'text-delta', text: JSON.stringify({ text: LINES[i++ % LINES.length], beats, intensity: 1.1 }) }
+        yield { type: 'finish' }
+        return
+      }
       yield { type: 'text-delta', text: LINES[i++ % LINES.length] }
       yield { type: 'finish' }
     }
@@ -76,6 +106,7 @@ const baseConfig = (dir, llmMode = 'ok', extra = {}) => ({
   },
   actions: { enabled: false },
   whaleActs: { enabled: false },
+  actionDirector: { enabled: false, channel: 'act' },
   statusChannel: { enabled: true, heartbeatMs: 50, petPush: false },
   morning: { enabled: false, hour: 8, minute: 0 },
   sleep: { enabled: false, hour: 23, minute: 30 },
@@ -202,6 +233,94 @@ await run('pet speech-request queue: llm failure → pool reply with fallbackRea
     const log = readLog(path.join(dir, 'bridge.log'))
     assert.ok(ok, 'expected praise fallback; stats=' + JSON.stringify(readStats(dir)))
     assert.ok(/speech reply .*"source":"pool".*"fallbackReason":"(empty|llm-unavailable|timeout|invalid)"/.test(log))
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await run('action director: speech-request click → perf plan + acts executed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-director-ok-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('director') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    mod.apply(
+      ctx,
+      baseConfig(dir, 'director', { actionDirector: { enabled: true, channel: 'perf' }, actions: { enabled: true } })
+    )
+    fs.writeFileSync(queueFile, JSON.stringify([{ id: 'd1', kind: 'click', context: { phase: 'click' } }]), 'utf8')
+    const ok = await waitFor(() => {
+      const log = readLog(path.join(dir, 'bridge.log'))
+      return (
+        /perf plan .*"kind":"clickLine"/.test(log) &&
+        /"beats":2/.test(log) &&
+        /perf send .*"kind":"clickLine"/.test(log) &&
+        /perf immediate .*"kind":"click"/.test(log)
+      )
+    }, 5000)
+    const log = readLog(path.join(dir, 'bridge.log'))
+    assert.ok(ok, 'expected perf plan + perf send + immediate; log tail=' + log.slice(-1500))
+    assert.equal(/perf plan rejected/.test(log), false)
+    const stats = readStats(dir)
+    assert.ok(stats && stats.byKind.clickLine && stats.byKind.clickLine.llm >= 1, JSON.stringify(stats))
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await run('action director: invalid JSON → rejected + single-beat fallback plan', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-director-fb-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('garbage') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    mod.apply(
+      ctx,
+      baseConfig(dir, 'garbage', { actionDirector: { enabled: true, channel: 'perf' }, actions: { enabled: true } })
+    )
+    fs.writeFileSync(queueFile, JSON.stringify([{ id: 'd2', kind: 'click', context: {} }]), 'utf8')
+    const ok = await waitFor(() => {
+      const log = readLog(path.join(dir, 'bridge.log'))
+      return /perf plan rejected .*"reason":"invalid-json"/.test(log) && /perf plan .*"fallback":true/.test(log)
+    }, 5000)
+    const log = readLog(path.join(dir, 'bridge.log'))
+    assert.ok(ok, 'expected plan rejected + fallback plan; log tail=' + log.slice(-1500))
+    assert.ok(/speech reply .*"source":"(llm|pool)"/.test(log))
+    ctx._dispose()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await run('V5 regression: 5 consecutive same LLM line → dedupe/norepeat', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-dedupe5-'))
+  const ctx = createMockCtx(createMockServices({ llm: makeLlm('sameDirector') }))
+  const queueFile = path.join(dir, 'speech-requests.json')
+  try {
+    mod.apply(
+      ctx,
+      baseConfig(dir, 'sameDirector', {
+        actionDirector: { enabled: true, channel: 'perf' },
+        actions: { enabled: true }
+      })
+    )
+    const items = Array.from({ length: 5 }, (_, i) => ({
+      id: 'v5-' + i,
+      kind: 'celebrate',
+      context: { phase: 'celebrate' }
+    }))
+    fs.writeFileSync(queueFile, JSON.stringify(items), 'utf8')
+    const done = await waitFor(() => {
+      const st = readStats(dir)
+      return !!(st && st.attempts >= 5 && st.fallbackReasons && st.fallbackReasons.duplicate >= 1)
+    }, 8000)
+    const log = readLog(path.join(dir, 'bridge.log'))
+    const sameTextTimes = log.split('\n').filter((l) => l.includes('llm line') && l.includes('重复台词甲')).length
+    const st = readStats(dir)
+    assert.ok(done, 'expected 5 attempts + duplicate fallback; stats=' + JSON.stringify(st))
+    assert.ok(sameTextTimes <= 1, 'same LLM line logged ' + sameTextTimes + ' times')
+    assert.ok(/llm duplicate retry/.test(log), 'expected llm duplicate retry')
+    assert.ok(st.byKind.turnEnd.llm <= 1, JSON.stringify(st.byKind))
     ctx._dispose()
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })

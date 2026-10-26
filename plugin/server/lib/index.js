@@ -63,6 +63,14 @@ import {
   contextPrompt,
   buildSayLine
 } from './speech-requests.js'
+import {
+  isDirectorKind,
+  buildDirectorSuffix,
+  parseDirectorPlan,
+  fallbackPlan,
+  perfPayload,
+  CLIP_NAMES
+} from './action-director.js'
 
 const PIPE = '\\\\.\\pipe\\dafeiyu-pet-whale-single-instance'
 
@@ -224,6 +232,9 @@ const DEFAULTS = {
   logLevel: 'info',
   stateFile: '', // P3: read-only status snapshot for pet-bridge-ui (state.json)
   uiConfigFile: '', // P3: UI-managed config sidecar (whitelist applied without reload)
+  // task-133：pet 台词请求队列 + LLM 动作导演（默认开；无文件/无动作时安静跳过）
+  speechRequests: { enabled: true, file: '', pollMs: 250, maxPerTick: 4, maxItems: 50 },
+  actionDirector: { enabled: true, channel: 'perf', minGapMs: 1200, maxPerMinute: 10, maxBeats: 4 },
 
   // P3 (A+B): animation feel / activity level / idle skit
   activity: 'normal', // quiet / normal / lively
@@ -476,27 +487,35 @@ export function apply(ctx, rawConfig) {
       fs.writeFileSync(cfg.historyFile, JSON.stringify(hist.slice(-300)), 'utf8')
     } catch {}
   }
+  let lastSpokenText = ''
+  let lastTurnEndSpokeAt = 0
   const isDuplicate = (text) => {
     const now = Date.now()
-    return hist.some((x) => x.text === text && now - x.at < 7 * 86400e3)
+    const t = String(text || '')
+    if (!t) return false
+    if (t === lastSpokenText) return true
+    if (hist.some((x) => x.text === t && now - x.at < 7 * 86400e3)) return true
     try {
-      const big = (t) => {
-        const c = String(t).replace(/\s/g, '')
+      const big = (x) => {
+        const c = String(x).replace(/\s/g, '')
         const set = new Set()
         for (let i = 0; i < c.length - 1; i++) set.add(c.slice(i, i + 2))
         return set
       }
-      const a = big(text)
+      const a = big(t)
+      if (!a.size) return false
       const sim = (braw) => {
         const b = big(braw)
-        if (!a.size || !b.size) return 0
+        if (!b.size) return 0
         let inter = 0
         for (const x of a) if (b.has(x)) inter += 1
         return inter / (a.size + b.size - inter)
       }
       const win = hist.slice(-(cfg.llm.lines?.dedupeWindow || 20))
-      if (win.some((x) => sim(x.text) > (cfg.llm.lines?.similarityMax || 0.8))) return true
-    } catch {}
+      return win.some((x) => sim(x.text) > (cfg.llm.lines?.similarityMax || 0.8))
+    } catch {
+      return false
+    }
   }
   const rememberLine = (text, source) => {
     hist.push({ text, at: Date.now() })
@@ -727,12 +746,75 @@ export function apply(ctx, rawConfig) {
     } catch {}
     if (!llmAvailable) return fallback('llm-unavailable')
     kindCalls.set(kind, (kindCalls.get(kind) || 0) + 1)
-    const { text: raw, latencyMs, tokens } = await callLlm(buildPrompt(kind, s, extra), kind)
+    const director =
+      isDirectorKind(kind) && cfg.actionDirector?.enabled !== false && whaleWhitelist && whaleWhitelist.size > 0
+    let prompt = buildPrompt(kind, s, extra)
+    if (director)
+      prompt += buildDirectorSuffix({
+        acts: [...whaleWhitelist],
+        clips: CLIP_NAMES,
+        maxBeats: cfg.actionDirector?.maxBeats
+      })
+    const { text: raw, latencyMs, tokens } = await callLlm(prompt, kind)
+    let plan = null
+    if (director) {
+      const parsed = parseDirectorPlan(raw, {
+        acts: whaleWhitelist,
+        clips: CLIP_NAMES,
+        maxBeats: cfg.actionDirector?.maxBeats,
+        maxChars: cfg.llm.maxChars,
+        allowDigits: kind === 'report'
+      })
+      if (!parsed.ok) {
+        log('info', 'perf plan rejected', { kind, reason: parsed.reason })
+        // 模型没按 JSON 输出但文本本身可用 → 保留 LLM 台词 + 单动作兜底（避免退回固定池）
+        const plain = validateLine(raw, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
+        if (plain && !isDuplicate(plain)) {
+          llmStats.record({ kind, source: 'llm', latencyMs, tokens })
+          log('info', 'llm line', {
+            kind,
+            source: 'llm',
+            latencyMs,
+            tokens,
+            costToday: Number(llmDay.cost.toFixed(4)),
+            planFallback: true
+          })
+          logLlmStatsIfDue()
+          return { text: plain, source: 'llm', latencyMs, tokens, plan: fallbackPlan(kind, parsed.reason) }
+        }
+        const fb = fallback('invalid-plan')
+        fb.plan = fallbackPlan(kind, parsed.reason)
+        return fb
+      }
+      plan = parsed.plan
+      const line = validateLine(plan.text, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
+      if (!line || isDuplicate(line) || line === lastSpokenText) {
+        if (line && linesCfg.retryOnDup !== false && !extra.__dupRetry) {
+          log('info', 'llm duplicate retry', { kind })
+          return generate(kind, s, { ...extra, __dupRetry: true })
+        }
+        const fb = fallback(line ? 'duplicate' : 'invalid')
+        fb.plan = fallbackPlan(kind, line ? 'duplicate' : 'invalid')
+        return fb
+      }
+      llmStats.record({ kind, source: 'llm', latencyMs, tokens })
+      log('info', 'llm line', {
+        kind,
+        source: 'llm',
+        latencyMs,
+        tokens,
+        costToday: Number(llmDay.cost.toFixed(4)),
+        beats: plan.beats.length,
+        text: line
+      })
+      logLlmStatsIfDue()
+      return { text: line, source: 'llm', latencyMs, tokens, plan }
+    }
     const line = validateLine(raw, { allowDigits: kind === 'report', maxChars: cfg.llm.maxChars })
     if (!line && raw && kind === 'report')
       log('info', 'report too long/invalid -> fallback', { rawChars: String(raw).length, limit: cfg.llm.maxChars })
     if (!line || isDuplicate(line)) {
-      if (line && linesCfg.retryOnDup && !extra.__dupRetry) {
+      if (line && linesCfg.retryOnDup !== false && !extra.__dupRetry) {
         log('info', 'llm duplicate retry', { kind })
         return generate(kind, s, { ...extra, __dupRetry: true })
       }
@@ -745,7 +827,8 @@ export function apply(ctx, rawConfig) {
       source: 'llm',
       latencyMs,
       tokens,
-      costToday: Number(llmDay.cost.toFixed(4))
+      costToday: Number(llmDay.cost.toFixed(4)),
+      text: line
     })
     logLlmStatsIfDue()
     return { text: line, source: 'llm', latencyMs, tokens }
@@ -1478,6 +1561,7 @@ export function apply(ctx, rawConfig) {
           tokens: g.tokens,
           fallbackReason: g.fallbackReason
         })
+        if (g.plan) runDirectorPlan(speechKind, g.plan, t)
       })
     }
     return 'ok'
@@ -2604,10 +2688,11 @@ export function apply(ctx, rawConfig) {
       return false
     }
     if (!opts.force && !canSpeak(kind, opts.urgent, opts)) return false
-    if (recentLines.some((x) => x.text === t)) {
-      log('debug', 'skip throttle: duplicate', { kind })
+    if (t === lastSpokenText || recentLines.some((x) => x.text === t)) {
+      log('info', 'skip throttle: consecutive-duplicate', { kind })
       return false
     }
+    lastSpokenText = t
     remember(kind, t)
     rememberLine(t, opts.source || 'pool')
     say(t, kind, opts)
@@ -2958,9 +3043,12 @@ export function apply(ctx, rawConfig) {
       lastLongStepAt = 0
       if (cfg.events.turnEnd && canSpeak(ok ? 'turnEnd' : 'turnEndBad')) {
         const kind = ok ? 'turnEnd' : 'turnEndBad'
-        void generate(kind, s, { outcome: ok ? '成功' : '没跑完', durBucket }).then((g) =>
-          speak(kind, g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })
-        )
+        void generate(kind, s, { outcome: ok ? '成功' : '没跑完', durBucket }).then((g) => {
+          if (speak(kind, g.text, { force: true, source: g.source, latencyMs: g.latencyMs, tokens: g.tokens })) {
+            if (kind === 'turnEnd') lastTurnEndSpokeAt = Date.now()
+            if (g.plan) runDirectorPlan(kind, g.plan, g.text)
+          }
+        })
         // pregenerate next turn's opening line while idle
         if (cfg.llm.pregen && cfg.llm.enabled && !refreshLowFootprint()) {
           void generate('turnStart', s).then((g) => {
@@ -3075,7 +3163,8 @@ export function apply(ctx, rawConfig) {
             source: g.source,
             style: 'remind',
             latencyMs: g.latencyMs,
-            tokens: g.tokens
+            tokens: g.tokens,
+            text: t
           })
         )
         writeReceipt()
@@ -3086,6 +3175,71 @@ export function apply(ctx, rawConfig) {
   }
 
   ctx.on('session/event', onEvent)
+
+  // ---------- task-133：动作导演执行（act: 顺序播放 / perf:<json> 通道） ----------
+  const directorState = { lastAt: 0, stamps: [] }
+  const runDirectorPlan = (kind, plan, text = '') => {
+    try {
+      if (!plan || !Array.isArray(plan.beats) || !plan.beats.length) return false
+      if (cfg.actions?.enabled === false) {
+        log('debug', 'perf plan skipped: actions-off', { kind })
+        return false
+      }
+      const nowMs = Date.now()
+      const ad = cfg.actionDirector || {}
+      if (nowMs - directorState.lastAt < (ad.minGapMs || 1200)) {
+        log('debug', 'perf plan skipped: minGap', { kind })
+        return false
+      }
+      directorState.stamps = directorState.stamps.filter((t) => nowMs - t < 60000)
+      if (directorState.stamps.length >= (ad.maxPerMinute || 10)) {
+        log('debug', 'perf plan skipped: perMinute', { kind })
+        return false
+      }
+      directorState.lastAt = nowMs
+      directorState.stamps.push(nowMs)
+      const channel = ad.channel === 'perf' ? 'perf' : 'act'
+      const priority =
+        ad.priorityByKind?.[kind] ||
+        (['clickLine', 'doubleClickLine', 'praise', 'interactHead', 'interactFeed', 'interactCome'].includes(kind)
+          ? 'high'
+          : kind === 'selfTalk'
+            ? 'low'
+            : 'normal')
+      log('info', 'perf plan', {
+        kind,
+        channel,
+        beats: plan.beats.length,
+        acts: plan.beats.map((b) => b.act),
+        fallback: plan.fallback === true
+      })
+      if (channel === 'perf') {
+        const line = 'perf:' + perfPayload(plan, { kind, text })
+        send(line, { force: true })
+        log('info', 'perf send', { kind, beats: plan.beats.length, bytes: line.length })
+        return true
+      }
+      let delay = 0
+      for (const beat of plan.beats) {
+        const ms = Math.max(200, Math.min(3000, Number(beat.ms) || 800))
+        setTimeout(() => {
+          try {
+            send('act:' + String(beat.act), { force: true })
+            log('info', 'perf act', { kind, act: String(beat.act), ms })
+          } catch {}
+        }, delay)
+        delay += ms
+      }
+      setTimeout(() => {
+        try {
+          send('act:idleBase', { force: true })
+        } catch {}
+      }, delay + 150)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   // ---------- task-133：pet 台词请求队列（文件上行；pet 写，插件 LLM 后 say: 推回） ----------
   const speechRequestsCfg = cfg.speechRequests || {}
@@ -3107,6 +3261,34 @@ export function apply(ctx, rawConfig) {
       speechProcessedOrder.push(id)
     }
     while (speechProcessedOrder.length > 200) speechProcessed.delete(speechProcessedOrder.shift())
+  }
+  // task-133：点击/交互类延迟 <250ms —— 收到请求先立即播放规则动作（不等待 LLM），LLM 台词/后续拍异步补
+  const QUICK_ACTION_BY_KIND = {
+    click: 'pat',
+    doubleClick: 'waitPeek',
+    praise: 'tsundere',
+    pat: 'pat',
+    head: 'pat',
+    feed: 'eat',
+    come: 'waitPeek',
+    sneakCaught: 'caught',
+    stealCaught: 'caught',
+    celebrate: 'cheer'
+  }
+  const quickInteractionAction = (petKind) => {
+    try {
+      if (cfg.actions?.enabled === false) return false
+      const act = QUICK_ACTION_BY_KIND[petKind]
+      if (!act) return false
+      const plan = { text: '', beats: [{ act, ms: 600, transitionMs: 120 }], intensity: 1, interrupt: true }
+      const channel = cfg.actionDirector?.channel === 'act' ? 'act' : 'perf'
+      if (channel === 'perf') send('perf:' + perfPayload(plan, { kind: petKind, priority: 'high' }), { force: true })
+      else send('act:' + act, { force: true })
+      log('info', 'perf immediate', { kind: String(petKind).slice(0, 40), act, channel, latencyMs: 0 })
+      return true
+    } catch {
+      return false
+    }
   }
   const pollSpeechRequests = async () => {
     if (!speechFile || speechQueueState.busy) return
@@ -3137,11 +3319,17 @@ export function apply(ctx, rawConfig) {
     speechQueueState.busy = true
     try {
       for (const req of fresh) {
+        if (req.kind === 'celebrate' && Date.now() - lastTurnEndSpokeAt < 4000) {
+          log('info', 'speech request skipped', { kind: 'celebrate', reason: 'turnEnd-recent' })
+          markSpeechProcessed([req.id])
+          continue
+        }
         const llmKind = kindToLlmKind(req.kind)
         if (!llmKind) {
           log('info', 'speech request skipped', { kind: String(req.kind).slice(0, 40), reason: 'unknown-kind' })
           continue
         }
+        quickInteractionAction(req.kind)
         try {
           const g = await generate(
             llmKind,
@@ -3158,14 +3346,18 @@ export function apply(ctx, rawConfig) {
             continue
           }
           send(buildSayLine(t), { force: true })
+          lastSpokenText = t
+          remember(llmKind, t)
           rememberLine(t, 'speech-request')
+          if (g.plan) runDirectorPlan(llmKind, g.plan, t)
           log('info', 'speech reply', {
             kind: String(req.kind).slice(0, 40),
             llmKind,
             source: g.source,
             fallbackReason: g.fallbackReason || null,
             latencyMs: g.latencyMs,
-            tokens: g.tokens
+            tokens: g.tokens,
+            text: t
           })
         } catch (err) {
           log('warn', 'speech request error', {
@@ -3176,6 +3368,11 @@ export function apply(ctx, rawConfig) {
       }
     } finally {
       markSpeechProcessed(ids)
+      // 若本 tick 因 maxPerTick 被截断，强制下个 tick 重读文件（否则 stat 不变会漏掉剩余请求）
+      if (fresh.length < parsed.requests.length) {
+        speechQueueState.lastSize = -1
+        speechQueueState.lastMtime = 0
+      }
       speechQueueState.busy = false
     }
   }
@@ -3324,6 +3521,7 @@ export function apply(ctx, rawConfig) {
           log('info', 'idle skit', { source: g.source, kind: 'selfTalk' })
           rememberLine(t, 'idle')
           send('inner:' + t)
+          if (g.plan) runDirectorPlan('selfTalk', g.plan, t)
           scheduleNextSkit()
         })
       }

@@ -138,3 +138,30 @@
 - pet 侧（pet-dev）：收到 say 取消对应 pending 兜底；**仅故障时**本地兜底（管道健康等 4–5s、离线 1.5s），正常时不得抢答固定池。
 - 测试：`speech-requests.test.mjs` **6/6**（映射/上下文白名单/解析容错/去重/限流/文本清洗）；`llm-lines-mock.test.mjs` **5/5**（LLM 成功/失败回退/点击/被夸/文件队列成功+失败）。
 - 新增文件：`plugin/server/lib/speech-requests.js`；`package.json test:llm-lines`；preflight `unit: llm-lines`（含 speech 测试）。
+
+
+---
+
+## 10. V5 复读修复（done 连续同句）
+
+**现象**：V5 连续 5 次 done 气泡出现相同/近似句「（摆摆尾巴）头一轮干完啦，我趴着缓会儿。」。
+
+**根因（代码级）**：
+1. `isDuplicate()` 里 `return hist.some(...)` 写在相似度逻辑之前 → **相似度去重是死代码**（永远不执行），只挡完全相同的 7 天历史；LLM 每次微调一两个字就能绕过 → 用户看到 5 条近似句。
+2. pet done 路径与插件 turnEnd 路径**双发**：pet `_anim_celebrate` 发 `celebrate` speech-request，插件 turnEnd 也走 LLM 气泡；两条都在，去掉重后可更明显。
+3. 配置浅合并：若 patch/测试显式给 `llm.lines` 而没带 `retryOnDup`，会覆盖丢失默认 true → 重复时不再重试。
+
+**修复**：
+- 重写 `isDuplicate`：精确（7 天）→ 相似度（bigram Jaccard >0.8，窗口 20）→ **连续同句**全局 `lastSpokenText` 三重拦截；不可达代码已删。
+- 重复时 `retryOnDup !== false` 重试一次；仍重复 → 池兜底 `fallbackReason:'duplicate'`（不再连续同句）。
+- `llm.lines` 深层默认修复：`retryOnDup` 在 generate 内用 `!== false` 判断，配置浅合并也不会丢。
+- done 双发：插件 turnEnd 已发声后 4s 内，pet 的 `celebrate` 请求跳过（`speech request skipped reason:'turnEnd-recent'`），避免双气泡。
+- 回归测试（mock）：连续 5 次同一 LLM plan/台词 → 同句 `llm line` 仅 1 次、`duplicate` 兜底 ≥1、retry 日志出现；8/8 mock 全绿。
+
+## 11. LLM 动作导演（task-133 最高优先级）
+
+- 契约文档：`verify/LLM-ACTION-DIRECTOR.md`（v2）；词表 A（28 acts）∪ B（MIT 50 clips，清单 `docs/generated/action-clips.json`）。
+- 统一 `perf:<json>`：`{v,kind,source,priority,text,intensity,interrupt,beats:[{act,ms,intensity?,transitionMs?}],onEnd:'idle'}`；A→act、B→clip，pet 按身体解析。
+- 点击 <250ms：收到请求**立即**规则动作（`perf immediate`，priority high），LLM 台词/后续拍异步补；idle 低优先级；turnEnd normal。
+- 插件 `channel:'perf'` 默认（`act` 兼容旧 pet）；非法/超时 → 单动作 `think` 兜底；`perf plan/rejected/send/immediate` 日志。
+- 测试：`action-director 13/13` + mock `8/8`；`docs/generated/action-clips.json` 50 条供 pet-dev。
