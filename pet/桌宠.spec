@@ -5,7 +5,17 @@ import PySide6
 import shiboken6
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('sprites', 'sprites'), ('assets', 'assets')]
+# SPECPATH 由 PyInstaller 注入 = 本 spec 所在目录（<repo>/pet）；据此推算仓库根，
+# 避免写死绝对路径。鲸鱼娘资产在仓库根 assets/whale-girl（不在 pet/assets），
+# 必须显式加入 datas，否则发行版只有 classic 皮肤（P0：见 verify/RELEASE-BUILD-SMOKE.md）。
+_REPO_ROOT = os.path.dirname(os.path.abspath(SPECPATH))
+_WHALE_GIRL = os.path.join(_REPO_ROOT, 'assets', 'whale-girl')
+if not os.path.isfile(os.path.join(_WHALE_GIRL, 'manifest.json')):
+    raise SystemExit('missing whale-girl assets: ' + _WHALE_GIRL)
+
+# 注意：PyInstaller onedir 的 datas 统一落进 _internal/，因此鲸鱼娘最终路径为
+# <app>/_internal/assets/whale-girl/；构建脚本会校验该目录并在 zip 中校验单份资产。
+datas = [('sprites', 'sprites'), ('assets', 'assets'), (_WHALE_GIRL, 'assets/whale-girl')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('requests')
