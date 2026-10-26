@@ -301,7 +301,8 @@ SIZE_LEVELS = {"迷你": 0.27, "特小": 0.36, "小": 0.54, "中": 0.72, "大": 
 SIZE_REF = SIZE_LEVELS["大"]      # 滑块上的 100% = 这一档（340 * 0.9 = 306px）
 # 无级调节的范围：20% ~ 150%（原来只有 30% ~ 120%）
 SIZE_MIN = 0.18
-SIZE_MAX = 1.35
+SIZE_MAX = 1.35                 # 硬上限（任何配置都不允许超过）
+SIZE_MAX_DEFAULT = 0.35         # 用户偏好默认（Lead 2026-10-26：生产 cap=0.35，防"又变大"）
 SIZE_DEFAULT = SIZE_LEVELS["中"]
 
 
@@ -4088,6 +4089,7 @@ class PetWindow(QWidget):
             # 鲸鱼娘 2D 帧动画皮肤（素材：codex-deepseek-pet；资产缺失自动回退 classic）
             "whale": {
                 "on": True,
+                "maxSize": 0.35,        # 用户偏好：最大显示尺寸（0.35 ≈ 生产上限；硬上限仍 1.35）
             },
             # 失联休眠（task-77）：DSH 长时间没消息 → 离线打盹；默认不擅自退出（Agent 安全）
             "lifecycle": {
@@ -4192,6 +4194,12 @@ class PetWindow(QWidget):
                                                         and not self._has_sprite("挂件")):
             self.skin = SKIN_PET
 
+        # 用户偏好：最大显示尺寸（生产默认 0.35；config.whale.maxSize 可调，向上不超硬上限）
+        try:
+            _wmax = float((self.cfg.get("whale") or {}).get("maxSize", SIZE_MAX_DEFAULT))
+        except (TypeError, ValueError):
+            _wmax = SIZE_MAX_DEFAULT
+        self.max_size = max(SIZE_MIN, min(SIZE_MAX, _wmax))
         self.cfg["size"] = self._clamp_size(self.cfg["size"])
         self.cur_h = int(340 * self.cfg["size"])
         # 老配置里存的是无级调节调出来的高度（不在五档上）时，得把那个高度的精灵补上，
@@ -5938,14 +5946,14 @@ class PetWindow(QWidget):
                     self.sprites[(key, h)] = pix
         self.widget_skin_ok = self._has_sprite("挂件")
 
-    @staticmethod
-    def _clamp_size(mult):
-        """把大小倍率收进允许范围（老配置里可能存着奇怪的值）。"""
+    def _clamp_size(self, mult):
+        """把大小倍率收进允许范围（上限 = 用户偏好 maxSize，默认 0.35）。"""
         try:
             mult = float(mult)
         except (TypeError, ValueError):
             mult = SIZE_DEFAULT
-        return max(SIZE_MIN, min(SIZE_MAX, mult))
+        _hi = getattr(self, "max_size", SIZE_MAX_DEFAULT)
+        return max(SIZE_MIN, min(_hi, mult))
 
     def _ensure_sprites(self, h):
         """把某个高度的精灵补进 self.sprites（已经有了就跳过）。
@@ -9323,7 +9331,7 @@ class PetWindow(QWidget):
             "size_percent": size_percent,
             "size_from_percent": size_from_percent,
             "SIZE_MIN": SIZE_MIN,
-            "SIZE_MAX": SIZE_MAX,
+            "SIZE_MAX": getattr(self, "max_size", SIZE_MAX_DEFAULT),
             "LYRIC_OFFSET_LEVELS": LYRIC_OFFSET_LEVELS,
             "DOUBLE_CLICK_CHOICES": DOUBLE_CLICK_CHOICES,
             "PEAK_TEXT_STYLES": PEAK_TEXT_STYLES,
@@ -10835,11 +10843,11 @@ class PetWindow(QWidget):
         cur = size_percent(self.cfg.get("size", SIZE_DEFAULT))
         self._slider_dialog(
             "大小（无级调节）",
-            f"拖动滑块无级调大小（{size_percent(SIZE_MIN)}% ~ {size_percent(SIZE_MAX)}%，"
+            f"拖动滑块无级调大小（{size_percent(SIZE_MIN)}% ~ {size_percent(getattr(self, 'max_size', SIZE_MAX_DEFAULT))}%，"
             "100% 就是「大」那一档那么大）：拖着的时候它当场变大变小，"
             "而且是原地缩放（脚底和中心不动，不会满屏乱窜）；松手就记住，"
             "菜单里的「迷你 / 特小 / 小 / 中 / 大」五档照旧点一下就到。",
-            size_percent(SIZE_MIN), size_percent(SIZE_MAX), cur,
+            size_percent(SIZE_MIN), size_percent(getattr(self, "max_size", SIZE_MAX_DEFAULT)), cur,
             lambda pct: self.set_size(size_from_percent(pct)))
 
     def set_process_alerts(self, on):
