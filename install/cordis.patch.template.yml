@@ -12,7 +12,7 @@
         uiConfigFile: '{{PET_WORK}}\ui-config.json'
         balancePush: { enabled: true, everyNTurns: 5, startup: true }
         uiActionFile: '{{PET_WORK}}\ui-action.json'
-        lifecycle: { autoStart: true, startScript: '{{PET_WORK}}\tools\start-pet.ps1', bootstrapScript: '{{PET_WORK}}\tools\bootstrap-pet.ps1', releaseZipUrl: 'https://github.com/LuChangQiu/dsh-dafeiyu-pet/releases/download/pet-v1.1.5-dsh.1/dafeiyu-pet-win64-1.1.5-dsh.1.zip', bootstrapStateFile: '{{PET_WORK}}\bootstrap-status.json' }
+        lifecycle: { autoStart: true, startScript: '{{PET_WORK}}\tools\start-pet.ps1', bootstrapScript: '{{PET_WORK}}\tools\bootstrap-pet.ps1', releaseZipUrl: '', bootstrapStateFile: '{{PET_WORK}}\bootstrap-status.json' }
         petSettings: { size: 0.36, opacity: 1.0, mode: 'wander', lineFreq: '正常', passthrough: false, locked: false }
         poolsDir: '{{DSH_HOME}}\im\deliverables\pet-integration\implement\lines\pools'
         receiptFile: '{{PET_WORK}}\pet\daily_receipt.txt'
@@ -40,7 +40,7 @@
           maxTokens: 200
           temperature: 0.9
           maxCallsPerDay: 300
-          budgetPerDayYuan: 10.0
+          budgetPerDayYuan: 1.0
           costPer1kTokensYuan: 0.0015
           maxChars: 40
           pregen: true
@@ -67,9 +67,11 @@
         heartbeatFile: '{{PET_WORK}}\evidence\ui-route-mounted.json'
         petConfigFile: '{{PET_WORK}}\pet\config.json'
         actionFile: '{{PET_WORK}}\ui-action.json'
-        defaultbudgetPerDayYuan: 10.0
+        defaultBudgetPerDayYuan: 1.0
         defaultModel: 'deepseek-flash'
         defaultProvider: 'deepseek-official'
+
+
 
 
 

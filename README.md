@@ -47,7 +47,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 ## 发行包（B-only，免 Python）
 - 打包：`scripts\pet-build-release.ps1` → `dafeiyu-b-...-<ver>-<sha>.zip` + `.sha256`（B 50 WebM 构建时注入，不入 git）。
 - 分发：**内部小范围**，直接发 zip（解压即用）；不公开 Release（见 `PROVENANCE.md`）。
-- 当前候选交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`（最终 UTF-8 根级交付包另见 `release-build/b-only-final`；sha 以实际产物为准）。
+- 最终交付包：`dafeiyu-pet-win64-1.1.5-dsh.2-whalegirl-831002e.zip`，**276,704,799B / SHA256 `63D39B4C0430BE88DAB0E5B4826F75C61E4B484DD7F11041C4EA91789D64ECF7`**（解压即用；根级 INSTALL/selfcheck/许可齐全）。
 
 ## 上游更新
 不 fork、不建上游 git 历史：手动 diff 上游 `桌宠.py` 与 `pet/桌宠.py`，只移植必要修复（记忆点：`main()` 单实例块、`paintEvent`、`mouseReleaseEvent`、`_bubble_ink`、`say()`）。
@@ -59,6 +59,7 @@ docs/                    # 仓库布局、契约、扩展、测试、发布与�
 
 ## License
 MIT（见 `LICENSE`）；PySide6 为 LGPLv3 运行时依赖；上游/形象素材声明见 `NOTICE`；**授权链与内部分发口径见 `PROVENANCE.md`（仅内部/同事使用，暂无公开 Release 计划）**。
+
 
 
 
