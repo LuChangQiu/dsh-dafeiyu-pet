@@ -93,5 +93,14 @@ skin.play('walk')
 check('enabled=false 全硬切', skin.fade_alpha() is None)
 skin.set_smooth({'enabled': True, 'crossfadeMs': 120, 'actionFadeMs': 120})
 
+# P2：crossfadeMs 统一作为 duration；_start_fade 不覆盖配置值
+skin.set_smooth({'enabled': True, 'crossfadeMs': 80, 'actionFadeMs': 120})
+check('P2 crossfadeMs 同时作为 duration', skin.fade_ms == 80.0 and skin.action_fade_ms == 80.0)
+skin.play('idleBase')
+skin.tick(1100)
+skin.play('walk')
+check('P2 _start_fade 不改配置 fade_ms', skin.fade_ms == 80.0 and skin.fade_active_ms >= 60.0)
+skin.set_smooth({'enabled': True, 'crossfadeMs': 120, 'actionFadeMs': 120})
+
 print('\n%s whale-skin-smooth: %d passed, %d failed' % ('PASS' if fail == 0 else 'FAIL', ok, fail))
 sys.exit(0 if fail == 0 else 1)

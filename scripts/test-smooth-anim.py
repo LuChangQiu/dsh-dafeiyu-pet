@@ -27,6 +27,7 @@ from smooth_anim import (  # noqa: E402
     celebration_mode,
     celebration_stages,
     dialog_action,
+    dialog_beats,
     direction_crossfade_uses_raw,
     fade_alpha,
     frame_change_fades,
@@ -98,7 +99,7 @@ check('触发后重新排期（未到点）', sch.due(c.micro_max_s + 0.1) is Fa
 check('池包含换重心/伸懒腰/看左右/哼歌/摸鱼/吃小鱼干/打哈欠',
       {'idleShift', 'idleStretch', 'turnStop', 'hum', 'lonelySit', 'eatSatisfied', 'sleep'} <= set(IDLE_ACTIONS))
 check('池不再包含轻跳（蹦蹦蹦）', 'jump' not in IDLE_ACTIONS)
-check('默认微动作间隔 8–15s', c.micro_min_s == 8.0 and c.micro_max_s == 15.0)
+check('默认微动作间隔 8–13s', c.micro_min_s == 8.0 and c.micro_max_s == 13.0)
 check('循环动作标记 hum', IDLE_LOOP_ACTIONS == {'hum'})
 rng2 = random.Random(7)
 sch2 = IdleMicroScheduler(c, now=0.0, rng=rng2)
@@ -108,9 +109,15 @@ check('同类不连续（两次抽样不同）', a1 != a2, a1 + '/' + a2)
 
 # ---------- 庆祝 ----------
 st = celebration_stages()
-check('庆祝 3 阶段', len(st) == 3, str([x['name'] for x in st]))
+check('庆祝 5 拍', len(st) == 5, str([x['name'] for x in st]))
+check('庆祝拍名完整', [x['name'] for x in st] == ['anticipate', 'jump', 'land', 'main', 'settle'])
 check('庆祝总时长 1.5–3.0s', 1500 <= CELEBRATION_TOTAL_MS <= 3000, str(CELEBRATION_TOTAL_MS))
-check('庆祝顺序 jump→land→cheer', [x['action'] for x in st] == ['jump', 'land', 'cheer'])
+check('五拍动作序列', [x['action'] for x in st] == ['idleSettle', 'jump', 'land', 'cheer', 'idleSettle'])
+check('每拍 ≥120ms', all(int(x['durMs']) >= 120 for x in st))
+# 对话节拍（普通 ≥2，高优 ≥3）
+check('对话普通 kind 2 拍', len(dialog_beats('greet')) >= 2 and len(dialog_beats('report')) >= 2 and len(dialog_beats('love')) >= 2)
+check('对话高优 3 拍', len(dialog_beats('approvalWait')) >= 3 and len(dialog_beats('waitingInput')) >= 3 and len(dialog_beats('celebrate')) >= 3)
+check('未知 kind 至少 1 拍', len(dialog_beats('weird')) >= 1)
 
 # ---------- 对话映射 ----------
 for kind in ('greet', 'report', 'remind', 'love', 'inner', 'error', 'night'):

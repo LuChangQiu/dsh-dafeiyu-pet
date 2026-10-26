@@ -23,7 +23,7 @@ DEFAULTS = {
     'swayDeg': 0.35,          # 轻微摇摆（验收 ≤0.6°）
     'floatPx': 1.2,           # 上下浮动
     'microMinSec': 8.0,       # 待机微动作间隔（用户口径 8–15s）
-    'microMaxSec': 15.0,
+    'microMaxSec': 13.0,
     'microCooldownSec': 1.5,
 }
 
@@ -48,13 +48,36 @@ IDLE_WEIGHTS = (18, 16, 14, 14, 12, 10, 10, 6)
 IDLE_LOOP_ACTIONS = {'hum'}          # 循环动作需调用方给定时长后收回
 IDLE_TIMED_MS = {'hum': 2600, 'sleep': 1200}   # 播放时长（ms；sleep=打哈欠式短打盹）
 
-# 庆祝：3 阶段，总 1.5–3.0s（跳起→落地→举双手/celebrate）
+# 庆祝：5 拍（用户/ux beat sheet），时间驱动，总 1.5–3.0s：
+# 蓄力蹲 → 起跳 → 落地 squash → 主秀(举双手) → 收势
 CELEBRATION_STAGES = (
-    {'name': 'jump', 'action': 'jump', 'durMs': 780},
-    {'name': 'land', 'action': 'land', 'durMs': 430},
-    {'name': 'cheer', 'action': 'cheer', 'durMs': 950},
+    {'name': 'anticipate', 'action': 'idleSettle', 'durMs': 280},
+    {'name': 'jump', 'action': 'jump', 'durMs': 760},
+    {'name': 'land', 'action': 'land', 'durMs': 400},
+    {'name': 'main', 'action': 'cheer', 'durMs': 900},
+    {'name': 'settle', 'action': 'idleSettle', 'durMs': 330},
 )
 CELEBRATION_TOTAL_MS = sum(int(s['durMs']) for s in CELEBRATION_STAGES)
+
+# 对话节拍表（kind → [(action, gap_ms), ...]；首拍=eye-lead/动作先起，气泡同帧到）
+DIALOG_BEATS = {
+    'greet': (('turnStop', 0), ('wave', 140)),
+    'report': (('report', 0), ('pat', 300)),
+    'remind': (('waitPeek', 0), ('pat', 300)),
+    'love': (('pat', 0), ('tsundere', 280)),
+    'inner': (('pat', 0), ('idleSettle', 320)),
+    'night': (('hum', 0), ('pat', 320)),
+    'error': (('errorSequence', 0), ('pat', 260)),
+    'approvalWait': (('turnStop', 0), ('waitPeek', 120), ('pat', 260)),
+    'waitingInput': (('turnStop', 0), ('waitPeek', 120), ('pat', 260)),
+    'celebrate': (('turnStop', 0), ('cheer', 120), ('pat', 300)),
+    '': (('pat', 0),),
+}
+
+
+def dialog_beats(kind):
+    """返回该 kind 的节拍列表 [(action, gap_ms)]；未知回退单拍。"""
+    return tuple(DIALOG_BEATS.get(str(kind or ''), DIALOG_BEATS['']))
 
 # 对话气泡 kind → 微动作（点头/歪头/害羞/摆手）
 DIALOG_ACTIONS = {

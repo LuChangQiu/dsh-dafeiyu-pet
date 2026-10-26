@@ -4263,11 +4263,14 @@ class PetWindow(QWidget):
                 rng=random.Random()) if _smooth_anim else None
         except Exception:
             self._idle_micro = None
-        self._celebration = None          # 庆祝 3 阶段状态 {stage,t0}
+        self._celebration = None          # 庆祝 5 拍状态 {stage,t0}
+        self._cellbrate_stage_at = 0.0
         self._celebrate_cd_until = 0.0    # done 庆祝冷却（墙上时间；120s）
         self._task_started_at = 0.0       # 长回合计时（thinking/tool 开始时间）
+        self._short_done_i = 0            # done 短反应轮换计数（动作/句式去重）
         self._dialog_force = None         # 对话动作占用的 force（到时清）
         self._dialog_until = 0.0
+        self._dialog_queue = []           # 对话后续拍 [(action, at_secs)]
         self._whale_micro_until = 0.0     # 循环微动作（hum）回收时间
         self._anim_fast = False           # 过渡期 16ms 提频标记
         # ---- LLM 台词请求队列（task-133）：正常抑制固定台词，插件 say: 回来即取消兜底 ----
@@ -7491,8 +7494,12 @@ class PetWindow(QWidget):
         except Exception:
             _mode = 'short'
         if _mode != 'full':
-            # 短反应 ≤0.8s：不 jump（用户反馈"蹦蹦蹦"）
-            _act = random.choice(("pat", "hum", "idleSettle"))
+            # 短反应 ≤0.8s：不 jump；动作/请求 kind 轮换（V5 复读修复）
+            _cycle = ("pat", "hum", "idleSettle")
+            _kinds = ("praise", "report", "pat")
+            _i = int(getattr(self, "_short_done_i", 0))
+            _act = _cycle[_i % len(_cycle)]
+            self._short_done_i = _i + 1
             if w.has(_act):
                 self._whale_force_play(_act)
                 try:
@@ -7503,12 +7510,18 @@ class PetWindow(QWidget):
                 self._dialog_force = _act
                 self._dialog_until = self._secs() + max(0.35, min(0.8, _total * 1.05))
             try:
+                self._speech_request(_kinds[_i % len(_kinds)],
+                                     {"phase": "doneShort", "subkind": _kinds[_i % len(_kinds)]})
+            except Exception:
+                pass
+            try:
                 self._anim_log("celebrate short mode=%s act=%s" % (_mode, _act))
             except Exception:
                 pass
             return False
         self._celebrate_cd_until = _now_w + 120.0
         self._celebration = {"stage": 0, "t0": self._secs()}
+        self._celebrate_stage_at = self._secs()
         self._anim_log("celebrate start stages=%d totalMs=%s" % (
             len(stages), self._smooth.celebration_total_ms() if self._smooth else "?"))
         self._whale_force_play(stages[0]["action"])
@@ -7535,15 +7548,30 @@ class PetWindow(QWidget):
         force = getattr(self, "_whale_force", None)
         if force in ("think", "waitPeek", "errorSequence", "sleep", "cry"):
             return False
-        if self._whale_force_play(act):
-            self._anim_log("dialog kind=%s action=%s" % (kind, act))
-            self._dialog_force = act
+        # 多拍编排：首拍立即起（动作先起、气泡同帧到），后续拍按 gap 入队
+        try:
+            _beats = self._smooth.dialog_beats(kind) if self._smooth else ((act, 0),)
+        except Exception:
+            _beats = ((act, 0),)
+        if not _beats:
+            _beats = ((act, 0),)
+        _first = _beats[0][0]
+        if not w.has(_first):
+            _first = act
+        if self._whale_force_play(_first):
+            self._anim_log("dialog kind=%s beats=%d first=%s" % (kind, len(_beats), _first))
+            self._dialog_force = _first
             try:
-                _st = w.action_stats(act)
+                _st = w.action_stats(_first)
                 _total = (_st[2] / 1000.0) if _st and _st[2] else 0.9
             except Exception:
                 _total = 0.9
-            self._dialog_until = self._secs() + max(0.7, min(1.6, _total * 1.05))
+            self._dialog_until = self._secs() + max(0.45, min(1.6, _total * 1.05))
+            self._dialog_queue = []
+            _t = self._dialog_until
+            for _a, _gap in _beats[1:]:
+                _t += max(0.08, float(_gap) / 1000.0)
+                self._dialog_queue.append((_a, _t))
             return True
         return False
 
@@ -7569,7 +7597,9 @@ class PetWindow(QWidget):
                 else:
                     _stages = self._smooth.celebration_stages() if self._smooth else ()
                     _si = int(self._celebration.get("stage", 0))
-                    if force in ("jump", "land", "cheer") and w.finished:
+                    _stage_dur = (float(_stages[_si].get("durMs", 500)) / 1000.0) if _si < len(_stages) else 0.5
+                    _stage_el = now - float(getattr(self, "_celebrate_stage_at", now))
+                    if force in ("jump", "land", "cheer", "idleSettle") and (_stage_el >= _stage_dur or w.finished):
                         _si += 1
                         if _si >= len(_stages):
                             self._celebration = None
@@ -7578,6 +7608,7 @@ class PetWindow(QWidget):
                             self._celebration["stage"] = _si
                             self._anim_log("celebrate stage=%s" % _stages[_si]["name"])
                             self._whale_force_play(_stages[_si]["action"])
+                            self._celebrate_stage_at = now
                             if _stages[_si]["name"] == "cheer":
                                 try:
                                     self._bridge_fx_play("love")
@@ -7588,6 +7619,21 @@ class PetWindow(QWidget):
                 self._dialog_force = None
                 self._whale_clear_force()
                 force = self._whale_force
+            # 对话后续拍：到点且当前无强制动作时接一拍
+            if getattr(self, "_dialog_queue", None) and not force:
+                _nxt = self._dialog_queue[0]
+                if now >= _nxt[1] and w.has(_nxt[0]):
+                    self._dialog_queue.pop(0)
+                    self._whale_force_play(_nxt[0])
+                    self._dialog_force = _nxt[0]
+                    try:
+                        _stq = w.action_stats(_nxt[0])
+                        _totq = (_stq[2] / 1000.0) if _stq and _stq[2] else 0.7
+                    except Exception:
+                        _totq = 0.7
+                    self._dialog_until = now + max(0.4, min(1.2, _totq * 1.05))
+                    self._anim_log("dialog beat=%s" % _nxt[0])
+                    force = self._whale_force
             # hum 等循环微动作按定时回收，回 idle
             if getattr(self, "_whale_micro_until", 0.0) and now >= self._whale_micro_until:
                 self._whale_micro_until = 0.0

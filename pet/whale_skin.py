@@ -16,11 +16,21 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter, QPixmap
 
+# 淡化策略在模块加载时注入：失败要显式记录一次，不能静默退化成"全硬切"
+try:
+    from smooth_anim import should_crossfade as _should_crossfade
+except Exception as _fade_policy_err:      # pragma: no cover - 仅异常环境
+    _should_crossfade = None
+    try:
+        print("[whale_skin] smooth_anim 策略不可用，crossfade 全部硬切:", repr(_fade_policy_err))
+    except Exception:
+        pass
+
 NOMINAL_CONTENT_H = 263.0   # 标称内容高度（manifest/STATE-MAP 定义）
 FOOT_ANCHOR_Y = 295.0       # 脚底锚点 y（画布 320）
 DEFAULT_CANVAS = 320
 # 渲染平滑（窗口期 task-131）：帧间/动作切换交叉淡化 + 亚像素整帧变换（由桌宠.py 叠加）
-CROSSFADE_MS = 100          # 帧间淡化（验收 80–150ms）
+CROSSFADE_MS = 120          # 动作切换淡化默认值（验收 80–150ms）
 ACTION_FADE_MS = 120        # play() 切换动作时的短淡化（验收 80–150ms）
 
 
@@ -46,6 +56,7 @@ class WhaleGirlSkin:
         self.prev_path = None
         self.fade_start_ms = 0.0
         self.fade_ms = float(CROSSFADE_MS)
+        self.fade_active_ms = float(CROSSFADE_MS)
         self.action_fade_ms = float(ACTION_FADE_MS)
         self.fade_enabled = True
         self._fade_cache = {}
@@ -131,17 +142,16 @@ class WhaleGirlSkin:
             _cf = float(CROSSFADE_MS)
         # 0 = 全硬切（可回退）；否则验收 80–150ms
         self.fade_ms = 0.0 if _cf <= 0 else float(max(80.0, min(150.0, _cf)))
-        try:
-            self.action_fade_ms = float(max(80.0, min(150.0, float(cfg.get('actionFadeMs', ACTION_FADE_MS)))))
-        except (TypeError, ValueError):
-            self.action_fade_ms = float(ACTION_FADE_MS)
+        # 只留一个有效淡化值：crossfadeMs 同时作为门控与 duration；actionFadeMs 保留兼容 = 同值
+        self.action_fade_ms = self.fade_ms
 
     def _start_fade(self, old_path, fade_ms):
         if not self.fade_enabled or not old_path:
             return
         self.prev_path = old_path
         self.fade_start_ms = self.clock_ms
-        self.fade_ms = max(60.0, float(fade_ms))
+        # 不覆盖配置值 fade_ms；本次淡化实际时长单独存
+        self.fade_active_ms = max(60.0, float(fade_ms))
         if len(self._fade_cache) > 64:
             self._fade_cache.clear()
 
@@ -150,10 +160,11 @@ class WhaleGirlSkin:
         if not self.prev_path or not self.fade_enabled:
             return None
         el = self.clock_ms - self.fade_start_ms
-        if el < 0 or el >= self.fade_ms or self.fade_ms <= 0:
+        if el < 0 or el >= getattr(self, "fade_active_ms", self.fade_ms) or self.fade_ms <= 0:
             self.prev_path = None
             return None
-        a = max(0.0, min(1.0, el / self.fade_ms))
+        _dur = float(getattr(self, "fade_active_ms", self.fade_ms) or 1.0)
+        a = max(0.0, min(1.0, el / _dur))
         a = a * a * (3.0 - 2.0 * a)      # smoothstep
         if a >= 0.999:
             self.prev_path = None
@@ -172,16 +183,12 @@ class WhaleGirlSkin:
         self.idx = 0
         self.acc = 0.0
         self.finished = False
-        # 淡化白名单：idle↔walk↔turnStop/普通动作切换 → 120ms；sleep/fall/land/drag 等硬切
-        try:
-            from smooth_anim import should_crossfade
-        except Exception:
-            should_crossfade = None
+        # 淡化白名单（顶层注入）：仅 locomotion 之间淡化；duration 统一由 crossfadeMs 派生
         _ok = False
-        if should_crossfade is not None:
-            _ok = bool(should_crossfade(old_clip, name, self.fade_enabled)) and self.fade_ms > 0
+        if _should_crossfade is not None:
+            _ok = bool(_should_crossfade(old_clip, name, self.fade_enabled)) and self.fade_ms > 0
         if old_path and old_clip != name and _ok:
-            self._start_fade(old_path, self.action_fade_ms)
+            self._start_fade(old_path, self.fade_ms)
         else:
             self.prev_path = None      # 硬切：不保留旧帧、不调 _start_fade
         return True
