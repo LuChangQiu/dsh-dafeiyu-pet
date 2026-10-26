@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..')
-const src = fs.readFileSync(path.join(repo, 'pet', 'pet_window.py'), 'utf8')
+const src = ['pet_window.py', 'pet_mixins.py', 'pet_utils.py', 'pet_services.py', 'pet_dialogs.py']
+  .map((f) => fs.readFileSync(path.join(repo, 'pet', f), 'utf8'))
+  .join('\n')
 const cases = []
 const eq = (n, got, want) => cases.push({ n, ok: got === want, got, want })
 const ok = (n, cond, detail = '') => cases.push({ n, ok: !!cond, got: detail, want: 'truthy' })

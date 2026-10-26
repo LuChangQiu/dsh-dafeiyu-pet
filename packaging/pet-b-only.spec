@@ -25,7 +25,7 @@ datas = [
     ('PROVENANCE-B.md', 'PROVENANCE-B.md'),
 ]
 binaries = []
-hiddenimports = ['pet_window', 'pet_defaults']
+hiddenimports = ['pet_window', 'pet_defaults', 'pet_mixins', 'pet_utils', 'pet_services', 'pet_dialogs']
 
 # requests（余额/HTTP）与 winsdk（媒体会话歌词）与现有 spec 一致
 for _pkg in ('requests', 'winsdk'):

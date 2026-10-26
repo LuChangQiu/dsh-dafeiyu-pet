@@ -6,8 +6,12 @@
 ## 结构
 ```
 pet/                     # 改好的桌宠源码（干净快照，无 git 历史，约 2.2MB）
-  ├─ pet_app.py          # 薄入口（启动/退出生命周期）
-  ├─ pet_window.py       # PetWindow 主体（管道协议/动作/微动画/配置，机械搬迁自原 桌宠.py）
+  ├─ pet_app.py          # 入口（main/启动/退出生命周期）
+  ├─ pet_window.py       # PetWindow 主体 + 顶层常量（<300KB；方法按 mixin 分块）
+  ├─ pet_mixins.py       # PetWindow 方法 mixin（管道/动画/渲染/菜单/余额/气泡）
+  ├─ pet_dialogs.py      # 原生对话框（自动台词/形象/应用扫描）
+  ├─ pet_services.py     # 余额/媒体/歌词/天气/进程等服务
+  ├─ pet_utils.py        # 配置/时间/格式/文本等工具
   ├─ pet_defaults.py     # B 身体/气泡/微动作集中默认值（config 可覆盖）
   ├─ ui_console.py       # 原生对话框配色（设置窗口已移除，仍用于余额/天气/小票弹窗样式）
   ├─ assets/body-b/      # B 静帧 placeholder.png（tracked）
