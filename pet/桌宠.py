@@ -9339,6 +9339,7 @@ class PetWindow(QWidget):
             a.triggered.connect(lambda _, k=mode: self.set_perf_mode(k))
         perf_menu.addSeparator()
         perf_menu.addAction("开设置菜单时：性能=动画照跑，休闲=降到约 5 帧").setEnabled(False)
+        perf_menu.addAction("crossfade 仅位移/姿态切换（idle↔walk↔turnStop）").setEnabled(False)
 
         # 百宝箱：以后别的小工具都往这儿放（现在只有内存回收）
         box_menu = m.addMenu("百宝箱")
