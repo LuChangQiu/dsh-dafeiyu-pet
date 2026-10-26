@@ -75,6 +75,15 @@ CLIP_ALIAS = {
 # 用户口径：以下素材保留在 50 clip 中，但**不得接任何 DSH state/自动映射**
 BANNED_DSH_CLIPS = ("举牌不是大肥鱼", "空白举牌")
 
+
+def is_banned_clip(name) -> bool:
+    """DSH/state/perf 路径禁用：素材保留，但只能手工 dev 白名单播放。"""
+    return str(name) in BANNED_DSH_CLIPS
+
+
+def _allow_banned() -> bool:
+    return bool(os.environ.get("PET_ALLOW_BANNED_CLIP"))
+
 DEFAULT_ACTION_MAP = {
     "idle": "待机呼吸休闲",
     "turnStart": "开始工作",
@@ -115,10 +124,10 @@ ACTION_META = {
     "T8": ("东张西望", False, 0.5),
     "T9": ("东张西望", False, 0.4),
     "T10": ("长时间工作看表", True, 0.5),
-    "A1": ("举牌不是大肥鱼", False, 1.0),
+    "A1": ("东张西望", False, 1.0),
     "A2": ("女仆屈膝礼仪", False, 0.6),
-    "A3": ("空白举牌", False, 0.8),
-    "A4": ("举牌不是大肥鱼", False, 1.0),
+    "A3": ("工作被打扰", False, 0.8),
+    "A4": ("东张西望", False, 1.0),
     "E1": ("工作被打扰", False, 1.0),
     "E2": ("工作被打扰", False, 0.8),
     "E3": ("工作思考", True, 0.6),
@@ -130,7 +139,7 @@ ACTION_META = {
     "P4": ("认真工作", True, 0.5),
     "P5": ("工作被打扰", False, 0.8),
     "P6": ("翻钱包", False, 0.6),
-    "P7": ("举牌不是大肥鱼", False, 0.6),
+    "P7": ("东张西望", False, 0.6),
     "P8": ("东张西望", False, 0.5),
     "P9": ("长时间工作看表", True, 0.6),
     "P10": ("长时间工作看表", True, 0.6),
@@ -338,6 +347,9 @@ class WebmBody(QObject):
         if not name:
             return False
         name = CLIP_ALIAS.get(str(name), str(name))
+        if is_banned_clip(name) and not _allow_banned():
+            self.error.emit("banned clip blocked in DSH path: " + name)
+            return False
         if self._view is None:
             return False
         if name not in self._clips:

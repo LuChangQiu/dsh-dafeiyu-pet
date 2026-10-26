@@ -54,6 +54,19 @@ wb_src = open(os.path.join(ROOT, 'pet', 'webm_body.py'), encoding='utf-8').read(
 pet_src = open(os.path.join(ROOT, 'pet', '\u684c\u5ba0.py'), encoding='utf-8').read()
 check('webm_body peek priority implementation exists',
       '_pending_clip' in wb_src and 'self._peek' in wb_src)
+# ACTION_META（perf/director 可达）也不得指向禁用 clip
+check('ACTION_META has no banned clip',
+      not (set(v[0] for v in wb.ACTION_META.values()) & banned))
+check('playClip/applyAction 门禁函数存在',
+      hasattr(wb, 'is_banned_clip') and hasattr(wb, '_allow_banned'))
+check('is_banned_clip 对禁用 clip 为 True',
+      all(wb.is_banned_clip(b) for b in banned))
+check('is_banned_clip 对正常 clip 为 False',
+      not wb.is_banned_clip(clips[0]))
+dsh_values = set(v for v in wb.DEFAULT_ACTION_MAP.values() if v)
+dsh_values |= set(v for v in wb.CLIP_ALIAS.values() if v)
+dsh_values |= set(v[0] for v in wb.ACTION_META.values())
+check('所有 DSH/perf 可达映射值均非禁用 clip', not (dsh_values & banned))
 check('pet state mapping has no banned clip literal',
       not any(b in pet_src for b in banned))
 print('RESULT %d passed, %d failed' % (PASS, FAIL))
