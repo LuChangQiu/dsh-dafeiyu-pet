@@ -33,3 +33,13 @@ release-build/
 # B 素材（不入库；构建时从 third-party 注入）
 tools/body-b/
 *.webm
+
+# --- 卫生（repo-hygienist 2026-10-26 终版，B-only）---
+.ruff_cache/
+.pytest_cache/
+*.mp4
+pet/assets/webm_body/assets/
+third-party/
+.DS_Store
+Thumbs.db
+tmp/

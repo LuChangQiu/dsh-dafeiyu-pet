@@ -8,37 +8,36 @@ const candidates = [
 ]
 const manifestPath = candidates.find((p) => existsSync(p)) || candidates[candidates.length - 1]
 const fallbackClips = [
-  'idle',
-  'walk',
-  'eat',
-  'steal',
-  'sneak',
-  'sleep',
-  'wake',
-  'wave',
+  'caught',
+  'cheer',
+  'cry',
   'dance',
+  'drag',
+  'eat',
+  'eatSatisfied',
+  'errorSequence',
+  'fall',
+  'hum',
+  'idleBase',
+  'idleSettle',
+  'idleShift',
+  'idleStretch',
   'jump',
   'land',
-  'turn',
-  'drag',
-  'fall',
-  'cry',
-  'sit',
-  'blink'
+  'lonelySit',
+  'pat',
+  'report',
+  'sleep',
+  'sneak',
+  'think',
+  'tsundere',
+  'turnStop',
+  'waitPeek',
+  'wake',
+  'walk',
+  'wave'
 ]
-const fallbackComposites = [
-  'eat_cry',
-  'steal_caught',
-  'sleep_wake',
-  'wave_jump',
-  'drag_fall',
-  'land_bounce',
-  'turn_look',
-  'cry_comfort',
-  'play_ball',
-  'stretch_yawn',
-  'sneak_peek'
-]
+const fallbackComposites = []
 const FX_14 = [
   'blink',
   'love',

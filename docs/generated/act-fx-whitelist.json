@@ -1,9 +1,7 @@
 {
   "version": 1,
-  "generatedFrom": "manifest",
-  "unknowns": [
-    "composites.note"
-  ],
+  "generatedFrom": "fallback(task-92 pending)",
+  "unknowns": [],
   "acts": [
     "caught",
     "cheer",

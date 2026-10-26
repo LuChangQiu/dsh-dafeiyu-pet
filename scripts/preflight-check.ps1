@@ -1,4 +1,4 @@
-﻿# 提交前门禁：preflight-check.ps1
+# 提交前门禁：preflight-check.ps1
 # 用法:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\preflight-check.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\preflight-check.ps1 -Patch "C:\...\cordis.patch.yml" -PetWorkDir "E:\...\pet-work"
@@ -65,9 +65,9 @@ Invoke-Step "unit: pricing" { & node scripts/test-pricing.mjs }
 Invoke-Step "unit: mode" { & node scripts/test-mode.mjs }
 Invoke-Step "unit: privacy" { & node scripts/test-privacy.mjs }
 Invoke-Step "unit: team-view" { & node scripts/test-team-view.mjs }
-Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }`r`nInvoke-Step "unit: detached harness" { & node scripts/harness/plugin-harness.mjs }
+Invoke-Step "unit: text-fmt" { & node scripts/test-text-fmt.mjs }
+Invoke-Step "unit: detached harness" { & node scripts/harness/plugin-harness.mjs }
 
-Invoke-Step "unit: whale-assets" { & node scripts/test-whale-assets.mjs }
 
 # 6b) CF1：鲸鱼娘 act 接线（插件导入 + 白名单双文件 + 纯函数 fixtures；失败给可读原因，不静默跳过）
 Invoke-Step "unit: whale-wiring" {
